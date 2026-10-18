@@ -1561,7 +1561,7 @@ const _renderA=render;render=function(k){if(S&&!S.aliSeed1)seedAliRFQs();_render
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
-let CLOUD=null,ME=null,base={},ver={},remoteQ=new Set(),syncing=false,again=false,kickT=null,pendingRender=false,syncState='saved';
+let CLOUD=null,ME=null,base={},ver={},remoteQ=new Set(),rbase={},rver={},rowQ=new Set(),emailsOk=false,migrateKv=false,syncing=false,again=false,kickT=null,pendingRender=false,syncState='saved';
 const J=x=>JSON.stringify(x===undefined?null:x);
 
 /* three-way merge, so two people editing different records of the same list never overwrite each other */
@@ -1580,7 +1580,7 @@ function merge3(b,l,r){if(J(l)===J(b))return r;if(J(r)===J(b))return l;if(J(l)==
 function setSync(s){syncState=s;const el=$('#syncst');if(!el)return;const t={saved:'All changes saved',saving:'Saving…',offline:'Offline, will retry',conflict:'Merging changes…'}[s]||s;el.textContent=t;el.style.color=s==='offline'?'var(--alert)':'var(--ink-3)'}
 const _renderShellC=renderShell;renderShell=function(){_renderShellC();if(!CLOUD)return;const b=$('#top [data-action="bell"]');if(b&&!$('#syncst'))b.insertAdjacentHTML('beforebegin',`<span id="syncst" class="sm" style="white-space:nowrap;margin-right:6px" role="status"></span>`);setSync(syncState)};
 
-function cacheWrite(){try{localStorage.setItem(CK,JSON.stringify({uid:ME&&ME.id,S,base,ver}))}catch(e){}}
+function cacheWrite(){try{localStorage.setItem(CK,JSON.stringify({uid:ME&&ME.id,S,base,ver,rbase,rver,emailsOk}))}catch(e){}}
 function cacheRead(uid){try{const c=JSON.parse(localStorage.getItem(CK)||'null');return c&&c.uid===uid?c:null}catch(e){return null}}
 const modalOpen=()=>!!$('#modal-root').innerHTML;
 const typing=()=>{const a=document.activeElement;return a&&$('#view').contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)};
@@ -1595,15 +1595,35 @@ async function pushKey(k,depth=0){const data=S[k]===undefined?null:S[k],j=J(data
  else{const {data:rows,error}=await CLOUD.from('erp_kv').insert({key:k,data,version:1,...meta}).select('version');if(!error){ver[k]=rows[0].version;base[k]=j;return}if(error.code!=='23505')throw error}
  if(depth>4)throw new Error('Too many conflicting edits on '+k);
  const [row]=await fetchRows([k]);if(row){applyRemote(row);pendingRender=true}return pushKey(k,depth+1)}
+/* emails live one conversation per row (erp_emails), so a new email moves only that conversation */
+const kvKeys=()=>Object.keys(S).filter(k=>!(emailsOk&&k==='emails'));
+const rowDirty=()=>emailsOk&&((S.emails||[]).some(e=>J(e)!==rbase[e.id])||Object.keys(rbase).some(id=>!(S.emails||[]).some(e=>e.id===id)));
+const anyDirty=()=>kvKeys().some(k=>J(S[k])!==base[k])||rowDirty();
+function applyRow(row){S.emails=S.emails||[];const i=S.emails.findIndex(e=>e.id===row.id),loc=i>=0?S.emails[i]:undefined;
+ const v=loc!==undefined&&rbase[row.id]!==undefined&&J(loc)!==rbase[row.id]?merge3(JSON.parse(rbase[row.id]),loc,row.data):row.data;
+ if(i>=0)S.emails[i]=v;else S.emails.push(v);rbase[row.id]=J(row.data);rver[row.id]=row.version}
+function dropRow(id){const i=(S.emails||[]).findIndex(e=>e.id===id);if(i>=0&&J(S.emails[i])===rbase[id])S.emails.splice(i,1);delete rbase[id];delete rver[id]}
+async function fetchMail(ids){let q=CLOUD.from('erp_emails').select('id,data,version');if(ids)q=q.in('id',ids);const {data,error}=await q;if(error)throw error;return data}
+async function pushRow(e,depth=0){const j=J(e),meta={updated_by:USER.name,updated_at:new Date().toISOString()};
+ if(rver[e.id]){const {data:rows,error}=await CLOUD.from('erp_emails').update({data:e,version:rver[e.id]+1,...meta}).eq('id',e.id).eq('version',rver[e.id]).select('version');if(error)throw error;if(rows&&rows.length){rver[e.id]=rows[0].version;rbase[e.id]=j;return}}
+ else{const {data:rows,error}=await CLOUD.from('erp_emails').insert({id:e.id,data:e,version:1,...meta}).select('version');if(!error){rver[e.id]=rows[0].version;rbase[e.id]=j;return}if(error.code!=='23505')throw error}
+ if(depth>4)throw new Error('Too many conflicting edits on '+e.id);
+ const [row]=await fetchMail([e.id]);if(row){applyRow(row);pendingRender=true}const cur=S.emails.find(x=>x.id===e.id);if(cur)return pushRow(cur,depth+1)}
+async function syncRows(){if(!emailsOk)return;
+ if(rowQ.size&&!modalOpen()){const ids=[...rowQ];rowQ.clear();const rows=await fetchMail(ids);const got=new Set(rows.map(r=>r.id));rows.forEach(r=>{if(r.version>(rver[r.id]||0)){applyRow(r);pendingRender=true}});ids.forEach(id=>{if(!got.has(id)&&rbase[id]!==undefined){dropRow(id);pendingRender=true}})}
+ for(const e of [...(S.emails||[])])if(J(e)!==rbase[e.id])await pushRow(e);
+ for(const id of Object.keys(rbase))if(!(S.emails||[]).some(e=>e.id===id)){const {error}=await CLOUD.from('erp_emails').delete().eq('id',id);if(error)throw error;delete rbase[id];delete rver[id]}
+ if(migrateKv){await CLOUD.from('erp_kv').delete().eq('key','emails');delete base.emails;delete ver.emails;migrateKv=false}}
 async function syncOnce(){
  if(remoteQ.size&&!modalOpen()){const keys=[...remoteQ];remoteQ.clear();const rows=await fetchRows(keys);let ch=false;rows.forEach(r=>{if(r.version>(ver[r.key]||0)){applyRemote(r);ch=true}});if(ch)pendingRender=true}
- const dirty=Object.keys(S).filter(k=>J(S[k])!==base[k]);if(dirty.length)setSync('saving');
+ const dirty=kvKeys().filter(k=>J(S[k])!==base[k]);if(dirty.length||rowDirty())setSync('saving');
  for(const k of dirty)await pushKey(k);
- cacheWrite();if(pendingRender&&!modalOpen())scheduleRender();setSync(remoteQ.size?'saving':'saved')}
+ await syncRows();
+ cacheWrite();if(pendingRender&&!modalOpen())scheduleRender();setSync(remoteQ.size||rowQ.size?'saving':'saved')}
 function kick(){if(!CLOUD||!ME)return;if(syncing){again=true;return}syncing=true;again=false;
  syncOnce().catch(e=>{console.warn('sync',e);setSync('offline');setTimeout(kick,10000)}).finally(()=>{syncing=false;if(again)kick()})}
 save=function(){if(!CLOUD){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}return}clearTimeout(kickT);kickT=setTimeout(kick,350)};
-new MutationObserver(()=>{if(!modalOpen()&&remoteQ.size)kick()}).observe(document.getElementById('modal-root'),{childList:true});
+new MutationObserver(()=>{if(!modalOpen()&&(remoteQ.size||rowQ.size))kick()}).observe(document.getElementById('modal-root'),{childList:true});
 
 /* the shared copy replaces the one-browser features */
 A.reset=()=>{closeDD();toast('Everyone shares one copy now. To load a newer workbook, use Workbook and data, Import.',true)};
@@ -1611,9 +1631,9 @@ const _usermenuC=A.usermenu;A.usermenu=d=>{_usermenuC(d);const dd=$('#dd');if(!d
  dd.querySelector('header').innerHTML=`<span>${esc(USER.name)}</span><span class="muted sm">${esc(ME?ME.email:'')}</span>`;
  dd.insertAdjacentHTML('beforeend',`<button class="item" data-action="pw-change">Change password</button><button class="item" data-action="sign-out">Sign out</button>`)};
 A['sign-out']=async()=>{closeDD();await kickNow();try{localStorage.removeItem(CK)}catch(e){}await CLOUD.auth.signOut();location.reload()};
-async function kickNow(){clearTimeout(kickT);for(let i=0;i<20&&(syncing||Object.keys(S||{}).some(k=>J(S[k])!==base[k]));i++){kick();await new Promise(r=>setTimeout(r,300))}}
+async function kickNow(){clearTimeout(kickT);for(let i=0;i<20&&(syncing||(S&&anyDirty()));i++){kick();await new Promise(r=>setTimeout(r,300))}}
 A['pw-change']=()=>{closeDD();modal('Change password',`<div class="fg">${fld('New password',inp('pw','','type="password" minlength="8" autocomplete="new-password" required'))}${fld('Type it again',inp('pw2','','type="password" autocomplete="new-password" required'))}</div>`,{label:'Change password',submit:d=>{if((d.pw||'').length<8)return fail('Use at least 8 characters.');if(d.pw!==d.pw2)return fail('The two passwords don’t match.');CLOUD.auth.updateUser({password:d.pw}).then(({error})=>error?toast('Could not change it: '+error.message,true):toast('Password changed'))}})};
-window.addEventListener('beforeunload',e=>{if(CLOUD&&S&&Object.keys(S).some(k=>J(S[k])!==base[k])){cacheWrite();e.preventDefault();e.returnValue=''}});
+window.addEventListener('beforeunload',e=>{if(CLOUD&&S&&ME&&anyDirty()){cacheWrite();e.preventDefault();e.returnValue=''}});
 
 /* sign-in gate */
 function gate(inner){let g=$('#gate');if(!g){document.body.insertAdjacentHTML('beforeend','<div id="gate" style="position:fixed;inset:0;z-index:70;background:var(--hero);display:grid;place-items:center;padding:16px;overflow:auto"></div>');g=$('#gate')}
@@ -1633,15 +1653,22 @@ async function startWithSession(session){gate('<p class="muted" style="margin:0"
  ME={id:session.user.id,email};USER.name=mine.name;USER.initials=mine.name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
  members.forEach(m=>{if(!TEAM.includes(m.name))TEAM.push(m.name)});
  let rows,cache=cacheRead(ME.id);
- try{rows=await fetchRows()}catch(e){if(cache){S=cache.S;base=cache.base;ver=cache.ver;setSync('offline');return boot2()}return loginScreen('Could not load the data: '+e.message)}
- if(!rows.length)return firstRun();
+ let mail=null;
+ try{rows=await fetchRows();try{mail=await fetchMail();emailsOk=true}catch(e){emailsOk=false}}catch(e){if(cache){S=cache.S;base=cache.base;ver=cache.ver;rbase=cache.rbase||{};rver=cache.rver||{};emailsOk=!!cache.emailsOk;setSync('offline');return boot2()}return loginScreen('Could not load the data: '+e.message)}
+ if(!rows.length&&!(mail&&mail.length))return firstRun();
  S={};rows.forEach(r=>{const k=r.key;if(cache&&cache.S&&k in cache.S&&cache.base[k]!==undefined&&J(cache.S[k])!==cache.base[k])S[k]=merge3(JSON.parse(cache.base[k]),cache.S[k],r.data);else S[k]=r.data;base[k]=J(r.data);ver[k]=r.version});
- if(cache&&cache.S)Object.keys(cache.S).forEach(k=>{if(!(k in S)&&cache.base[k]===undefined)S[k]=cache.S[k]});
+ if(cache&&cache.S)Object.keys(cache.S).forEach(k=>{if(k!=='emails'&&!(k in S)&&cache.base[k]===undefined)S[k]=cache.S[k]});
+ if(emailsOk){const kvMail=S.emails;S.emails=[];const cr=cache&&cache.emailsOk?cache.rbase||{}:{},cl=cache&&cache.emailsOk&&cache.S?cache.S.emails||[]:[];
+  mail.forEach(r=>{const loc=cl.find(e=>e.id===r.id);S.emails.push(loc&&cr[r.id]!==undefined&&J(loc)!==cr[r.id]?merge3(JSON.parse(cr[r.id]),loc,r.data):r.data);rbase[r.id]=J(r.data);rver[r.id]=r.version});
+  cl.forEach(e=>{if(cr[e.id]===undefined&&!S.emails.some(x=>x.id===e.id))S.emails.push(e)});
+  if('emails' in base){migrateKv=true;if(!mail.length&&Array.isArray(kvMail))S.emails=kvMail}}
  boot2()}
-function boot2(){if(!S.emails)S.emails=seedEmails(S);ensureSales();ensureSourcing();upgradeRFQ();ensureGL();seedAliRFQs();
+function boot2(){if(!S.emails)S.emails=emailsOk?[]:seedEmails(S);ensureSales();ensureSourcing();upgradeRFQ();ensureGL();seedAliRFQs();
  ungate();render();kick();
- CLOUD.channel('erp-kv').on('postgres_changes',{event:'*',schema:'public',table:'erp_kv'},p=>{const k=(p.new&&p.new.key)||(p.old&&p.old.key);const v=p.new&&p.new.version;if(k&&(!v||v>(ver[k]||0))){remoteQ.add(k);kick()}}).subscribe();
- setInterval(async()=>{try{const {data}=await CLOUD.from('erp_kv').select('key,version');(data||[]).forEach(r=>{if(r.version>(ver[r.key]||0))remoteQ.add(r.key)});kick()}catch(e){}},45000)}
+ const ch=CLOUD.channel('erp-kv').on('postgres_changes',{event:'*',schema:'public',table:'erp_kv'},p=>{const k=(p.new&&p.new.key)||(p.old&&p.old.key);const v=p.new&&p.new.version;if(k&&(!v||v>(ver[k]||0))){remoteQ.add(k);kick()}});
+ if(emailsOk)ch.on('postgres_changes',{event:'*',schema:'public',table:'erp_emails'},p=>{const id=(p.new&&p.new.id)||(p.old&&p.old.id);const v=p.new&&p.new.version;if(id&&(!v||v>(rver[id]||0))){rowQ.add(id);kick()}});
+ ch.subscribe();
+ setInterval(async()=>{try{const {data}=await CLOUD.from('erp_kv').select('key,version');(data||[]).forEach(r=>{if(r.version>(ver[r.key]||0))remoteQ.add(r.key)});if(emailsOk){const {data:m}=await CLOUD.from('erp_emails').select('id,version');const seen=new Set();(m||[]).forEach(r=>{seen.add(r.id);if(r.version>(rver[r.id]||0))rowQ.add(r.id)});Object.keys(rbase).forEach(id=>{if(!seen.has(id))rowQ.add(id)})}kick()}catch(e){}},45000)}
 
 /* first sign-in: the database is empty, so start it from this browser's data or from the workbook */
 function firstRun(){let local=null;try{const r=JSON.parse(localStorage.getItem(KEY)||'null');if(r&&r.v===3)local=r}catch(e){}
@@ -1653,7 +1680,7 @@ function firstRun(){let local=null;try{const r=JSON.parse(localStorage.getItem(K
  $('#fr-xlsx').onchange=async e=>{const file=e.target.files[0];if(!file)return;st('Reading the workbook…');try{const X=await loadXLSX();const wb=X.read(await file.arrayBuffer(),{type:'array'});const find=re=>wb.SheetNames.find(n=>re.test(n));const sh=n=>n?X.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:null}).filter(r=>r.some(v=>v!=null&&v!=='')):[];
   const im=find(/item\s*master/i),so=find(/sales\s*orders?/i),fr=find(/form/i);if(!im||!so)return st('That file has no ITEM MASTER LIST or SALES ORDERS tab.');
   S=importWorkbook({items:sh(im),orders:sh(so),form:fr?sh(fr):[['h']]},file.name);S.emails=seedEmails(S);st('Uploading…');await initialPush(st)}catch(err){st('Could not read that file: '+err.message)}}}
-async function initialPush(st){try{ensureSales();ensureSourcing();upgradeRFQ();ensureGL();seedAliRFQs();base={};ver={};for(const k of Object.keys(S))await pushKey(k);cacheWrite();boot2()}catch(e){st('Upload failed: '+e.message)}}
+async function initialPush(st){try{ensureSales();ensureSourcing();upgradeRFQ();ensureGL();seedAliRFQs();base={};ver={};rbase={};rver={};{const {error}=await CLOUD.from('erp_emails').select('id').limit(1);emailsOk=!error}for(const k of kvKeys())await pushKey(k);await syncRows();cacheWrite();boot2()}catch(e){st('Upload failed: '+e.message)}}
 
 async function cloudBoot(){
  const cfgBad=!CFG.supabaseUrl||!CFG.supabaseKey||/YOUR-PROJECT|PASTE-/i.test(CFG.supabaseUrl+CFG.supabaseKey)?'config.js still has the placeholder values.':!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(String(CFG.supabaseUrl).trim())?`The Supabase URL in config.js is “${esc(CFG.supabaseUrl)}”. It should look like https://abcdefgh.supabase.co, the Project URL from Project Settings, API (not the dashboard address).`:'';
@@ -1662,6 +1689,37 @@ async function cloudBoot(){
  CLOUD=window.supabase.createClient(String(CFG.supabaseUrl).trim().replace(/\/$/,''),String(CFG.supabaseKey).trim(),{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
  if(/access_token|error_description/.test(location.hash))history.replaceState(null,'',location.pathname+location.search+'#/dashboard');
  const {data:{session}}=await CLOUD.auth.getSession();if(!session)return loginScreen();startWithSession(session)}
+
+/* ================= live info@ inbox: send replies through the ERP, attachments, Outlook replies ================= */
+const isAddr=s=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s||''));
+const fmtSize=n=>n>=1e6?(n/1e6).toFixed(1)+' MB':Math.max(1,Math.round((n||0)/1e3))+' KB';
+const _renderMail=render;render=function(k){_renderMail(k);if(!CLOUD||parse().r!=='inbox')return;
+ const note=$('#view .note');const demo=(S.emails||[]).filter(e=>e.demo).length;
+ if(note&&emailsOk)note.innerHTML=`${ic('mail',14)} <span class="grow">Connected to ${esc(INBOX)}. New emails and replies sent from Outlook arrive here on their own.${demo?` ${demo} sample email${demo===1?' is':'s are'} still listed.`:''}</span>${demo?btn('Remove sample emails','em-clear-demo',{},'sm'):''}`;
+ const {id}=parse();const m=id?byId(S.emails,id):null;if(!m)return;
+ /* attachments and "emailed" marks on each message */
+ $$('#view .idet article.msg').forEach((el,i)=>{const x=m.thread[i];if(!x)return;
+  if(x.sent||x.outlook){const h=el.querySelector('header span');if(h)h.insertAdjacentHTML('afterbegin',`<span class="chip ${x.sent?'ok':'plain'}" style="margin-right:6px">${x.sent?'Emailed'+(x.to?' to '+esc(x.to):''):'Answered in Outlook'}</span>`)}
+  if((x.att||[]).length)el.insertAdjacentHTML('beforeend',`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${x.att.map(a=>a.path?`<button type="button" class="btn sm" data-action="att-open" data-path="${esc(a.path)}">${ic('box',13)} ${esc(a.name)} <span class="muted">${fmtSize(a.size)}</span></button>`:`<span class="chip plain">${esc(a.name)} (too large, open it in Outlook)</span>`).join('')}</div>`)});
+ /* reply box: send as info@, or record that it was answered in Outlook */
+ const f=$('#view form[data-form="reply"]');if(!f||!emailsOk)return;
+ const to=isAddr(m.from)?m.from:'';const b=f.querySelector('button.primary');
+ f.querySelector('.r1 b').innerHTML=to?`Reply to <span style="font-weight:500">${esc(to)}</span> <span class="muted" style="font-weight:400">from ${esc(INBOX)}</span>`:`No email address on file for ${esc(m.fromName)}, so you can only log the reply here`;
+ if(!b)return;
+ if(to){b.name='how';b.value='send';b.innerHTML=`${ic('mail',15)} Send email`;b.insertAdjacentHTML('beforebegin',`<button class="btn" name="how" value="outlook" style="margin-left:auto">Answered in Outlook</button>`)}
+ else{b.name='how';b.value='outlook';b.textContent='Log reply'}};
+window.addEventListener('submit',async e=>{const f=e.target;if(!CLOUD||!emailsOk||f.dataset.form!=='reply')return;e.preventDefault();e.stopPropagation();
+ const m=byId(S.emails,f.dataset.id);if(!m)return;const d=Object.fromEntries(new FormData(f));const how=(e.submitter&&e.submitter.value)||'send';const text=(d.body||'').trim();
+ if(how==='outlook'){m.thread.push({dir:'out',by:USER.name,t:new Date().toISOString(),body:text||'Replied in Outlook.',outlook:true});const was=m.status;m.status=d.wait?'Waiting on customer':'Open';if(!m.owner)m.owner=USER.name;log(`Logged an Outlook reply on ${m.id} (${m.fromName})`,stCh(was,m.status));save();rerender();toast('Logged as answered in Outlook');return}
+ if(!text)return fail('Write the reply first.');
+ const btns=$$('button',f);btns.forEach(x=>x.disabled=true);const sb=f.querySelector('button[value="send"]');if(sb)sb.textContent='Sending…';
+ const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{conversationId:m.id,to:m.from,subject:m.subject,text,wait:!!d.wait}});
+ let msg=data&&data.error;if(error&&!msg){try{msg=(await error.context.json()).error}catch(x){msg=error.message}}
+ if(msg){btns.forEach(x=>x.disabled=false);if(sb)sb.innerHTML=`${ic('mail',15)} Send email`;return toast('Not sent: '+msg,true)}
+ log(`Emailed ${m.from} from ${INBOX} on ${m.id}: ${m.subject}`,[{f:'Status',from:m.status,to:d.wait?'Waiting on customer':'Open'}]);
+ f.querySelector('textarea').value='';rowQ.add(m.id);kick();toast(`Sent to ${m.from}`)},true);
+A['att-open']=async d=>{const {data,error}=await CLOUD.storage.from('erp-mail').createSignedUrl(d.path,300);if(error)return toast('Could not open the file: '+error.message,true);window.open(data.signedUrl,'_blank','noopener')};
+A['em-clear-demo']=()=>{const n=S.emails.filter(e=>e.demo).length;S.emails=S.emails.filter(e=>!e.demo);log(`Removed ${n} sample emails from the inbox`);save();toast(`Removed ${n} sample emails`);location.hash='#/inbox';rerender()};
 
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
