@@ -31,5 +31,8 @@ async function all(opts={}){const since=Date.now()-(opts.days||120)*864e5,max=op
       onProgress(out.length+1,c.name);const ok=await openChat(el,c.name);if(!ok){out.push({...c,messages:[],error:'did not open'});continue}
       await loadHistory(opts.rounds||12);out.push({...c,agent:agentPanel(),messages:readMessages()});if(out.length>=max)break}}
   return out}
-window.__mresAli={current,all,readMessages,contactOf,version:1};
+async function recent(hours){const cut=Date.now()-hours*3600e3;const convs=await all({days:Math.max(1,hours/24+0.5),rounds:4});
+  return convs.map(c=>({...c,messages:(c.messages||[]).filter(m=>!m.t||m.t>=cut)})).filter(c=>c.messages.length)}
+async function drop(o){const r=await fetch(o.url+'/rest/v1/erp_ali_drops',{method:'POST',headers:{apikey:o.key,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({token:o.token,payload:{at:Date.now(),source:'alibaba-sync',conversations:o.conversations}})});return r.ok?{ok:true,sent:o.conversations.length}:{ok:false,status:r.status,error:await r.text()}}
+window.__mresAli={current,all,recent,drop,readMessages,contactOf,version:2};
 })();
