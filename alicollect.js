@@ -3,7 +3,7 @@
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const txt=e=>(e&&e.innerText||'').replace(/ /g,' ').trim();
 function info(w){try{return JSON.parse(w.dataset.expinfo||'{}')}catch(e){return{}}}
-const listScroller=()=>{let e=document.querySelector('.normal-list-container');while(e&&e!==document.body){const s=getComputedStyle(e);if(e.scrollHeight>e.clientHeight+10&&/auto|scroll/.test(s.overflowY))return e;e=e.parentElement}return null};
+const listScroller=()=>{const root=document.querySelector('.normal-list-container');const inner=root&&[root,...root.querySelectorAll('*')].find(x=>x.scrollHeight>x.clientHeight+10&&/auto|scroll/.test(getComputedStyle(x).overflowY));if(inner)return inner;let e=root;while(e&&e!==document.body){const s=getComputedStyle(e);if(e.scrollHeight>e.clientHeight+10&&/auto|scroll/.test(s.overflowY))return e;e=e.parentElement}return null};
 const chatScroller=()=>document.querySelector('.message-box .common-load-more');
 function contactOf(el){return{cid:el.dataset.cid,name:el.dataset.name||txt(el.querySelector('.name')),company:txt(el.querySelector('.contact-company')),updated:+el.dataset.modifyTime||null,unread:+el.dataset.unreadCount||0,latest:txt(el.querySelector('.latest-msg')).replace(/^\[(Unread|Read)\]\s*/,'')}}
 function readMessages(){return[...document.querySelectorAll('.message-box .message-item-wrapper')].map(w=>{const i=info(w);if(!i.messageId)return null;
@@ -24,10 +24,11 @@ async function current(){const act=document.querySelector('.contact-item-contain
   const el=act||[...document.querySelectorAll('.contact-item-container')].find(e=>e.dataset.name===name);const c=el?contactOf(el):{cid:'chat:'+name,name,company:''};
   await loadHistory(25);return{...c,agent:agentPanel(),messages:readMessages()}}
 async function all(opts={}){const since=Date.now()-(opts.days||120)*864e5,max=opts.max||200,onProgress=opts.onProgress||(()=>{});const ls=listScroller();const seen=new Map(),out=[];
-  if(ls)ls.scrollTop=0;await sleep(600);let stuck=0;
+  if(ls){ls.scrollTop=0;ls.dispatchEvent(new Event('scroll',{bubbles:true}))}await sleep(1200);let stuck=0;
   while(out.length<max&&stuck<4){const els=[...document.querySelectorAll('.contact-item-container')].filter(e=>e.dataset.cid&&!seen.has(e.dataset.cid));
     if(!els.length){if(!ls)break;const b=ls.scrollTop;ls.scrollTop+=ls.clientHeight*0.8;await sleep(700);if(ls.scrollTop===b)stuck++;continue}stuck=0;
-    for(const el of els){const c=contactOf(el);seen.set(c.cid,1);if(c.updated&&c.updated<since){stuck=9;break}
+    els.sort((a,b)=>(+b.dataset.modifyTime||0)-(+a.dataset.modifyTime||0));if(els.every(e=>(+e.dataset.modifyTime||Infinity)<since)){els.forEach(e=>seen.set(e.dataset.cid,1));stuck=9;break}
+    for(const el of els){const c=contactOf(el);seen.set(c.cid,1);if(c.updated&&c.updated<since)continue;
       onProgress(out.length+1,c.name);const ok=await openChat(el,c.name);if(!ok){out.push({...c,messages:[],error:'did not open'});continue}
       await loadHistory(opts.rounds||12);out.push({...c,agent:agentPanel(),messages:readMessages()});if(out.length>=max)break}}
   return out}
