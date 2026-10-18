@@ -32,7 +32,9 @@ html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:15px/1.45 var(--f);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;overflow:hidden}
 a{color:inherit}
 :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-.app{display:grid;grid-template-columns:236px minmax(0,1fr);height:100%}
+.app{display:grid;grid-template-columns:236px minmax(0,1fr);grid-template-rows:minmax(0,1fr);height:100vh;height:100dvh;overflow:hidden}
+.side,.mainwrap,main{min-height:0}
+.tabs{overflow-y:hidden}
 
 /* sidebar */
 .side{background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;overflow-y:auto}
