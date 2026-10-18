@@ -1720,6 +1720,30 @@ window.addEventListener('submit',async e=>{const f=e.target;if(!CLOUD||!emailsOk
  f.querySelector('textarea').value='';rowQ.add(m.id);kick();toast(`Sent to ${m.from}`)},true);
 A['att-open']=async d=>{const {data,error}=await CLOUD.storage.from('erp-mail').createSignedUrl(d.path,300);if(error)return toast('Could not open the file: '+error.message,true);window.open(data.signedUrl,'_blank','noopener')};
 A['em-clear-demo']=()=>{const n=S.emails.filter(e=>e.demo).length;S.emails=S.emails.filter(e=>!e.demo);log(`Removed ${n} sample emails from the inbox`);save();toast(`Removed ${n} sample emails`);location.hash='#/inbox';rerender()};
+/* ================= new-email alerts: pop-up in the ERP, desktop notification when the tab is in the background, count in the tab title ================= */
+const unreadMail=()=>(S&&S.emails||[]).filter(e=>!e.read&&e.status!=='Closed'&&e.thread&&e.thread.length&&e.thread[e.thread.length-1].dir==='in');
+function mailTitle(){if(!CLOUD||!S)return;const n=unreadMail().length;document.title=document.title.replace(/^\(\d+\)\s*/,'');if(n)document.title=`(${n}) `+document.title}
+let alertQ=[],alertT=null;
+function mailAlert(e){alertQ.push(e);clearTimeout(alertT);alertT=setTimeout(flushAlerts,400)}
+function flushAlerts(){const list=alertQ.splice(0);if(!list.length)return;mailTitle();
+ const text=list.length===1?`New email from ${list[0].fromName||list[0].from}: ${list[0].subject}`:`${list.length} new emails in the inbox`;
+ const go=()=>{location.hash=list.length===1?'#/inbox/'+list[0].id:'#/inbox'};
+ const t=document.createElement('button');t.className='toast';t.style.cssText='pointer-events:auto;cursor:pointer;border:0;font:inherit;text-align:left;display:flex;gap:8px;align-items:center';
+ t.innerHTML=`${ic('mail',16)}<span>${esc(text)}</span><span style="opacity:.7;margin-left:6px">Open</span>`;t.onclick=()=>{t.remove();go()};$('#toasts').appendChild(t);setTimeout(()=>t.remove(),9000);
+ let chime=false;try{chime=localStorage.getItem('mres-mail-sound')==='1'}catch(x){}
+ if(chime){try{const ac=new (window.AudioContext||window.webkitAudioContext)(),o=ac.createOscillator(),g=ac.createGain();o.frequency.value=880;g.gain.setValueAtTime(.06,ac.currentTime);g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+.35);o.connect(g).connect(ac.destination);o.start();o.stop(ac.currentTime+.35)}catch(x){}}
+ if(document.hidden&&window.Notification&&Notification.permission==='granted'){try{const n=new Notification(list.length===1?`New email from ${list[0].fromName||list[0].from}`:`${list.length} new emails`,{body:list.length===1?list[0].subject:list.map(x=>x.subject).slice(0,3).join('\n'),tag:'mres-mail',renotify:true});n.onclick=()=>{window.focus();go();n.close()}}catch(x){}}}
+const _applyRowA=applyRow;applyRow=function(row){const before=(S.emails||[]).find(e=>e.id===row.id);const nIn=before?(before.thread||[]).filter(m=>m.dir==='in').length:0;
+ _applyRowA(row);const after=S.emails.find(e=>e.id===row.id);if(after&&(after.thread||[]).filter(m=>m.dir==='in').length>nIn)mailAlert(after)};
+const _renderAlert=render;render=function(k){_renderAlert(k);mailTitle()};
+document.addEventListener('visibilitychange',mailTitle);
+/* switches: desktop alerts (needs the browser's permission) and a soft chime */
+const desktopOn=()=>window.Notification&&Notification.permission==='granted';
+A['mail-desktop']=async()=>{closeDD();if(!window.Notification)return toast('This browser does not support desktop notifications.',true);if(Notification.permission==='denied')return toast('Notifications are blocked for this site. Allow them from the lock icon next to the web address.',true);const p=await Notification.requestPermission();toast(p==='granted'?'Desktop alerts are on for this browser':'Desktop alerts were not allowed',p!=='granted');rerender()};
+A['mail-sound']=()=>{closeDD();let on=false;try{on=localStorage.getItem('mres-mail-sound')==='1';localStorage.setItem('mres-mail-sound',on?'0':'1')}catch(x){}toast(on?'Email chime off':'Email chime on');rerender()};
+const _usermenuM=A.usermenu;A.usermenu=d=>{_usermenuM(d);const dd=$('#dd');if(!dd||!CLOUD||!emailsOk)return;let snd=false;try{snd=localStorage.getItem('mres-mail-sound')==='1'}catch(x){}
+ const so=dd.querySelector('[data-action="sign-out"]');so.insertAdjacentHTML('beforebegin',`${desktopOn()?'':'<button class="item" data-action="mail-desktop">Turn on desktop alerts for new email</button>'}<button class="item" data-action="mail-sound">${snd?'Turn off':'Turn on'} the new-email chime</button>`)};
+const _renderAlert2=render;render=function(k){_renderAlert2(k);if(!CLOUD||!emailsOk||parse().r!=='inbox'||desktopOn()||!window.Notification||Notification.permission==='denied')return;const note=$('#view .note');if(note&&!note.querySelector('[data-action="mail-desktop"]'))note.insertAdjacentHTML('beforeend',btn('Turn on desktop alerts','mail-desktop',{},'sm'))};
 
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
