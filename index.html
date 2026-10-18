@@ -371,7 +371,7 @@ details.stg .checklist{padding-bottom:8px}
 <div id="modal-root"></div>
 <div id="toasts" role="status" aria-live="polite"></div>
 <script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
 <script>
 'use strict';
 /* ================= utilities ================= */
@@ -1621,7 +1621,7 @@ function loginScreen(msg){gate(`<h1 style="font:800 22px var(--fh);margin:0 0 4p
  <form id="loginf" style="display:flex;flex-direction:column;gap:10px"><label class="f">Email<input class="input" name="email" type="email" autocomplete="username" required></label><label class="f">Password<input class="input" name="pw" type="password" autocomplete="current-password" required></label><button class="btn primary" style="justify-content:center;padding:9px">Sign in</button></form>
  <p class="muted sm" style="margin:14px 0 0">No account yet, or forgot your password? Ask Satish to set one up.</p>`);
  const f=$('#loginf');f.querySelector('input').focus();f.addEventListener('submit',async e=>{e.preventDefault();e.stopPropagation();const d=Object.fromEntries(new FormData(f));const b=f.querySelector('button');b.disabled=true;b.textContent='Signing in…';
-  const {data,error}=await CLOUD.auth.signInWithPassword({email:d.email.trim(),password:d.pw});if(error)return loginScreen(error.message==='Invalid login credentials'?'That email and password don’t match.':error.message);startWithSession(data.session)})}
+  const {data,error}=await CLOUD.auth.signInWithPassword({email:d.email.trim(),password:d.pw});if(error)return loginScreen(error.message==='Invalid login credentials'?'That email and password don’t match.':/fetch|network/i.test(error.message)?`Can’t reach Supabase at ${CFG.supabaseUrl}. Check the URL in config.js, and that the project isn’t paused.`:/not confirmed/i.test(error.message)?'This email isn’t confirmed yet. In Supabase, confirm the user or re-create it with Auto Confirm ticked.':error.message);startWithSession(data.session)})}
 
 async function startWithSession(session){gate('<p class="muted" style="margin:0">Loading the shared data…</p>');
  const email=(session.user.email||'').toLowerCase();
@@ -1654,8 +1654,10 @@ function firstRun(){let local=null;try{const r=JSON.parse(localStorage.getItem(K
 async function initialPush(st){try{ensureSales();ensureSourcing();upgradeRFQ();ensureGL();seedAliRFQs();base={};ver={};for(const k of Object.keys(S))await pushKey(k);cacheWrite();boot2()}catch(e){st('Upload failed: '+e.message)}}
 
 async function cloudBoot(){
+ const cfgBad=!CFG.supabaseUrl||!CFG.supabaseKey||/YOUR-PROJECT|PASTE-/i.test(CFG.supabaseUrl+CFG.supabaseKey)?'config.js still has the placeholder values.':!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(String(CFG.supabaseUrl).trim())?`The Supabase URL in config.js is “${esc(CFG.supabaseUrl)}”. It should look like https://abcdefgh.supabase.co, the Project URL from Project Settings, API (not the dashboard address).`:'';
+ if(cfgBad&&window.supabase){gate(`<h1 style="font:800 20px var(--fh);margin:0 0 6px">Almost there</h1><p class="sm" style="margin:0">${cfgBad} Fix config.js and push again.</p>`);return}
  if(!window.supabase||!CFG.supabaseUrl||!CFG.supabaseKey){gate(`<h1 style="font:800 20px var(--fh);margin:0 0 6px">Almost there</h1><p class="sm" style="margin:0">${window.supabase?'Add the Supabase project URL and anon key to <b>config.js</b>, then push again.':'The sign-in library did not load. Check the internet connection and reload.'}</p>`);return}
- CLOUD=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+ CLOUD=window.supabase.createClient(String(CFG.supabaseUrl).trim().replace(/\/$/,''),String(CFG.supabaseKey).trim(),{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
  if(/access_token|error_description/.test(location.hash))history.replaceState(null,'',location.pathname+location.search+'#/dashboard');
  const {data:{session}}=await CLOUD.auth.getSession();if(!session)return loginScreen();startWithSession(session)}
 
