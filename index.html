@@ -1645,6 +1645,30 @@ window.mresAliAuto=payload=>{const plan=aliPlan((payload&&payload.conversations)
  return{...r,filed,review}};
 window.mresSynced=()=>typeof CLOUD==='undefined'||!CLOUD?true:(!syncing&&!anyDirty());
 
+/* ================= remove all sample data (the made-up records shipped for the demo) ================= */
+const SAMPLE_KEYS=['emails','calls','tasks','deals','srcReqs','squotes','smsgs','stasks','suppliers'];
+function samplePlan(){const p={};if(!S)return p;
+ const goneReq=new Set((S.srcReqs||[]).filter(r=>r.demo).map(r=>r.id)),goneCall=new Set((S.calls||[]).filter(c=>c.demo).map(c=>c.id));
+ const drop=(k,f)=>{const a=S[k]||[];const ids=a.filter(f).map(x=>x.id);if(ids.length)p[k]=ids};
+ drop('emails',e=>e.demo);drop('calls',c=>c.demo);drop('tasks',t=>t.demo||goneCall.has(t.call));drop('deals',d=>d.demo);drop('srcReqs',r=>r.demo);
+ drop('squotes',q=>q.demo||goneReq.has(q.req));drop('smsgs',m=>m.demo||goneReq.has(m.req));drop('stasks',t=>t.demo||goneReq.has(t.req));
+ /* a sample supplier stays if anything real points at it (a real quote, message or task) */
+ const keep=k=>(S[k]||[]).filter(x=>!(p[k]||[]).includes(x.id)).map(x=>x.supplier);
+ const used=new Set([...keep('squotes'),...keep('smsgs'),...keep('stasks')]);
+ drop('suppliers',s=>s.demo&&!used.has(s.id));return p}
+const sampleCount=()=>Object.values(samplePlan()).reduce((n,a)=>n+a.length,0);
+const SAMPLE_LABEL={emails:'emails',calls:'calls',tasks:'tasks',deals:'deals',srcReqs:'RFQs',squotes:'supplier quotes',smsgs:'supplier messages',stasks:'supplier follow-ups',suppliers:'suppliers'};
+A['samples-clear']=()=>{closeDD();const p=samplePlan(),n=sampleCount();if(!n)return toast('There is no sample data left.');
+ const list=SAMPLE_KEYS.filter(k=>p[k]).map(k=>`<li>${p[k].length} ${SAMPLE_LABEL[k]}</li>`).join('');
+ modal('Remove all sample data',`<p style="margin:0 0 8px">This removes the made-up records that came with the ERP (the ones marked <b>Sample</b>), for everyone:</p><ul style="margin:0 0 8px 18px">${list}</ul><p class="muted sm" style="margin:0">Your real orders, customers, items, RFQs, emails and Alibaba quotes stay as they are. This can't be undone.</p>`,
+  {label:`Remove ${n} sample records`,submit:()=>{const q=samplePlan();let c=0;SAMPLE_KEYS.forEach(k=>{if(!q[k])return;const ids=new Set(q[k]);S[k]=(S[k]||[]).filter(x=>!ids.has(x.id));c+=ids.size});
+   log(`Removed ${c} sample records`,SAMPLE_KEYS.filter(k=>q[k]).map(k=>({f:SAMPLE_LABEL[k][0].toUpperCase()+SAMPLE_LABEL[k].slice(1),from:String(q[k].length),to:'0'})));save();toast(`Removed ${c} sample records`);rerender()}})};
+const _usermenuX=A.usermenu;A.usermenu=d=>{_usermenuX(d);const dd=$('#dd');if(!dd)return;const n=sampleCount();if(!n)return;
+ dd.insertAdjacentHTML('beforeend',`<button class="item" data-action="samples-clear">Remove all sample data <span class="muted sm">(${n})</span></button>`)};
+/* a reminder on the dashboard while samples are still listed */
+const _renderX=render;render=function(k){_renderX(k);if(!S||parse().r!=='dashboard')return;const n=sampleCount();if(!n||$('#sample-note'))return;
+ const v=$('#view');if(v)v.insertAdjacentHTML('afterbegin',`<div class="note" id="sample-note" style="margin-bottom:14px">${ic('box',14)} <span class="grow">${n} made-up sample records (marked Sample) are still mixed in with your real data.</span>${btn('Remove all sample data','samples-clear',{},'sm')}</div>`)};
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
@@ -1837,6 +1861,16 @@ window.mresAliToken=async()=>{if(!CLOUD)return{error:'not signed in'};const toke
 window.mresAliPull=async token=>{const {data,error}=await CLOUD.from('erp_ali_drops').select('id,payload').eq('token',token);if(error)return{error:error.message};const convs=[];(data||[]).forEach(d=>convs.push(...((d.payload&&d.payload.conversations)||[])));
  const r=convs.length?mresAliAuto({conversations:convs}):{nm:0,nq:0,ns:0,filed:[],review:[]};await CLOUD.from('erp_ali_drops').delete().eq('token',token);await CLOUD.from('erp_ali_tokens').delete().eq('token',token);
  for(let i=0;i<40&&!mresSynced();i++)await new Promise(x=>setTimeout(x,250));return{drops:(data||[]).length,conversations:convs.length,messages:r.nm,quotes:r.nq,newSuppliers:r.ns,filed:r.filed,needsReview:r.review.length,reviewSample:r.review.slice(0,5),saved:mresSynced()}};
+
+/* the real 7 am digest: replaces the simulated "send now" on Sourcing > Team digest with an emailed preview */
+A['digest-preview']=async()=>{const b=$('[data-action="digest-preview"]');if(b){b.disabled=true;b.textContent='Sending…'}
+ const {data,error}=await CLOUD.functions.invoke('digest',{body:{}});let msg=data&&data.error;if(error&&!msg){try{msg=(await error.context.json()).error}catch(x){msg=error.message}}
+ if(b){b.disabled=false;b.textContent='Email me a preview'}
+ if(msg)return toast(/not found|404|failed to send a request/i.test(msg)?'The digest isn’t set up in Supabase yet (the digest function).':'Not sent: '+msg,true);
+ if(data&&data.failed&&data.failed.length)return toast('Not sent: '+data.failed[0],true);
+ log(`Emailed a digest preview to ${USER.name}`);save();toast(`Preview sent to ${(data&&data.sent||[]).join(', ')||'you'}`)};
+const _renderDg=render;render=function(k){_renderDg(k);if(!CLOUD)return;const b=$('#view [data-action="digest-send"]');if(!b)return;
+ const p=b.closest('.pager');if(p)p.innerHTML=`<span>The whole team gets this by email every weekday at 7 am Pacific, with unanswered email, new quotes, follow-ups and orders that need us.</span>${btn('Email me a preview','digest-preview',{},'sm')}`};
 
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
