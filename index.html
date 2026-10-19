@@ -1766,6 +1766,64 @@ const _renderF=render;render=function(k){_renderF(k);if(!S)return;const {r,id}=p
 /* check once on open and then every hour while the ERP is open */
 setTimeout(()=>{try{if(S&&autoSupplierFollowUps()){save();rerender()}}catch(e){}},4000);setInterval(()=>{try{if(S&&autoSupplierFollowUps()){save();rerender()}}catch(e){}},36e5);
 
+/* ================= build lists (bills of materials): create and edit them, label each part, plan builds and see what to buy ================= */
+const newItem=(sku,desc,label,extra={})=>{const it={sku,id:sku,name:desc||sku,desc:desc||sku,cat:extra.cat||'Components',type:'Inventory',vendor:null,cost:null,price:null,lead:null,min:0,max:0,onhand:+extra.onhand||0,alloc:0,loc:extra.loc||'',moq:null,url:'',usedIn:[],flags:[],row:null,src:[],label:label||'',...extra};itemFlags(it);S.items.push(it);return it};
+function bomRow(c={},i){const it=c.sku?item(c.sku):null;return `<tr class="bomrow"><td><input class="input" name="b_sku" list="bom-skus" value="${esc(c.sku||'')}" placeholder="Part # (pick or type a new one)" aria-label="Part number" style="width:100%;min-width:0"></td>
+ <td><input class="input" name="b_desc" value="${esc(it?(it.desc||it.name):(c.desc||''))}" placeholder="What it is" aria-label="Description" style="width:100%;min-width:0"></td>
+ <td><input class="input" name="b_label" value="${esc(c.label||'')}" placeholder="e.g. Seal kit, Motor end" aria-label="Label" list="bom-labels" style="width:100%;min-width:0"></td>
+ <td><input class="input" name="b_qty" type="number" min="0.01" step="any" value="${esc(c.qty||1)}" aria-label="Quantity per build" style="width:100%;min-width:0"></td>
+ <td class="n sm b-stock">${it?num(it.onhand||0):'<span class="muted">New</span>'}</td>
+ <td><button type="button" class="btn sm ghost" data-action="bom-rm" aria-label="Remove this part">${ic('x',14)}</button></td></tr>`}
+M.bom=id=>{const a=id?S.assemblies.find(x=>x.id===id):null;const f=a&&a.finished?item(a.finished):null;
+ const labels=[...new Set(S.assemblies.flatMap(x=>x.comps.map(c=>c.label)).concat(S.items.map(i=>i.label)).filter(Boolean))];
+ modal(a?`Edit parts list: ${a.id}`:'New build list',`<p class="muted sm" style="margin-top:0">List every part that goes into one finished unit. Pick a part we already have, or type a new part number and description and it is added to the item master. Labels group parts on the list, for example "Seal kit" or "Motor end".</p>
+ <div class="fg">${fld('Build name',inp('bname',a?a.id:'','required placeholder="e.g. GE 1.5 coolant pump"'))}${fld('Finished part # (what we sell)',inp('fsku',f?f.sku:'','list="bom-skus" placeholder="e.g. EQP-PMP-GE15-001"'))}${fld('Finished part description',inp('fdesc',f?(f.desc||f.name):'','placeholder="Shown on quotes and orders"'))}${fld('Builds planned (how many we need to make)',inp('plan',a&&a.plan||'','type="number" min="0" placeholder="0"'))}</div>
+ <datalist id="bom-skus">${S.items.map(i=>`<option value="${esc(i.sku)}">${esc(i.desc||i.name||'')}</option>`).join('')}</datalist><datalist id="bom-labels">${labels.map(l=>`<option value="${esc(l)}">`).join('')}</datalist>
+ <div class="tbl-wrap" style="margin-top:12px"><table style="table-layout:fixed;width:100%;min-width:640px"><colgroup><col style="width:23%"><col style="width:33%"><col style="width:19%"><col style="width:10%"><col style="width:9%"><col style="width:46px"></colgroup><thead><tr><th>Part #</th><th>Description</th><th>Label</th><th class="n">Per build</th><th class="n">On hand</th><th></th></tr></thead><tbody id="bom-rows">${(a?a.comps:[{},{},{}]).map(bomRow).join('')}</tbody></table></div>
+ <div style="margin-top:8px">${btn(ic('plus',14)+' Add a part','bom-add',{},'sm')}</div>`,{wide:true,label:a?'Save parts list':'Create build list',submit:d=>{
+  const name=(d.bname||'').trim();if(!name)return fail('Give the build a name.');if(S.assemblies.some(x=>x!==a&&x.id.toLowerCase()===name.toLowerCase()))return fail(`There is already a build called ${name}.`);
+  const rows=$$('#bom-rows tr').map(r=>({sku:$('[name=b_sku]',r).value.trim(),desc:$('[name=b_desc]',r).value.trim(),label:$('[name=b_label]',r).value.trim(),qty:+$('[name=b_qty]',r).value||0})).filter(r=>r.sku);
+  if(!rows.length)return fail('Add at least one part.');const bad=rows.find(r=>r.qty<=0);if(bad)return fail(`Enter how many ${bad.sku} go into one build.`);
+  const dup=rows.find((r,i)=>rows.findIndex(x=>x.sku.toLowerCase()===r.sku.toLowerCase())!==i);if(dup)return fail(`${dup.sku} is listed twice. Combine the quantities on one line.`);
+  const fsku=(d.fsku||'').trim();if(fsku&&rows.some(r=>r.sku.toLowerCase()===fsku.toLowerCase()))return fail('The finished part can’t also be one of its own parts.');
+  const ch=[],added=[];
+  rows.forEach(r=>{let it=item(r.sku)||S.items.find(i=>i.sku.toLowerCase()===r.sku.toLowerCase());if(!it){it=newItem(r.sku,r.desc||r.sku,r.label);added.push(r.sku)}else{if(r.desc&&!it.desc)it.desc=r.desc;if(r.label&&!it.label)it.label=r.label}r.sku=it.sku});
+  let fin=null;if(fsku){fin=item(fsku)||S.items.find(i=>i.sku.toLowerCase()===fsku.toLowerCase());if(!fin){fin=newItem(fsku,d.fdesc||name,'',{cat:'Finished goods'});added.push(fsku)}else if(d.fdesc&&!fin.desc)fin.desc=d.fdesc}
+  const comps=rows.map(r=>({sku:r.sku,qty:r.qty,...(r.label?{label:r.label}:{})}));const plan=Math.max(0,Math.round(+d.plan||0));
+  if(a){const before=a.comps.map(c=>`${c.sku}×${c.qty}${c.label?' ('+c.label+')':''}`).join(', '),was=a.id;
+   if(a.finished&&a.finished!==(fin&&fin.sku)){const o=item(a.finished);if(o&&o.assembly===a.id)delete o.assembly}
+   a.id=name;a.comps=comps;a.finished=fin?fin.sku:null;a.plan=plan;const after=comps.map(c=>`${c.sku}×${c.qty}${c.label?' ('+c.label+')':''}`).join(', ');
+   if(was!==name)ch.push({f:'Build name',from:was,to:name});if(before!==after)ch.push({f:'Parts',from:before,to:after})}
+  else{S.assemblies.push({id:name,comps,finished:fin?fin.sku:null,plan,created:TODAY,by:USER.name});ch.push({f:'Parts',from:'blank',to:comps.map(c=>`${c.sku}×${c.qty}`).join(', ')})}
+  if(fin)fin.assembly=name;
+  S.items.forEach(i=>{i.usedIn=S.assemblies.filter(x=>x.comps.some(c=>c.sku===i.sku)).map(x=>x.id);itemFlags(i)});
+  if(added.length)ch.push({f:'New parts added',from:'blank',to:added.join(', ')});
+  log(`${a?'Updated':'Created'} the build list for ${name}`,ch);toast(`${name} saved${added.length?`. ${added.length} new part${added.length===1?'':'s'} added to the item master, set their stock and cost there.`:''}`);
+  ui.tabs=ui.tabs||{};setTimeout(()=>{if(parse().r!=='builds')location.hash='#/builds'},0)}});
+ $$('#bom-rows tr').forEach(wireBomRow)};
+function wireBomRow(r){const s=$('[name=b_sku]',r);s.addEventListener('change',()=>{const it=item(s.value.trim());const ds=$('[name=b_desc]',r),st=$('.b-stock',r);if(it){if(!ds.value)ds.value=it.desc||it.name||'';const lb=$('[name=b_label]',r);if(!lb.value&&it.label)lb.value=it.label;st.textContent=num(it.onhand||0)}else st.innerHTML='<span class="muted">New</span>'})}
+A['bom-new']=()=>M.bom();A['bom-edit']=d=>M.bom(d.id);
+A['bom-add']=()=>{const tb=$('#bom-rows');tb.insertAdjacentHTML('beforeend',bomRow({}));wireBomRow(tb.lastElementChild);$('[name=b_sku]',tb.lastElementChild).focus()};
+A['bom-rm']=(d,el)=>{const tb=$('#bom-rows');if(tb.children.length>1)el.closest('tr').remove();else $$('input',el.closest('tr')).forEach(i=>i.value=i.name==='b_qty'?1:'')};
+A['bom-delete']=d=>{const a=S.assemblies.find(x=>x.id===d.id);if(!a)return;if(!confirmBox2(`Delete the build list for ${a.id}? The parts stay in the item master.`))return;
+ S.assemblies=S.assemblies.filter(x=>x!==a);const f=a.finished&&item(a.finished);if(f&&f.assembly===a.id)delete f.assembly;S.items.forEach(i=>{i.usedIn=S.assemblies.filter(x=>x.comps.some(c=>c.sku===i.sku)).map(x=>x.id);itemFlags(i)});
+ log(`Deleted the build list for ${a.id}`,[{f:'Parts',from:a.comps.map(c=>c.sku).join(', '),to:'blank'}]);save();rerender();toast(`${a.id} deleted`)};
+const confirmBox2=t=>{try{return window.confirm(t)}catch(e){return true}};
+/* what to buy for the planned builds: every part, across all build lists, net of stock and open POs */
+function planNeeds(){const need={};S.assemblies.filter(a=>a.plan>0).forEach(a=>a.comps.forEach(c=>{const r=need[c.sku]=need[c.sku]||{sku:c.sku,qty:0,for:[],labels:new Set()};r.qty+=c.qty*a.plan;r.for.push(`${a.plan} × ${a.id}`);if(c.label)r.labels.add(c.label)}));
+ return Object.values(need).map(r=>{const it=item(r.sku)||{};const have=Math.max(0,avail(it)),po=onPO(r.sku),dr=onDraft(r.sku);return{...r,it,have,po,dr,short:Math.max(0,r.qty-have-po),toOrder:Math.max(0,r.qty-have-po-dr)}}).sort((a,b)=>b.short-a.short||a.sku.localeCompare(b.sku))}
+A['plan-po']=()=>{const n=planNeeds().filter(r=>r.toOrder>0).map(r=>({sku:r.sku,gap:r.toOrder}));if(!n.length)return toast('Nothing to order: stock and open POs cover the planned builds.');const r=draftPOs(n,'planned builds');if(r!==false){save();rerender()}};
+const _vb=VIEWS.builds;VIEWS.builds=id=>{let h=_vb(id);const ns=planNeeds(),short=ns.filter(r=>r.short>0);
+ const plan=`<section class="panel mb" id="plan-panel"><div class="ph"><h3>Parts needed for planned builds</h3><div class="actions">${btn(ic('plus',14)+' New build list','bom-new',{},'sm')}${short.some(r=>r.toOrder>0)?btn(ic('truck',14)+' Draft POs for what’s short','plan-po',{},'sm primary'):''}</div></div>
+ ${ns.length?table('plan',['Part','Description','Label','For','#Need','#On hand','#On vendor PO','#Short'],ns.map(r=>`<tr><td><button class="link" data-action="part" data-id="${esc(r.sku)}">${esc(r.sku)}</button></td><td class="sm">${esc(r.it.desc||r.it.name||'')}</td><td class="sm">${[...r.labels].map(l=>chip(l,'plain')).join(' ')}</td><td class="sm muted">${esc(r.for.join(', '))}</td><td class="n">${num(r.qty)}</td><td class="n">${num(r.have)}</td><td class="n">${num(r.po)||'–'}</td><td class="n">${r.short?`<b style="color:var(--alert)">${num(r.short)}</b>`:'<span style="color:var(--ok,#15803d)">0</span>'}</td></tr>`)):`<div class="empty" style="padding:18px">Set “Builds planned” on a build list (Edit parts list) and this shows every part you need, what’s on the shelf, and what’s short.</div>`}</section>`;
+ const i=h.indexOf('<div class="kpis"');return i>=0?h.slice(0,i)+plan+h.slice(i):plan+h};
+const _renderB=render;render=function(k){_renderB(k);if(!S||parse().r!=='builds')return;
+ S.assemblies.forEach(a=>{const t=$$('#view table').find(x=>x.dataset.tbl==='bom-'+a.id);if(!t)return;const sec=t.closest('section');const act=sec&&sec.querySelector('.actions');
+  if(act&&!act.querySelector('[data-action="bom-edit"]'))act.insertAdjacentHTML('afterbegin',`${btn(ic('wrench',14)+' Edit parts list','bom-edit',{id:a.id},'sm')}${btn('Delete','bom-delete',{id:a.id},'sm ghost')}`);
+  if(a.plan&&sec&&!sec.querySelector('.plan-chip')){const h3=sec.querySelector('h3');if(h3)h3.insertAdjacentHTML('beforeend',` <span class="chip info plan-chip" style="margin-left:6px">${num(a.plan)} planned</span>`)}
+  $$('tbody tr',t).forEach((tr,i)=>{const c=a.comps[i];if(c&&c.label&&!tr.querySelector('.bom-label'))tr.children[0].insertAdjacentHTML('beforeend',`<div class="bom-label">${chip(c.label,'plain')}</div>`)})});
+ staffMask($('#view'))};
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
