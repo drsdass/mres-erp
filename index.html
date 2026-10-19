@@ -1669,10 +1669,84 @@ const _usermenuX=A.usermenu;A.usermenu=d=>{_usermenuX(d);const dd=$('#dd');if(!d
 const _renderX=render;render=function(k){_renderX(k);if(!S||parse().r!=='dashboard')return;const n=sampleCount();if(!n||$('#sample-note'))return;
  const v=$('#view');if(v)v.insertAdjacentHTML('afterbegin',`<div class="note" id="sample-note" style="margin-bottom:14px">${ic('box',14)} <span class="grow">${n} made-up sample records (marked Sample) are still mixed in with your real data.</span>${btn('Remove all sample data','samples-clear',{},'sm')}</div>`)};
 
+/* ================= roles: owners see everything; staff don't see margins, Finance, Accounting or QuickBooks ================= */
+if(!USER.role)USER.role='admin';
+const isOwner=()=>['admin','owner'].includes(String(USER.role||'').toLowerCase());
+const OWNER_ONLY=['finance','accounting','quickbooks'];
+OWNER_ONLY.forEach(k=>{if(!VIEWS[k])return;const v=VIEWS[k];VIEWS[k]=id=>isOwner()?v(id):`<h1 style="font:800 24px var(--fh);margin:0 0 8px">Owners only</h1><div class="empty">This page is for owners. Ask Satish or Denny if you need something from it.</div>`});
+const STAFF_COLS=/^(margin|gm|gm %|gross margin|margin %|buy)$/i,STAFF_KPIS=/^(cost|gross margin|margin)$/i;
+function staffMask(root){if(isOwner()||!root)return;
+ root.querySelectorAll('table').forEach(t=>{const hs=[...t.querySelectorAll('thead th')];const idx=hs.map((h,i)=>STAFF_COLS.test(h.textContent.trim())?i:-1).filter(i=>i>=0);if(!idx.length)return;
+  t.querySelectorAll('tr').forEach(tr=>idx.forEach(i=>{const c=tr.children[i];if(c&&!c.hasAttribute('colspan'))c.style.display='none'}))});
+ root.querySelectorAll('.kpi').forEach(k=>{const l=k.querySelector('.l');if(l&&STAFF_KPIS.test(l.textContent.trim()))k.style.display='none'});
+ root.querySelectorAll('#qmargin').forEach(x=>x.style.display='none');
+ root.querySelectorAll('.kpi .s').forEach(s=>{if(/margin/i.test(s.textContent))s.textContent=''});
+ root.querySelectorAll('[data-action="q-award"]').forEach(b=>b.style.display='none');
+ root.querySelectorAll('form input[name="cost"],form input[name="price"]').forEach(i=>{if(i.closest('#mform')&&i.closest('.qline'))return;i.readOnly=true;i.title='Only owners can change costs and prices'})}
+const _renderShellR=renderShell;renderShell=function(){_renderShellR();if(isOwner())return;OWNER_ONLY.forEach(k=>{const a=$(`#side a[data-r="${k}"]`);if(a)a.style.display='none'})};
+const _renderR=render;render=function(k){_renderR(k);staffMask($('#view'))};
+new MutationObserver(()=>staffMask($('#modal-root'))).observe(document.getElementById('modal-root'),{childList:true,subtree:true});
+const _award0=A['q-award'];A['q-award']=d=>{if(!isOwner())return toast('Only owners can award a supplier. Shortlist it and let Satish or Denny know.',true);_award0(d)};
+
+/* ================= customer quotes: branded PDF, and quoting the customer straight from an awarded supplier quote ================= */
+const CO={name:'Mass Renewable Energy Solutions',short:'M-RES',phone:'(855) 742-4612',email:'info@massrenewable.com',web:'massrenewable.com'};
+function loadPDF(){return window.jspdf?Promise.resolve(window.jspdf):new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=()=>res(window.jspdf);s.onerror=()=>rej(new Error('Could not load the PDF maker. Check the internet connection.'));document.head.appendChild(s)})}
+const usd=n=>(n<0?'-$':'$')+Math.abs(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const longDate=s=>s?pd(s).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'';
+async function quotePDF(q){const {jsPDF}=await loadPDF();const doc=new jsPDF({unit:'pt',format:'letter'});const W=612,M=48;const c=acct(q.acct)||{};
+ const navy=[15,42,61],teal=[11,127,171],grey=[107,114,128],ink=[31,41,55],line=[229,231,235];
+ const T=(t,x,y,o={})=>{doc.setFont('helvetica',o.b?'bold':'normal');doc.setFontSize(o.s||10);doc.setTextColor(...(o.c||ink));doc.text(String(t??''),x,y,o.a?{align:o.a}:undefined)};
+ doc.setFillColor(...teal);doc.rect(0,0,W,6,'F');
+ T('MASS RENEWABLE',M,52,{b:1,s:17,c:navy});T('ENERGY SOLUTIONS',M,66,{b:1,s:8.5,c:teal});
+ T([CO.phone,CO.email,CO.web].join('  ·  '),M,82,{s:8.5,c:grey});
+ T('QUOTATION',W-M,52,{b:1,s:20,c:navy,a:'right'});T(q.id,W-M,70,{b:1,s:11,c:teal,a:'right'});
+ const date=q.date||TODAY,valid=q.valid||iso(addDays(pd(date),30));
+ T(`Date: ${longDate(date)}`,W-M,86,{s:9,c:grey,a:'right'});T(`Valid until: ${longDate(valid)}`,W-M,99,{s:9,c:grey,a:'right'});
+ doc.setDrawColor(...line);doc.setLineWidth(1);doc.line(M,114,W-M,114);
+ let y=136;T('PREPARED FOR',M,y,{b:1,s:8,c:teal});T('DETAILS',330,y,{b:1,s:8,c:teal});y+=16;
+ const left=[c.name||'Customer',c.contact||'',q.email||c.email||'',q.shipTo?'Ship to: '+q.shipTo:''].filter(Boolean);
+ const right=[['Customer PO',q.cpo||'–'],['Lead time',q.lead||'Confirmed on order'],['Payment terms',c.terms||'Net 30'],['Prepared by',q.by||USER.name]];
+ left.forEach((t,i)=>T(t,M,y+i*14,{b:i===0,s:i===0?11:9.5}));right.forEach(([k,v],i)=>{T(k,330,y+i*14,{s:9,c:grey});T(v,420,y+i*14,{s:9.5})});
+ y+=Math.max(left.length,right.length)*14+18;
+ // line items
+ const cols=[[M,'#'],[M+22,'PART'],[M+150,'DESCRIPTION'],[W-M-170,'QTY','right'],[W-M-85,'UNIT PRICE','right'],[W-M,'AMOUNT','right']];
+ doc.setFillColor(243,244,246);doc.rect(M-6,y-12,W-2*M+12,20,'F');cols.forEach(([x,h,a])=>T(h,x,y+2,{b:1,s:8,c:grey,a}));y+=22;
+ let sub=0;q.lines.forEach((l,i)=>{const it=item(l.sku)||{};const desc=doc.setFontSize(9)&&doc.splitTextToSize(String(it.desc||it.name||''),W-M-170-(M+150)-40);const h=Math.max(1,desc.length)*12+8;
+  if(y+h>700){doc.addPage();y=60}
+  const amt=(+l.qty||0)*(+l.price||0);sub+=amt;
+  T(i+1,M,y,{s:9,c:grey});T(l.sku,M+22,y,{b:1,s:9.5});desc.forEach((d,j)=>T(d,M+150,y+j*12,{s:9}));T(num(l.qty),W-M-170,y,{s:9.5,a:'right'});T(usd(l.price),W-M-85,y,{s:9.5,a:'right'});T(usd(amt),W-M,y,{s:9.5,a:'right'});
+  y+=h;doc.setDrawColor(...line);doc.line(M-6,y-8,W-M+6,y-8)});
+ // totals
+ y+=8;const fr=+q.freight||0;const rows=[['Subtotal',usd(sub)],...(fr?[['Freight',usd(fr)]]:[])];
+ rows.forEach(([k,v])=>{T(k,W-M-110,y,{s:9.5,c:grey});T(v,W-M,y,{s:9.5,a:'right'});y+=16});
+ doc.setFillColor(...navy);doc.rect(W-M-180,y-10,186,26,'F');T('TOTAL (USD)',W-M-170,y+7,{b:1,s:9.5,c:[255,255,255]});T(usd(sub+fr),W-M,y+7,{b:1,s:12,c:[255,255,255],a:'right'});y+=44;
+ // terms
+ if(y>640){doc.addPage();y=60}
+ T('TERMS',M,y,{b:1,s:8,c:teal});y+=14;
+ [`Prices are in US dollars and valid until ${longDate(valid)}.`,fr?'Freight is included as shown above.':'Freight, duties and taxes are not included unless shown above.','Lead time is confirmed when we receive your purchase order.',`To order, reply to this email or send your PO to ${CO.email}.`].forEach(t=>{T('•  '+t,M,y,{s:9});y+=13});
+ if(q.note){y+=6;doc.setFontSize(9);doc.splitTextToSize(q.note,W-2*M).forEach(t=>{T(t,M,y,{s:9});y+=12})}
+ // footer on every page
+ const pages=doc.getNumberOfPages();for(let p=1;p<=pages;p++){doc.setPage(p);doc.setDrawColor(...line);doc.line(M,750,W-M,750);T(`${CO.name}  ·  ${CO.phone}  ·  ${CO.email}  ·  ${CO.web}`,W/2,764,{s:8,c:grey,a:'center'});if(pages>1)T(`Page ${p} of ${pages}`,W-M,764,{s:8,c:grey,a:'right'})}
+ return doc}
+const quoteFile=q=>`${q.id} ${(aname(q.acct)||'Quote').replace(/[^\w\- ]+/g,'')}.pdf`.replace(/\s+/g,' ');
+A['quote-pdf']=async d=>{const q=byId(S.quotes,d.id);if(!q)return;try{const doc=await quotePDF(q);doc.save(quoteFile(q));log(`Downloaded the PDF of quote ${q.id}`)}catch(e){toast(e.message,true)}};
+/* PDF button (and, in the shared ERP, Email) on every quote */
+const _mq=M.quote;M.quote=id=>{_mq(id);const q=byId(S.quotes,id);const foot=$('#modal-root .mfoot, #modal-root footer');const close=$('#modal-root footer [data-action="close-modal"]');
+ const html=`<button type="button" class="btn" data-action="quote-pdf" data-id="${esc(id)}">${ic('box',14)} PDF</button>${(typeof CLOUD!=="undefined"&&CLOUD)&&q&&q.status!=='Lost'?`<button type="button" class="btn" data-action="quote-email" data-id="${esc(id)}">${ic('mail',14)} Email to customer</button>`:''}`;
+ if(close)close.insertAdjacentHTML('beforebegin',html)};
+/* award a supplier quote, then quote the customer at a chosen margin */
+const _award1=M.award;M.award=qid=>{_award1(qid);const f=$('#modal-root form');if(!f)return;const q=byId(S.squotes,qid);const L=landed(q);f.dataset.award=qid;
+ const g=f.querySelector('.fg');if(g&&L)g.insertAdjacentHTML('beforeend',`<label class="check-inline f"><input type="checkbox" name="custQuote"> Then quote the customer</label>${fld('Margin for the customer quote (%)',inp('custMargin',30,'type="number" min="0" max="95" step="1"'))}<div class="f full muted sm" id="cq-note">At 30% margin the customer price is ${usd(L/(1-0.3))} each (landed cost ${usd(L)}).</div>`);
+ const m=f.querySelector('[name=custMargin]');if(m)m.addEventListener('input',()=>{const p=Math.min(95,Math.max(0,+m.value||0));const n=$('#cq-note');if(n)n.textContent=`At ${p}% margin the customer price is ${usd(L/(1-p/100))} each (landed cost ${usd(L)}).`})};
+document.addEventListener('submit',e=>{const f=e.target;if(!f.dataset||!f.dataset.award)return;const d=Object.fromEntries(new FormData(f));if(!d.custQuote)return;
+ const q=byId(S.squotes,f.dataset.award),r=sreq(q.req);if(!d.sku){setTimeout(()=>toast('Pick the part on the award form to quote the customer.',true),50);return}
+ const m=Math.min(95,Math.max(0,+d.custMargin||0))/100,price=Math.round(landed(q)/(1-m)*100)/100,qty=r&&r.qty||+d.qty||1;
+ setTimeout(()=>{M.newQuote({lines:[{sku:d.sku,qty,price}],cpo:''});const n=$('#modal-root form');if(n)n.insertAdjacentHTML('afterbegin',`<div class="note" style="margin-bottom:10px">${ic('tag',14)} <span class="grow">Priced at ${Math.round(m*100)}% margin on the landed cost of ${usd(landed(q))} from ${esc(sup(q.supplier).name.replace(/\.$/,""))}. Pick the customer, then save.</span></div>`)},120)},true);
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
-let CLOUD=null,ME=null,base={},ver={},remoteQ=new Set(),rbase={},rver={},rowQ=new Set(),emailsOk=false,migrateKv=false,syncing=false,again=false,kickT=null,pendingRender=false,syncState='saved';
+let CLOUD=null,ME=null,MEMBERS=[],base={},ver={},remoteQ=new Set(),rbase={},rver={},rowQ=new Set(),emailsOk=false,migrateKv=false,syncing=false,again=false,kickT=null,pendingRender=false,syncState='saved';
 const J=x=>JSON.stringify(x===undefined?null:x);
 
 /* three-way merge, so two people editing different records of the same list never overwrite each other */
@@ -1758,10 +1832,10 @@ function loginScreen(msg){gate(`<h1 style="font:800 22px var(--fh);margin:0 0 4p
 
 async function startWithSession(session){gate('<p class="muted" style="margin:0">Loading the shared data…</p>');
  const email=(session.user.email||'').toLowerCase();
- const {data:members,error:me}=await CLOUD.from('erp_members').select('email,name');
+ let {data:members,error:me}=await CLOUD.from('erp_members').select('email,name,role');if(me&&/role/.test(me.message||'')){({data:members,error:me}=await CLOUD.from('erp_members').select('email,name'))}
  const mine=(members||[]).find(m=>m.email.toLowerCase()===email);
  if(me||!mine){await CLOUD.auth.signOut();return loginScreen(me?'Could not reach the database: '+me.message:`${email} is signed in but not on the M-RES team list. Ask Satish to add you.`)}
- ME={id:session.user.id,email};USER.name=mine.name;USER.initials=mine.name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
+ ME={id:session.user.id,email};USER.name=mine.name;USER.role=mine.role||'member';USER.email=email;MEMBERS=members||[];USER.initials=mine.name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
  members.forEach(m=>{if(!TEAM.includes(m.name))TEAM.push(m.name)});
  let rows,cache=cacheRead(ME.id);
  let mail=null;
@@ -1871,6 +1945,61 @@ A['digest-preview']=async()=>{const b=$('[data-action="digest-preview"]');if(b){
  log(`Emailed a digest preview to ${USER.name}`);save();toast(`Preview sent to ${(data&&data.sent||[]).join(', ')||'you'}`)};
 const _renderDg=render;render=function(k){_renderDg(k);if(!CLOUD)return;const b=$('#view [data-action="digest-send"]');if(!b)return;
  const p=b.closest('.pager');if(p)p.innerHTML=`<span>The whole team gets this by email every weekday at 7 am Pacific, with unanswered email, new quotes, follow-ups and orders that need us.</span>${btn('Email me a preview','digest-preview',{},'sm')}`};
+
+/* ================= sign-off: shown under the reply box so people know it's added ================= */
+const _renderSig=render;render=function(k){_renderSig(k);if(!CLOUD||!emailsOk||parse().r!=='inbox')return;const f=$('#view form[data-form="reply"]');if(!f||f.querySelector('.sig-note'))return;
+ const b=f.querySelector('button[value="send"]');if(!b)return;
+ b.closest('div,footer')?.insertAdjacentHTML('beforebegin',`<div class="sig-note muted sm" style="margin:6px 0 8px">Your sign-off is added for you: <b>${esc(USER.name)}</b> · Mass Renewable Energy Solutions · (855) 742-4612 · ${esc(INBOX)} · massrenewable.com</div>`)};
+
+/* ================= email a customer quote with its PDF ================= */
+const b64OfDoc=doc=>doc.output('datauristring').split(',')[1];
+const quoteConv=q=>(S.emails||[]).find(e=>(e.links||[]).some(l=>l.t==='quote'&&l.id===q.id)&&isAddr(e.from));
+A['quote-email']=d=>{const q=byId(S.quotes,d.id);if(!q)return;const c=acct(q.acct)||{};const conv=quoteConv(q);
+ const to=q.email||c.email||(conv&&conv.from)||'';const first=(c.contact||'').split(/\s+/)[0];
+ const msg=`Hi${first?' '+first:''},\n\nThank you for the opportunity. Our quote ${q.id} is attached${q.lead?`, with a lead time of ${q.lead}`:''}. It is valid until ${longDate(q.valid||iso(addDays(pd(q.date||TODAY),30)))}.\n\nTo order, reply to this email or send your PO to ${INBOX}. Let me know if you have any questions.\n\nThank you,`;
+ closeModal();
+ modal(`Email quote ${q.id}`,`<div class="fg">${fld('To',inp('to',to,'type="email" required placeholder="buyer@company.com"'))}${fld('Subject',inp('subject',conv?conv.subject:`Quote ${q.id} from Mass Renewable Energy Solutions`))}${fld('Message',`<textarea name="text" rows="9">${esc(msg)}</textarea>`,true)}<div class="f full muted sm">${ic('box',14)} ${esc(quoteFile(q))} is attached, and your sign-off is added. ${conv?'It goes out as a reply in the existing email conversation with this customer.':'A copy lands in the Inbox so the team can see the customer’s answer.'}</div></div>`,{wide:true,label:'Send quote',submit:(v,f)=>{
+  if(!isAddr(v.to))return fail('Enter the customer’s email address.');
+  const btns=$$('button',f.closest('.modal')||f);btns.forEach(x=>x.disabled=true);const sb=f.closest('.modal')?.querySelector('.primary');if(sb)sb.textContent='Sending…';
+  (async()=>{try{const doc=await quotePDF({...q,email:v.to});const body={to:v.to.trim(),subject:v.subject,text:v.text,wait:true,attachments:[{filename:quoteFile(q),content:b64OfDoc(doc),contentType:'application/pdf'}]};
+    if(conv)body.conversationId=conv.id;else body.newConversation={fromName:c.contact||c.name||v.to.split('@')[0],company:c.name||'',acct:q.acct||null,links:[{t:'quote',id:q.id}],cat:'Quote request'};
+    const {data,error}=await CLOUD.functions.invoke('mail-send',{body});let err=data&&data.error;if(error&&!err){try{err=(await error.context.json()).error}catch(x){err=error.message}}
+    if(err)throw new Error(err);
+    const ch=[];if(q.status==='Draft'){ch.push(...stCh('Draft','Sent'));q.status='Sent'}q.sentOn=TODAY;q.sentTo=v.to.trim();q.by=q.by||USER.name;
+    if(c&&c.id&&!c.email){c.email=v.to.trim();ch.push({f:`${c.name} email`,from:'blank',to:c.email})}
+    log(`Emailed quote ${q.id} to ${v.to.trim()}`,ch);if(data&&data.conversationId)rowQ.add(data.conversationId);save();kick();closeModal();toast(`Quote ${q.id} sent to ${v.to.trim()}`);rerender()}
+   catch(e){btns.forEach(x=>x.disabled=false);if(sb)sb.textContent='Send quote';toast('Not sent: '+e.message,true)}})();return false}})};
+
+/* ================= team and roles (owners) ================= */
+const ROLE_LABEL={admin:'Owner',owner:'Owner',member:'Staff'};
+async function loadTeam(){const {data,error}=await CLOUD.from('erp_members').select('email,name,role').order('name');if(error)throw error;MEMBERS=data||[];return MEMBERS}
+A.team=async()=>{closeDD();let list;try{list=await loadTeam()}catch(e){return toast('Could not load the team: '+e.message,true)}const own=isOwner();
+ modal('Team and roles',`<p class="muted sm" style="margin-top:0"><b>Owners</b> see everything, award suppliers, change costs and prices, manage the team and restore backups. <b>Staff</b> handle email, orders and sourcing, without margins, Finance, Accounting or QuickBooks.</p>
+ ${table('team',['Name','Email','Role',''],list.map(m=>`<tr><td><b>${esc(m.name)}</b>${m.email.toLowerCase()===USER.email?' <span class="muted sm">(you)</span>':''}</td><td class="sm">${esc(m.email)}</td><td>${own&&m.email.toLowerCase()!==USER.email?`<select data-team-role="${esc(m.email)}" aria-label="Role for ${esc(m.name)}">${opt('admin','Owner',['admin','owner'].includes(m.role))}${opt('member','Staff',!['admin','owner'].includes(m.role))}</select>`:esc(ROLE_LABEL[m.role]||'Staff')}</td><td>${own&&m.email.toLowerCase()!==USER.email?`<button type="button" class="btn sm" data-action="team-remove" data-email="${esc(m.email)}">Remove</button>`:''}</td></tr>`))}
+ ${own?`<h3 style="font:700 14px var(--fh);margin:16px 0 8px">Add someone</h3><div class="fg">${fld('Name',inp('name','','placeholder="e.g. JJ"'))}${fld('Email they sign in with',inp('email','','type="email"'))}${fld('Role',`<select name="role">${opt('member','Staff',true)}${opt('admin','Owner')}</select>`)}</div><p class="muted sm">Then invite them from Supabase, Authentication, Users, so they get a sign-in link.</p>`:''}`,
+ {wide:true,label:own?'Add to the team':'Close',submit:v=>{if(!own)return;if(!v.name||!isAddr(v.email))return fail('Enter a name and a valid email.');(async()=>{
+  const {error}=await CLOUD.from('erp_members').insert({email:v.email.trim().toLowerCase(),name:v.name.trim(),role:v.role});if(error)return toast('Could not add: '+(/row-level|policy/.test(error.message)?'only owners can add people (run the roles SQL in Supabase first)':error.message),true);
+  if(!TEAM.includes(v.name.trim()))TEAM.push(v.name.trim());log(`Added ${v.name.trim()} (${v.email.trim()}) to the team as ${ROLE_LABEL[v.role]}`);save();toast(`${v.name.trim()} added. Now invite them from Supabase.`)})()}})};
+document.addEventListener('change',async e=>{const s=e.target;if(!s.dataset||!s.dataset.teamRole)return;const m=MEMBERS.find(x=>x.email===s.dataset.teamRole);const was=m&&m.role;
+ const {data,error}=await CLOUD.from('erp_members').update({role:s.value}).eq('email',s.dataset.teamRole).select('email');
+ if(error||!data||!data.length){toast('Could not change the role'+(error?': '+error.message:'. Only owners can change roles.'),true);if(m)s.value=['admin','owner'].includes(was)?'admin':'member';return}
+ if(m)m.role=s.value;log(`Changed ${m?m.name:s.dataset.teamRole}'s role`,[{f:'Role',from:ROLE_LABEL[was]||'Staff',to:ROLE_LABEL[s.value]}]);save();toast('Role updated. It applies the next time they open the ERP.')});
+A['team-remove']=async d=>{const m=MEMBERS.find(x=>x.email===d.email);if(!m)return;if(!confirmBox(`Remove ${m.name} from the team? They won't be able to open the ERP.`))return;
+ const {data,error}=await CLOUD.from('erp_members').delete().eq('email',d.email).select('email');if(error||!data||!data.length)return toast('Could not remove'+(error?': '+error.message:'. Only owners can remove people.'),true);
+ log(`Removed ${m.name} (${m.email}) from the team`);save();toast(`${m.name} removed`);A.team()};
+const confirmBox=t=>{try{return window.confirm(t)}catch(e){return true}};
+
+/* ================= backups ================= */
+const bkdt=s=>new Date(s).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+A.backups=async()=>{closeDD();const {data,error}=await CLOUD.rpc('erp_backup_list');if(error)return toast(/function|schema cache|not exist/i.test(error.message)?'Backups aren’t set up yet. Run the backups SQL in Supabase.':'Could not load backups: '+error.message,true);const own=isOwner();
+ modal('Backups',`<p class="muted sm" style="margin-top:0">A full copy of the ERP is saved every night at 3 am Pacific and kept for 30 days. ${own?'Restoring puts every section back the way it was at that moment. Emails that arrived since are kept, and a copy of the current data is saved first, so a restore can be undone.':'Only owners can restore a backup.'}</p>
+ ${table('bk',['Taken','Type','By','#Size',''],(data||[]).map(b=>`<tr><td>${esc(bkdt(b.taken_at))}</td><td>${esc(b.kind==='nightly'?'Nightly':b.kind==='before restore'?'Before a restore':'Manual')}${b.note?`<div class="muted sm">${esc(b.note)}</div>`:''}</td><td class="sm">${esc(b.taken_by||'')}</td><td class="n sm">${num(b.size_kb||0)} KB</td><td>${own?`<button type="button" class="btn sm" data-action="backup-restore" data-id="${b.id}" data-when="${esc(bkdt(b.taken_at))}">Restore</button>`:''}</td></tr>`),'No backups yet. The first one runs tonight.')}`,
+ {wide:true,label:'Back up now',submit:()=>{(async()=>{const {error:e}=await CLOUD.rpc('erp_backup',{p_kind:'manual',p_note:null});if(e)return toast('Backup failed: '+e.message,true);log('Took a manual backup of the ERP');save();toast('Backup saved');setTimeout(A.backups,300)})()}})};
+A['backup-restore']=async d=>{if(!isOwner())return toast('Only owners can restore a backup.',true);if(!confirmBox(`Restore the ERP to how it was on ${d.when}? Changes made since then are replaced (emails that arrived since are kept). A copy of the current data is saved first.`))return;
+ toast('Restoring…');const {data,error}=await CLOUD.rpc('erp_restore',{p_id:+d.id});if(error)return toast('Restore failed: '+error.message,true);
+ try{localStorage.removeItem(CK)}catch(e){}toast(`Restored ${data.sections} sections and ${data.conversations} conversations. Reloading…`);setTimeout(()=>location.reload(),1200)};
+const _usermenuT=A.usermenu;A.usermenu=d=>{_usermenuT(d);const dd=$('#dd');if(!dd||!CLOUD)return;const so=dd.querySelector('[data-action="sign-out"]');if(!so)return;
+ so.insertAdjacentHTML('beforebegin',`<button class="item" data-action="team">${isOwner()?'Team and roles':'Team'}</button><button class="item" data-action="backups">Backups</button>`)};
 
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
