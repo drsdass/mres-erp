@@ -1743,6 +1743,29 @@ document.addEventListener('submit',e=>{const f=e.target;if(!f.dataset||!f.datase
  const m=Math.min(95,Math.max(0,+d.custMargin||0))/100,price=Math.round(landed(q)/(1-m)*100)/100,qty=r&&r.qty||+d.qty||1;
  setTimeout(()=>{M.newQuote({lines:[{sku:d.sku,qty,price}],cpo:''});const n=$('#modal-root form');if(n)n.insertAdjacentHTML('afterbegin',`<div class="note" style="margin-bottom:10px">${ic('tag',14)} <span class="grow">Priced at ${Math.round(m*100)}% margin on the landed cost of ${usd(landed(q))} from ${esc(sup(q.supplier).name.replace(/\.$/,""))}. Pick the customer, then save.</span></div>`)},120)},true);
 
+/* ================= follow-ups: quotes the customer hasn't answered, and suppliers who went quiet ================= */
+const FU_DAYS=3;
+const daysSince=d=>d?Math.floor((pd(TODAY)-pd(String(d).slice(0,10)))/864e5):0;
+const quoteConvOf=q=>(S.emails||[]).find(e=>(e.links||[]).some(l=>l.t==='quote'&&l.id===q.id));
+function quoteFollowUps(){return(S.quotes||[]).filter(q=>q.status==='Sent'&&!q.demo).map(q=>{const sent=q.sentOn||q.date;const last=q.fuOn&&q.fuOn>(sent||'')?q.fuOn:sent;
+  const conv=quoteConvOf(q);const answered=conv&&(conv.thread||[]).some(m=>m.dir==='in'&&(m.t||'').slice(0,10)>=(sent||''));
+  return{q,sent,last,days:daysSince(last),conv,answered,n:q.fuCount||0}}).filter(x=>x.last&&!x.answered&&x.days>=FU_DAYS).sort((a,b)=>b.days-a.days)}
+/* suppliers we wrote to on an open RFQ who haven't answered in 3 days get a follow-up, once per supplier and RFQ */
+function autoSupplierFollowUps(){if(!S||!S.srcReqs||!S.smsgs)return 0;let n=0;const open=new Set(S.srcReqs.filter(r=>r.status==='Open').map(r=>r.id));const seen=new Set();
+ S.smsgs.filter(m=>m.req&&open.has(m.req)).sort((a,b)=>(a.t||'')<(b.t||'')?1:-1).forEach(m=>{const k=m.supplier+'|'+m.req;if(seen.has(k))return;seen.add(k);
+  if(m.dir!=='out'||daysSince(m.t)<FU_DAYS)return;if(S.stasks.some(t=>t.supplier===m.supplier&&t.req===m.req&&(!t.done||(t.auto&&t.after===m.id))))return;
+  const r=sreq(m.req);S.stasks.push({id:nextId(S.stasks,'ST-'),supplier:m.supplier,req:m.req,text:`Nudge ${sup(m.supplier).name.replace(/\.$/,'')} on ${r.no||r.title}: no answer since ${fds(String(m.t).slice(0,10))}`,due:TODAY,done:false,auto:true,after:m.id});n++});
+ if(n)log(`Added ${n} supplier follow-up${n===1?'':'s'} for suppliers who haven't answered in ${FU_DAYS} days`);return n}
+const _attF=attention;attention=function(){const a=_attF();const f=quoteFollowUps();if(f.length)a.push({tone:'warn',t:`${f.length} quote${f.length===1?'':'s'} to follow up`,s:f.slice(0,3).map(x=>`${x.q.id} ${aname(x.q.acct)}`).join(', '),to:'sales',tab:['sales','Quotes and price requests']});return a};
+const _ncF=navCounts;navCounts=function(){const c=_ncF();const n=quoteFollowUps().length;if(n)c.sales=(c.sales||0)+n;return c};
+function followPanel(){const f=quoteFollowUps();if(!f.length)return'';const cloud=typeof CLOUD!=='undefined'&&CLOUD;
+ return `<section class="panel" id="fu-panel" style="margin-bottom:16px"><header style="display:flex;align-items:center;gap:8px;padding:12px 14px 4px"><b style="font:700 15px var(--fh)">Quotes to follow up</b><span class="muted sm">Sent ${FU_DAYS}+ days ago with no answer from the customer</span></header>${table('fu',['Quote','Customer','#Total','Sent','Last touch','Follow-ups',''],f.map(x=>`<tr><td><button class="link" data-action="view-quote" data-id="${esc(x.q.id)}">${esc(x.q.id)}</button></td><td>${esc(aname(x.q.acct))}${x.q.sentTo?`<div class="muted sm">${esc(x.q.sentTo)}</div>`:''}</td><td class="n">${$f(x.q.lines.reduce((s,l)=>s+(+l.qty||0)*(+l.price||0),0))}</td><td class="nowrap">${fds(x.sent)}</td><td class="nowrap">${x.days} days ago</td><td class="n">${x.n||'–'}</td><td class="nowrap">${cloud?btn('Email follow-up','quote-fu',{id:x.q.id},'sm'):''} ${btn('Followed up','quote-fu-done',{id:x.q.id},'sm')} ${btn('Lost','quote-lost',{id:x.q.id},'sm')}</td></tr>`))}</section>`}
+A['quote-fu-done']=d=>{const q=byId(S.quotes,d.id);q.fuOn=TODAY;q.fuCount=(q.fuCount||0)+1;log(`Followed up on quote ${q.id} with ${aname(q.acct)}`,[{f:'Follow-ups',from:String(q.fuCount-1),to:String(q.fuCount)}]);save();rerender();toast(`Next reminder for ${q.id} in ${FU_DAYS} days`)};
+const _renderF=render;render=function(k){_renderF(k);if(!S)return;const {r,id}=parse();if(r!=='sales'||id||(ui.tabs&&ui.tabs.sales)!=='Quotes and price requests'||$('#fu-panel'))return;
+ const h=followPanel();if(!h)return;const tb=$('#view .tabs');if(tb)tb.insertAdjacentHTML('afterend',h);staffMask($('#view'))};
+/* check once on open and then every hour while the ERP is open */
+setTimeout(()=>{try{if(S&&autoSupplierFollowUps()){save();rerender()}}catch(e){}},4000);setInterval(()=>{try{if(S&&autoSupplierFollowUps()){save();rerender()}}catch(e){}},36e5);
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
@@ -2000,6 +2023,19 @@ A['backup-restore']=async d=>{if(!isOwner())return toast('Only owners can restor
  try{localStorage.removeItem(CK)}catch(e){}toast(`Restored ${data.sections} sections and ${data.conversations} conversations. Reloading…`);setTimeout(()=>location.reload(),1200)};
 const _usermenuT=A.usermenu;A.usermenu=d=>{_usermenuT(d);const dd=$('#dd');if(!dd||!CLOUD)return;const so=dd.querySelector('[data-action="sign-out"]');if(!so)return;
  so.insertAdjacentHTML('beforebegin',`<button class="item" data-action="team">${isOwner()?'Team and roles':'Team'}</button><button class="item" data-action="backups">Backups</button>`)};
+
+/* ================= one-click follow-up email on a quote ================= */
+A['quote-fu']=d=>{const q=byId(S.quotes,d.id);if(!q)return;const c=acct(q.acct)||{};const conv=quoteConv(q);const to=q.sentTo||c.email||(conv&&conv.from)||'';const first=(c.contact||'').split(/\s+/)[0];
+ const msg=q.fuCount?`Hi${first?' '+first:''},\n\nChecking in once more on quote ${q.id}. If the timing or quantities have changed, I'm happy to re-quote. If you've gone another way, just let me know and I'll close it out.\n\nThank you,`
+  :`Hi${first?' '+first:''},\n\nI wanted to follow up on our quote ${q.id}${q.sentOn?` from ${longDate(q.sentOn)}`:''}. Do you have any questions, or would you like us to adjust quantities or lead time? We can get the order moving as soon as we have your PO.\n\nThank you,`;
+ modal(`Follow up on ${q.id}`,`<div class="fg">${fld('To',inp('to',to,'type="email" required'))}${fld('Subject',inp('subject',conv?conv.subject:`Following up: quote ${q.id} from Mass Renewable Energy Solutions`))}${fld('Message',`<textarea name="text" rows="8">${esc(msg)}</textarea>`,true)}<label class="check-inline f full"><input type="checkbox" name="pdf" checked> Attach the quote PDF again</label><div class="f full muted sm">${conv?'Goes out as a reply in the same email conversation.':'A copy lands in the Inbox.'} Your sign-off is added.</div></div>`,{wide:true,label:'Send follow-up',submit:(v,f)=>{
+  if(!isAddr(v.to))return fail('Enter the customer’s email address.');const sb=f.querySelector('.primary');if(sb){sb.disabled=true;sb.textContent='Sending…'}
+  (async()=>{try{const body={to:v.to.trim(),subject:v.subject,text:v.text,wait:true};if(v.pdf){const doc=await quotePDF({...q,email:v.to});body.attachments=[{filename:quoteFile(q),content:b64OfDoc(doc),contentType:'application/pdf'}]}
+    if(conv)body.conversationId=conv.id;else body.newConversation={fromName:c.contact||c.name||v.to.split('@')[0],company:c.name||'',acct:q.acct||null,links:[{t:'quote',id:q.id}],cat:'Quote request'};
+    const {data,error}=await CLOUD.functions.invoke('mail-send',{body});let err=data&&data.error;if(error&&!err){try{err=(await error.context.json()).error}catch(x){err=error.message}}if(err)throw new Error(err);
+    q.fuOn=TODAY;q.fuCount=(q.fuCount||0)+1;if(!q.sentTo)q.sentTo=v.to.trim();log(`Emailed a follow-up on quote ${q.id} to ${v.to.trim()}`,[{f:'Follow-ups',from:String(q.fuCount-1),to:String(q.fuCount)}]);
+    if(data&&data.conversationId)rowQ.add(data.conversationId);save();kick();closeModal();rerender();toast(`Follow-up sent to ${v.to.trim()}`)}
+   catch(e){if(sb){sb.disabled=false;sb.textContent='Send follow-up'}toast('Not sent: '+e.message,true)}})();return false}})};
 
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
