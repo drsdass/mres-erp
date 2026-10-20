@@ -1880,6 +1880,11 @@ const _renderRB=render;render=function(k){_renderRB(k);if(!S||parse().r!=='inbox
  const ta=f.querySelector('textarea');if(ui.rOpen===id||(ta&&ta.value.trim()))f.classList.remove('rcol');else f.classList.add('rcol')};
 A['reply-open']=()=>{const id=parse().id;ui.rOpen=id;const f=$('#view form[data-form="reply"]');if(!f)return;f.classList.remove('rcol');const ta=f.querySelector('textarea');if(ta)ta.focus()};
 window.addEventListener('hashchange',()=>{if(ui.rOpen&&parse().id!==ui.rOpen)ui.rOpen=null});
+/* emails that reached the ERP without being addressed to info@ or sourcing@ (sent straight to the receiving address): flag them */
+const suspectChip=()=>' <span class="chip" title="Not sent to info@ or sourcing@. It may be spam or phishing." style="font-size:11px;padding:0 6px;background:rgba(220,38,38,.14);color:#dc2626;font-weight:600">Check sender</span>';
+const _renderSus=render;render=function(k){_renderSus(k);if(!S||parse().r!=='inbox')return;
+ $$('#view a.im[href^="#/inbox/"]').forEach(a=>{const m=byId(S.emails,decodeURIComponent(a.getAttribute('href').slice(8)));if(m&&m.suspect&&!a.querySelector('.sus')){const nm=a.querySelector('.nm');if(nm)nm.insertAdjacentHTML('beforeend',suspectChip().replace('class="chip"','class="chip sus"'))}});
+ const m=parse().id&&byId(S.emails,parse().id);const h=$('#view .ihead');if(m&&m.suspect&&h&&!$('#view .sus-note'))h.insertAdjacentHTML('afterend',`<div class="note sus-note" style="margin:10px 0;border-color:rgba(220,38,38,.4);background:rgba(220,38,38,.08)">${ic('alert',14)} <span class="grow">This email wasn't sent to info@ or sourcing@, it went straight to the ERP's receiving address. That's unusual and often spam or phishing. Don't open attachments or links unless you know the sender.</span></div>`)};
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
