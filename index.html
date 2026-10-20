@@ -1826,8 +1826,8 @@ const _renderB=render;render=function(k){_renderB(k);if(!S||parse().r!=='builds'
 
 /* ================= which of our addresses an email was sent to, as a colour-coded tag ================= */
 const BOXES=[{addr:'info@massrenewable.com',tag:'info@',bg:'rgba(14,165,233,.16)',fg:'#0284c7'},{addr:'sourcing@massrenewable.com',tag:'sourcing@',bg:'rgba(245,158,11,.20)',fg:'#c2410c'}];
-function boxOf(m){if(!m||m.channel==='Phone')return'';const i=String(m.inbox||'').toLowerCase();const b=BOXES.find(x=>x.addr===i);return b?b.tag:(m.channel==='Email'&&!m.demo?'info@':'')}
-function inboxTag(m,big){const t=boxOf(m);const b=BOXES.find(x=>x.tag===t);if(!b)return big?esc(INBOX):'';
+function boxOf(m){if(!m||m.channel==='Phone')return'';const i=String(m.inbox||'').toLowerCase();const b=BOXES.find(x=>x.addr===i);return b?b.tag:''}
+function inboxTag(m,big){const t=boxOf(m);const b=BOXES.find(x=>x.tag===t);if(!b)return big?'<span class="muted">an address not recorded yet (older email)</span>':(m.channel==='Email'&&!m.demo?'<span class="chip plain" title="Older email: not tagged yet" style="font-size:11px;padding:0 6px;margin-left:6px">?</span>':'');
  return `<span class="chip" title="Sent to ${esc(b.addr)}" style="background:${b.bg};color:${b.fg};font-weight:600;${big?'':'font-size:11px;padding:0 6px;margin-left:6px'}">${big?esc(b.addr):b.tag}</span>`}
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
@@ -2110,9 +2110,17 @@ A['quote-fu']=d=>{const q=byId(S.quotes,d.id);if(!q)return;const c=acct(q.acct)|
    catch(e){if(sb){sb.disabled=false;sb.textContent='Send follow-up'}toast('Not sent: '+e.message,true)}})();return false}})};
 
 /* tag older emails with the address they were sent to (one quick lookup per browser per day, only while some are untagged) */
-setTimeout(async function tagOld(){try{if(!CLOUD||!emailsOk||!S)return setTimeout(tagOld,5000);const n=(S.emails||[]).filter(e=>e.channel==='Email'&&!e.inbox&&!e.demo).length;if(!n)return;
- const k='mres-tagged-'+TODAY;try{if(localStorage.getItem(k))return;localStorage.setItem(k,'1')}catch(x){}
- const {data}=await CLOUD.functions.invoke('mail-send',{body:{action:'tag-inboxes'}});if(data&&data.tagged){(S.emails||[]).forEach(e=>rowQ.add(e.id));kick()}}catch(e){}},8000);
+async function tagOldEmails(manual){if(!CLOUD||!emailsOk||!S)return;const n=(S.emails||[]).filter(e=>e.channel==='Email'&&!e.inbox&&!e.demo).length;if(!n){if(manual)toast('Every email already shows where it was sent.');return}
+ const k='mres-tagged2-'+TODAY;if(!manual){try{if(localStorage.getItem(k))return}catch(x){}}
+ if(manual)toast(`Checking ${n} older email${n===1?'':'s'}. This takes up to a minute…`);
+ const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{action:'tag-inboxes'}});
+ if(error||!data||data.error||data.checked==null){if(manual)toast('Could not check yet: deploy the latest mail-send in Supabase first.',true);return}
+ try{localStorage.setItem(k,'1')}catch(x){}
+ if(data.tagged){(S.emails||[]).forEach(e=>rowQ.add(e.id));kick()}if(manual)toast(`Tagged ${data.tagged} email${data.tagged===1?'':'s'}${data.unknown?`, ${data.unknown} couldn't be read`:''}`)}
+setTimeout(function w(){if(!CLOUD||!emailsOk||!S)return setTimeout(w,5000);tagOldEmails(false).catch(()=>{})},8000);
+A['tag-old']=()=>tagOldEmails(true).catch(e=>toast(e.message,true));
+const _renderTag=render;render=function(k){_renderTag(k);if(!CLOUD||!emailsOk||parse().r!=='inbox')return;const n=(S.emails||[]).filter(e=>e.channel==='Email'&&!e.inbox&&!e.demo).length;const note=$('#view .note');if(!n||!note||note.querySelector('[data-action="tag-old"]'))return;
+ note.insertAdjacentHTML('beforeend',btn(`Tag ${n} older email${n===1?'':'s'}`,'tag-old',{},'sm'))};
 
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
