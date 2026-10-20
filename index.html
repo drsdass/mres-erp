@@ -1887,6 +1887,186 @@ const _renderSus=render;render=function(k){_renderSus(k);if(!S||parse().r!=='inb
  $$('#view a.im[href^="#/inbox/"]').forEach(a=>{const m=byId(S.emails,decodeURIComponent(a.getAttribute('href').slice(8)));if(m&&m.suspect&&!a.querySelector('.sus')){const nm=a.querySelector('.nm');if(nm)nm.insertAdjacentHTML('beforeend',suspectChip().replace('class="chip"','class="chip sus"'))}});
  const m=parse().id&&byId(S.emails,parse().id);const h=$('#view .ihead');if(m&&m.suspect&&h&&!$('#view .sus-note'))h.insertAdjacentHTML('afterend',`<div class="note sus-note" style="margin:10px 0;border-color:rgba(220,38,38,.4);background:rgba(220,38,38,.08)">${ic('alert',14)} <span class="grow">This email wasn't sent to info@ or sourcing@, it went straight to the ERP's receiving address. That's unusual and often spam or phishing. Don't open attachments or links unless you know the sender.</span></div>`)};
 
+/* ================= shipments and tracking: every tracking number in one place, with a calendar and reminders ================= */
+IC.pin='<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>';
+IC.cal='<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>';
+const CARRIERS=['UPS','FedEx','USPS','DHL','China Post / EMS','Freight (LTL)','Other'];
+const TRK_KINDS=['Vendor PO','RFQ sample','Customer order','Return','Other'];
+function ensureTracks(){if(!Array.isArray(S.tracks))S.tracks=[];return S.tracks}
+const trkClean=n=>String(n||'').replace(/[\s-]/g,'').toUpperCase();
+function trkGuess(n){const s=trkClean(n);if(!s)return'';
+ if(/^1Z[0-9A-Z]{16}$/.test(s))return'UPS';
+ if(/^[A-Z]{2}\d{9}US$/.test(s)||/^9[1-5]\d{18,24}$/.test(s)||/^420\d{5}9\d{20,}$/.test(s))return'USPS';
+ if(/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(s))return'China Post / EMS';
+ if(/^(\d{12}|\d{15}|\d{20}|96\d{20}|\d{34})$/.test(s))return'FedEx';
+ if(/^(\d{10}|JD\d{16,18}|JJD\d{8,})$/.test(s))return'DHL';
+ return'Other'}
+function trkUrl(t){const n=encodeURIComponent(trkClean(t.number));if(t.url&&/^https?:\/\//i.test(t.url))return t.url;if(!n)return'';
+ switch(t.carrier||trkGuess(t.number)){case'UPS':return'https://www.ups.com/track?tracknum='+n;case'FedEx':return'https://www.fedex.com/fedextrack/?trknbr='+n;
+  case'USPS':return'https://tools.usps.com/go/TrackConfirmAction?tLabels='+n;case'DHL':return'https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id='+n;
+  case'Freight (LTL)':return'';default:return'https://t.17track.net/en#nums='+n}}
+/* tracking numbers written in an email: UPS, USPS, postal (China Post, EMS), and anything labelled tracking, waybill or AWB */
+function trkFind(text){const out=[],seen=new Set(),s=String(text||'');
+ const add=(n,c)=>{const k=trkClean(n);if(k.length<8||k.length>34||seen.has(k)||!/\d{5}/.test(k))return;seen.add(k);out.push({number:k,carrier:c||trkGuess(k)})};
+ (s.match(/\b1Z(?: ?[0-9A-Z]){16}\b/gi)||[]).forEach(n=>add(n,'UPS'));
+ (s.match(/\b[A-Z]{2}\d{9}[A-Z]{2}\b/g)||[]).forEach(n=>add(n));
+ (s.match(/\b9[1-5]\d{2}(?: ?\d{4}){4}(?: ?\d{2,6})?\b/g)||[]).forEach(n=>{if(trkClean(n).length>=20)add(n,'USPS')});
+ const lab=/(?:tracking|waybill|air\s?way\s?bill|\bawb|运单号|快递单号)\s*(?:no\.?|number|num|#|code)?\s*(?:is|:|：|#|-)?\s*([A-Z0-9]{8,34}|\d{4}(?: \d{4}){3,6}(?: \d{1,4})?)/gi;let m;
+ while((m=lab.exec(s)))add(m[1]);
+ if(/fed\s?ex/i.test(s))(s.match(/\b\d{12}\b|\b\d{15}\b/g)||[]).forEach(n=>add(n,'FedEx'));
+ if(/\bdhl\b/i.test(s))(s.match(/\b\d{10}\b/g)||[]).forEach(n=>add(n,'DHL'));
+ return out.slice(0,6)}
+const trkNext=()=>'SHP-'+String(ensureTracks().reduce((m,t)=>Math.max(m,+String(t.id).replace(/\D/g,'')||0),0)+1).padStart(4,'0');
+function trkRefLabel(r){if(!r||!r.id)return'';if(r.t==='po'){const p=byId(S.pos,r.id);return p?`${p.id}, ${vend(p.vendor).name}`:r.id}
+ if(r.t==='rfq'){const q=S.srcReqs&&sreq(r.id);return q?`${q.no||q.id} ${q.title}`:r.id}if(r.t==='order'){const o=byId(S.orders,r.id);return o?`${oLabel(o)}, ${aname(o.acct)}`:r.id}return r.id}
+const trkRefLink=r=>r&&r.id?`<button type="button" class="link sm" style="text-align:left" data-action="trk-ref" data-t="${esc(r.t)}" data-id="${esc(r.id)}">${esc(trkRefLabel(r))}</button>`:'<span class="muted sm">Not linked</span>';
+A['trk-ref']=d=>{closeModal();if(d.t==='po'){ui.tabs.purchasing='Purchase orders';if(location.hash==='#/purchasing')rerender();else location.hash='#/purchasing'}
+ else if(d.t==='rfq')location.hash='#/sourcing/'+encodeURIComponent(d.id);else if(d.t==='order'){const o=byId(S.orders,d.id);if(o)location.hash=oHref(o)}else if(d.t==='email')location.hash='#/inbox/'+encodeURIComponent(d.id)};
+/* where a shipment stands: delivered, a problem, late, arriving today, or on its way */
+function trkState(t){if(t.delivered||t.status==='Delivered')return'Delivered';if(t.status==='Problem')return'Problem';if(t.derived==='po'&&!t.eta)return'No date yet';
+ if(t.derived==='ship')return'Shipped';if(t.eta&&t.eta<TODAY)return'Late';if(t.eta===TODAY)return'Arriving today';return t.derived==='po'?'No tracking yet':'On the way'}
+const TRK_TONE={Delivered:'ok',Problem:'alert',Late:'alert','Arriving today':'warn','On the way':'info','No tracking yet':'plain','No date yet':'plain',Shipped:'info'};
+const trkChip=t=>chip(trkState(t),TRK_TONE[trkState(t)]);
+/* everything we're waiting on (incoming) or have sent (outgoing), including POs with no tracking yet and customer shipments logged on orders */
+function trkRows(dir){const tr=ensureTracks().filter(t=>t.dir===dir);let rows=tr.slice();
+ if(dir==='in')S.pos.filter(p=>p.status!=='Draft'&&poOpen(p)&&!tr.some(t=>t.ref&&t.ref.t==='po'&&t.ref.id===p.id&&!t.delivered)).forEach(p=>rows.push({derived:'po',id:p.id,dir:'in',kind:'Vendor PO',party:vend(p.vendor).name,what:p.lines.map(l=>`${num(l.qty)} × ${l.sku}`).join(', '),eta:p.exp||'',ref:{t:'po',id:p.id}}));
+ if(dir==='out'){const seen=new Set(tr.map(t=>trkClean(t.number)).filter(Boolean));const g={};
+  S.shipments.filter(s=>s.tracking&&!seen.has(trkClean(s.tracking))).forEach(s=>{const k=s.order+'|'+trkClean(s.tracking);const o=byId(S.orders,s.order);
+   if(!g[k])g[k]={derived:'ship',id:k,dir:'out',kind:'Customer order',carrier:/ups|fedex|usps|dhl/i.test(s.carrier||'')?CARRIERS.find(c=>new RegExp(c,'i').test(s.carrier)):trkGuess(s.tracking),number:s.tracking,party:o?aname(o.acct):'',what:'',shipped:s.date,ref:{t:'order',id:s.order},by:s.by};
+   g[k].what+=(g[k].what?', ':'')+`${num(s.qty)} × ${s.sku}`});rows.push(...Object.values(g))}
+ return rows}
+const trkSort=(a,b)=>{const r=t=>({Late:0,Problem:0,'Arriving today':1}[trkState(t)]??2);return r(a)-r(b)||(a.eta||'9999').localeCompare(b.eta||'9999')};
+function trkLate(){return trkRows('in').filter(t=>['Late','Problem'].includes(trkState(t)))}
+function trkToday(){return trkRows('in').filter(t=>trkState(t)==='Arriving today')}
+function trkWeek(){const end=iso(addDays(T0,7));return trkRows('in').filter(t=>!t.delivered&&t.eta&&t.eta>=TODAY&&t.eta<=end)}
+
+/* ---------- add or edit a tracking number ---------- */
+M.trk=(id,pre={})=>{const t=id?byId(ensureTracks(),id):null;const v={dir:'in',kind:'Vendor PO',carrier:'',number:'',party:'',what:'',shipped:'',eta:'',status:'On the way',notes:'',url:'',ref:null,...(t||{}),...pre};
+ const refV=v.ref&&v.ref.id?v.ref.t+'|'+v.ref.id:'';
+ const pos=S.pos.filter(p=>poOpen(p)||(v.ref&&v.ref.id===p.id)).slice().reverse(),rfqs=(S.srcReqs||[]).filter(r=>r.status!=='Closed'||(v.ref&&v.ref.id===r.id)),ords=S.orders.filter(o=>o.status!=='Completed'||(v.ref&&v.ref.id===o.id)).slice().reverse();
+ const refSel=`<select name="ref"><option value="">Not linked</option>${pos.length?`<optgroup label="Vendor POs">${pos.map(p=>opt('po|'+p.id,`${p.id}, ${vend(p.vendor).name}${p.exp?' (expected '+fd(p.exp)+')':''}`,refV==='po|'+p.id)).join('')}</optgroup>`:''}${rfqs.length?`<optgroup label="RFQs (samples)">${rfqs.map(r=>opt('rfq|'+r.id,`${r.no||r.id} ${r.title}`,refV==='rfq|'+r.id)).join('')}</optgroup>`:''}${ords.length?`<optgroup label="Sales orders">${ords.map(o=>opt('order|'+o.id,`${oLabel(o)}, ${aname(o.acct)}`,refV==='order|'+o.id)).join('')}</optgroup>`:''}</select>`;
+ modal(t?`Shipment ${t.id}`:'Add a tracking number',`<div class="fg">
+  ${fld('Tracking number',inp('number',v.number,'placeholder="Paste it here, spaces are fine" autocomplete="off"'))}
+  ${fld('Carrier',`<select name="carrier">${opt('','Work it out from the number',!v.carrier)}${CARRIERS.map(c=>opt(c,c,v.carrier===c)).join('')}</select>`)}
+  ${fld('Direction',`<select name="dir">${opt('in','Coming to us',v.dir==='in')}${opt('out','Going to a customer',v.dir==='out')}</select>`)}
+  ${fld('What it is',`<select name="kind">${TRK_KINDS.map(k=>opt(k,k,v.kind===k)).join('')}</select>`)}
+  ${fld('Linked to',refSel,true)}
+  ${fld('From or to (supplier, vendor or customer)',inp('party',v.party,'placeholder="Filled in from the link if left blank"'))}
+  ${fld('What’s in it',inp('what',v.what,'placeholder="e.g. 2 sample bushings"'))}
+  ${fld('Shipped on',inp('shipped',v.shipped,'type="date"'))}
+  ${fld('Expected',inp('eta',v.eta,'type="date"'))}
+  ${fld('Status',`<select name="status">${['On the way','Delivered','Problem'].map(s=>opt(s,s,(v.delivered?'Delivered':v.status)===s)).join('')}</select>`)}
+  ${fld('Tracking page (only if the carrier isn’t listed)',inp('url',v.url,'type="url" placeholder="https://"'))}
+  ${fld('Notes',`<textarea class="input" name="notes" rows="2">${esc(v.notes||'')}</textarea>`,true)}</div>
+  <p class="muted sm trk-hint" style="margin:6px 0 0">${v.number?`${esc(v.carrier||trkGuess(v.number))} · <a href="${esc(trkUrl(v))}" target="_blank" rel="noopener">Open the tracking page</a>`:'The carrier is worked out from the number. Anything not UPS, FedEx, USPS or DHL opens on 17TRACK, which covers China Post, EMS, YunExpress, Cainiao and most overseas carriers.'}</p>`,
+  {label:t?'Save':'Add shipment',foot:t?`<button type="button" class="btn ghost" data-action="trk-del" data-id="${esc(t.id)}" style="margin-right:auto;color:var(--alert)">Delete</button>`:'',submit:d=>{
+   const number=trkClean(d.number);if(!number&&!d.eta){toast('Add a tracking number or an expected date.',true);return false}
+   const [rt,rid]=(d.ref||'').split('|');const ref=rid?{t:rt,id:rid}:null;let party=d.party.trim();const p=ref&&ref.t==='po'?byId(S.pos,ref.id):null,o=ref&&ref.t==='order'?byId(S.orders,ref.id):null;
+   if(!party&&p)party=vend(p.vendor).name;if(!party&&o)party=aname(o.acct);
+   if(!party&&ref&&ref.t==='rfq'){const qs=(S.squotes||[]).filter(q=>q.req===ref.id&&q.status==='Shortlisted');if(qs.length===1)party=sup(qs[0].supplier).name}
+   const eta=d.eta||(p&&p.exp)||'';const delivered=d.status==='Delivered'?(t&&t.delivered)||TODAY:null;
+   const x={dir:d.dir,kind:d.kind,carrier:d.carrier||(number?trkGuess(number):''),number,party,what:d.what.trim(),shipped:d.shipped||'',eta,status:d.status,delivered,notes:d.notes.trim(),url:d.url.trim(),ref};
+   if(t){const ch=['number','carrier','eta','status','party'].filter(k=>(t[k]||'')!==(x[k]||'')).map(k=>({f:{number:'Tracking #',carrier:'Carrier',eta:'Expected',status:'Status',party:'From/to'}[k],from:t[k]||'',to:x[k]||''}));Object.assign(t,x);log(`Updated shipment ${t.id}${number?' ('+number+')':''}`,ch)}
+   else{const n={id:trkNext(),...x,created:TODAY,by:USER.name,...(pre.email?{email:pre.email}:{})};ensureTracks().push(n);log(`Added shipment ${n.id}: ${n.carrier||''} ${number||'no tracking #'}${ref?' for '+trkRefLabel(ref):''}`)}
+   if(p&&eta&&eta!==p.exp&&poOpen(p)&&p.status!=='Draft'){const was=p.exp;p.exp=eta;log(`${p.id} expected date follows its tracking`,[{f:'Expected',from:was?fd(was):'',to:fd(eta)}])}
+   save();toast(t?'Shipment saved':`Tracking ${number||''} added${eta?', expected '+fd(eta):''}`);
+   if(delivered&&p&&poOpen(p)&&!(t&&t.delivered===delivered&&t.status==='Delivered'))setTimeout(()=>{M.receive(p.id);toast('Delivered. Now record what arrived.')},0)}});
+ const f=$('#mform');const num_=f.querySelector('[name=number]'),car=f.querySelector('[name=carrier]'),hint=f.querySelector('.trk-hint');
+ num_.addEventListener('input',()=>{const n=trkClean(num_.value);if(!n)return;const c=car.value||trkGuess(n);hint.innerHTML=`${esc(c)} · <a href="${esc(trkUrl({number:n,carrier:c,url:f.querySelector('[name=url]').value}))}" target="_blank" rel="noopener">Open the tracking page</a>`});
+ f.querySelector('[name=ref]').addEventListener('change',e=>{const [rt,rid]=e.target.value.split('|');const k=f.querySelector('[name=kind]'),dr=f.querySelector('[name=dir]'),et=f.querySelector('[name=eta]');
+  if(rt==='po'){k.value='Vendor PO';dr.value='in';const p=byId(S.pos,rid);if(p&&p.exp&&!et.value)et.value=p.exp}else if(rt==='rfq'){k.value='RFQ sample';dr.value='in'}else if(rt==='order'){k.value='Customer order';dr.value='out'}})};
+A['trk-new']=d=>{closeDD();const pre={};if(d.po){pre.ref={t:'po',id:d.po};pre.kind='Vendor PO'}if(d.rfq){pre.ref={t:'rfq',id:d.rfq};pre.kind='RFQ sample'}if(d.order){pre.ref={t:'order',id:d.order};pre.kind='Customer order';pre.dir='out'}
+ if(d.number){pre.number=d.number;pre.carrier=d.carrier||''}if(d.email){const m=byId(S.emails,d.email);pre.email=d.email;if(m){pre.party=m.company||m.fromName||'';const l=(m.links||[]).find(x=>['po','rfq','order'].includes(x.t));if(l){pre.ref={t:l.t,id:l.id};pre.kind={po:'Vendor PO',rfq:'RFQ sample',order:'Customer order'}[l.t]}}}
+ M.trk(null,pre)};
+A['trk-edit']=d=>M.trk(d.id);
+A['trk-done']=d=>{const t=byId(ensureTracks(),d.id);if(!t)return;t.status='Delivered';t.delivered=TODAY;log(`Shipment ${t.id} delivered${t.number?' ('+t.number+')':''}${t.ref?' for '+trkRefLabel(t.ref):''}`,[{f:'Status',from:'On the way',to:'Delivered'}]);save();rerender();
+ const p=t.ref&&t.ref.t==='po'?byId(S.pos,t.ref.id):null;if(p&&poOpen(p)){M.receive(p.id);toast('Delivered. Now record what arrived.')}else toast(`${t.what||t.number||t.id} marked delivered`)};
+A['trk-del']=d=>{const t=byId(ensureTracks(),d.id);if(!t||!confirmBox2(`Delete shipment ${t.id}${t.number?' ('+t.number+')':''}?`))return;S.tracks=S.tracks.filter(x=>x!==t);log(`Deleted shipment ${t.id}`);save();closeModal();rerender();toast('Shipment deleted')};
+
+/* ---------- the Shipments page ---------- */
+function trkTable(id,rows,dir){return table(id,[dir==='out'?'Shipped':'Expected','What',dir==='out'?'To':'From','Tracking','Linked to','Status',''],rows.map(t=>{const u=trkUrl(t),st=trkState(t);
+ const when=dir==='out'?(t.shipped?fd(t.shipped):'–')+(t.eta?`<div class="muted sm">due ${fd(t.eta)}</div>`:''):(t.delivered?`<span class="muted">arrived</span> ${fd(t.delivered)}`:t.eta?fd(t.eta)+`<div class="sm ${st==='Late'?'':'muted'}" style="${st==='Late'?'color:var(--alert)':''}">${dd(t.eta)===0?'today':dd(t.eta)>0?'in '+dd(t.eta)+' day'+(dd(t.eta)===1?'':'s'):-dd(t.eta)+' day'+(dd(t.eta)===-1?'':'s')+' late'}</div>`:'<span class="muted">No date</span>');
+ const acts=t.derived==='po'?btn('Add tracking','trk-new',{po:t.id},'sm')+' '+btn('Receive','po-receive',{id:t.id},'sm'):t.derived==='ship'?'':(!t.delivered?btn('Delivered','trk-done',{id:t.id},'sm')+' ':'')+btn('Edit','trk-edit',{id:t.id},'sm ghost');
+ return `<tr><td class="nowrap">${when}</td><td><b>${esc(t.kind||'')}</b>${t.what?`<div class="sm">${esc(t.what)}</div>`:''}</td><td class="sm">${esc(t.party||'')}</td><td class="nowrap">${t.number?`${u?`<a href="${esc(u)}" target="_blank" rel="noopener" class="mono">${esc(t.number)}</a>`:`<span class="mono">${esc(t.number)}</span>`}<div class="muted sm">${esc(t.carrier||'')}</div>`:'<span class="muted sm">No tracking #</span>'}</td><td>${trkRefLink(t.ref)}</td><td>${trkChip(t)}</td><td class="n nowrap">${acts}</td></tr>`}),dir==='out'?'Nothing shipped with a tracking number yet.':'Nothing on the way. Add a tracking number when a vendor or supplier sends one.')}
+VIEWS.shipments=()=>{ensureTracks();const [tb,cur]=tabs('shipments',['Coming in','Going out','Calendar','Delivered']);
+ const inc=trkRows('in').filter(t=>!t.delivered&&t.status!=='Delivered').sort(trkSort),out=trkRows('out').filter(t=>t.derived||!t.delivered).sort((a,b)=>(b.shipped||'').localeCompare(a.shipped||''));
+ const late=trkLate(),today=trkToday(),week=trkWeek();let b='';
+ const tools=(id,ph)=>`<div class="toolbar">${searchBox(id,ph)}<span class="grow"></span></div>`;
+ if(cur==='Coming in')b=tools('trk-in','Search tracking #, PO, RFQ, supplier or part')+`<section class="panel">${trkTable('trk-in',inc,'in')}</section>`;
+ else if(cur==='Going out')b=tools('trk-out','Search tracking #, SO, customer or part')+`<section class="panel">${trkTable('trk-out',out,'out')}</section>`;
+ else if(cur==='Delivered'){const del=ensureTracks().filter(t=>t.delivered).sort((a,b)=>(b.delivered||'').localeCompare(a.delivered||''));b=tools('trk-del','Search delivered shipments')+`<section class="panel">${trkTable('trk-del',del,'in')}</section>`}
+ else b=trkCalendar();
+ return phead('Shipments','Every tracking number in one place: vendor POs, RFQ samples and customer orders. Late ones go to the bell, the dashboard and the morning email.',btn(ic('plus',16)+' Add tracking number','trk-new',{},'primary'))
+  +kpis([{l:'Arriving today',v:today.length,s:today.slice(0,2).map(t=>t.party||t.id).join(', ')||'Nothing today'},{l:'Due in the next 7 days',v:week.length},{l:'Late or a problem',v:late.length,c:late.length?'dn':'up',s:late.length?late.slice(0,2).map(t=>t.party||t.id).join(', '):'None'},{l:'On the way to us',v:inc.filter(t=>!t.derived).length,s:inc.filter(t=>t.derived==='po').length?inc.filter(t=>t.derived==='po').length+' POs with no tracking yet':''},{l:'Shipped to customers, 7 days',v:out.filter(t=>t.shipped&&dd(t.shipped)>=-7).length}])+tb+b};
+
+/* ---------- calendar ---------- */
+function trkEvents(){const ev=[];
+ trkRows('in').forEach(t=>{const st=trkState(t);const d=t.delivered||t.eta;if(!d)return;ev.push({d,t,tone:t.delivered?'ok':TRK_TONE[st]||'info',label:(t.delivered?'Arrived: ':'')+(t.party||t.kind),sub:t.what||t.number||''})});
+ trkRows('out').forEach(t=>{if(t.shipped)ev.push({d:t.shipped,t,tone:'wind',label:'Shipped: '+(t.party||t.kind),sub:t.what||t.number||''})});
+ ensureTracks().filter(t=>t.dir==='out'&&t.eta&&!t.delivered).forEach(t=>ev.push({d:t.eta,t,tone:'plain',label:'Due at '+(t.party||'customer'),sub:t.number||''}));
+ return ev}
+function trkCalendar(){const m=ui.calM||TODAY.slice(0,7);const [y,mo]=m.split('-').map(Number);const first=new Date(y,mo-1,1),start=addDays(first,-first.getDay());const ev=trkEvents();
+ const cells=[];for(let i=0;i<42;i++){const d=addDays(start,i),k=iso(d);if(i>=35&&d.getMonth()!==mo-1)break;const es=ev.filter(e=>e.d===k);
+  cells.push(`<div class="cal-d ${d.getMonth()!==mo-1?'out':''} ${k===TODAY?'today':''}"><div class="cal-n">${d.getDate()}</div>${es.slice(0,3).map(e=>`<button type="button" class="cal-e ${e.tone}" data-action="cal-open" data-id="${esc(e.t.id)}" data-derived="${esc(e.t.derived||'')}" title="${esc(e.label+(e.sub?' · '+e.sub:''))}">${esc(e.label)}</button>`).join('')}${es.length>3?`<div class="muted sm">+${es.length-3} more</div>`:''}</div>`)}
+ const label=first.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+ const feed=(typeof CLOUD!=='undefined'&&CLOUD)?btn(ic('cal',15)+' Add to Outlook or Google Calendar','cal-feed',{},'sm'):'';
+ return `<div class="toolbar">${btn('‹','cal-move',{n:-1},'sm')}<b style="min-width:150px;text-align:center">${esc(label)}</b>${btn('›','cal-move',{n:1},'sm')}${btn('Today','cal-move',{n:0},'sm ghost')}<span class="grow"></span>
+  <span class="sm muted" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${chip('Expected','info')}${chip('Today','warn')}${chip('Late','alert')}${chip('Arrived','ok')}${chip('Shipped out','wind')}</span>${feed}</div>
+  <section class="panel cal"><div class="cal-h">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}</div><div class="cal-g">${cells.join('')}</div></section>`}
+A['cal-move']=d=>{const n=+d.n;if(!n){ui.calM=TODAY.slice(0,7)}else{const [y,m]=(ui.calM||TODAY.slice(0,7)).split('-').map(Number);const x=new Date(y,m-1+n,1);ui.calM=iso(x).slice(0,7)}rerender()};
+A['cal-open']=d=>{if(d.derived==='po')return A['trk-ref']({t:'po',id:d.id});if(d.derived==='ship'){const [o]=d.id.split('|');return A['trk-ref']({t:'order',id:o})}M.trk(d.id)};
+/* a private calendar link Outlook or Google Calendar can subscribe to (cloud only) */
+A['cal-feed']=()=>{if(!S.calfeed||!S.calfeed.key){S.calfeed={key:crypto.randomUUID().replace(/-/g,''),by:USER.name,made:TODAY};log('Made the shipments calendar link');save()}
+ const url=String(CFG.supabaseUrl).trim().replace(/\/$/,'')+'/functions/v1/calendar?k='+S.calfeed.key;
+ modal('Shipments in your calendar',`<p style="margin-top:0">Subscribe to this link and expected arrivals, late shipments and POs due show up in Outlook or Google Calendar, updated through the day.</p>
+  <label class="f full">Calendar link<input class="input mono" id="cal-url" value="${esc(url)}" readonly onclick="this.select()"></label>
+  <p class="sm"><b>Outlook:</b> Calendar → Add calendar → Subscribe from web → paste the link → name it “M-RES shipments”.<br><b>Google Calendar:</b> Other calendars → + → From URL → paste the link.</p>
+  <p class="muted sm">Anyone with the link can see the shipments calendar, so keep it inside the team.${isOwner()?' If it gets shared by mistake, make a new link and the old one stops working.':''}</p>`,{foot:`${isOwner()?`<button type="button" class="btn ghost" data-action="cal-feed-reset" style="margin-right:auto">Make a new link</button>`:''}<button type="button" class="btn primary" data-action="cal-copy">Copy link</button>`})};
+A['cal-copy']=()=>{const i=$('#cal-url');if(!i)return;try{navigator.clipboard.writeText(i.value);toast('Calendar link copied')}catch(e){i.select();toast('Press Ctrl C to copy')}};
+A['cal-feed-reset']=()=>{if(!confirmBox2('Make a new calendar link? Calendars using the old link will stop updating.'))return;S.calfeed=null;log('Replaced the shipments calendar link');A['cal-feed']()};
+
+/* ---------- reminders, search, menu ---------- */
+NAV[1][1].splice(2,0,['shipments','Shipments','pin']);
+const _navCountsT=navCounts;navCounts=function(){const c=_navCountsT();c.shipments=trkLate().length+trkToday().length;return c};
+const _renderShellT=renderShell;renderShell=function(){_renderShellT();const a=$('#side a[data-r="shipments"] .cnt');if(a&&trkLate().length)a.classList.add('hot')};
+const _attentionT=attention;attention=function(){const a=_attentionT();const late=trkLate(),today=trkToday();
+ if(late.length)a.unshift({tone:'alert',t:`${late.length} shipment${late.length===1?' is':'s are'} late`,s:late.slice(0,3).map(t=>`${t.party||t.id}${t.eta?' (due '+fd(t.eta)+')':''}`).join(', '),to:'shipments',tab:['shipments','Coming in']});
+ if(today.length)a.push({tone:'warn',t:`${today.length} shipment${today.length===1?'':'s'} arriving today`,s:today.slice(0,3).map(t=>t.party||t.what||t.id).join(', '),to:'shipments',tab:['shipments','Coming in']});return a};
+const _searchIndexT=searchIndex;searchIndex=function(){const r=_searchIndexT();
+ ensureTracks().forEach(t=>r.push({g:'Shipments',t:`${t.number||t.id}, ${t.party||t.kind}`,s:`${trkState(t)}${t.eta&&!t.delivered?', expected '+fd(t.eta):''}`,k:[t.id,t.number,t.carrier,t.party,t.what,t.kind,trkRefLabel(t.ref),t.notes].join(' '),go:()=>M.trk(t.id)}));
+ S.shipments.filter(s=>s.tracking).forEach(s=>{const o=byId(S.orders,s.order);r.push({g:'Shipments',t:`${s.tracking}, ${o?aname(o.acct):''}`,s:`Shipped ${fd(s.date)}${o?' on '+oLabel(o):''}`,k:[s.tracking,s.carrier,s.sku,o?oLabel(o)+' '+o.cpo+' '+aname(o.acct):''].join(' '),go:()=>{if(o)location.hash=oHref(o)}})});return r};
+
+/* dashboard: what's arriving this week */
+const _dashT=VIEWS.dashboard;VIEWS.dashboard=id=>{const h=_dashT(id);const late=trkLate(),wk=trkWeek().filter(t=>trkState(t)!=='Late');if(!late.length&&!wk.length&&!ensureTracks().length)return h;
+ const li=t=>`<li><span class="chip ${TRK_TONE[trkState(t)]} plain" style="padding:0 4px">${ic('pin',14)}</span><div class="grow"><b>${esc(t.party||t.kind)}</b> ${esc(t.what||'')}<div class="muted">${t.number?esc(t.carrier+' '+t.number):'No tracking yet'}${t.ref?' · '+esc(trkRefLabel(t.ref)):''}</div></div><div class="sm nowrap" style="${trkState(t)==='Late'?'color:var(--alert)':''}">${t.eta?(trkState(t)==='Late'?'due ':'')+fd(t.eta):'–'}</div></li>`;
+ const p=`<section class="panel mb"><div class="ph"><h3>Shipments coming in</h3><button class="link" data-action="go" data-to="shipments" data-tk="shipments" data-tv="Calendar">Calendar</button></div><ul class="alist">${[...late,...wk].slice(0,7).map(li).join('')||'<li class="muted">Nothing due in the next 7 days.</li>'}</ul></section>`;
+ const i=h.indexOf('<div class="grid3">');return i<0?h+p:h.slice(0,i)+p+h.slice(i)};
+
+/* purchase orders: tracking under each PO, with a quick add */
+const _renderT=render;render=function(k){_renderT(k);const {r,id}=parse();
+ if(r==='purchasing')$$('#view table[data-tbl="pos"] tbody tr').forEach(tr=>{const b=tr.querySelector('td b');if(!b)return;const p=byId(S.pos,b.textContent.trim());if(!p||p.status==='Draft')return;
+  const ts=ensureTracks().filter(t=>t.ref&&t.ref.t==='po'&&t.ref.id===p.id);const cell=tr.cells[tr.cells.length-1];
+  cell.insertAdjacentHTML('beforeend',`<div class="sm" style="margin-top:4px">${ts.map(t=>{const u=trkUrl(t);return `<div>${u?`<a href="${esc(u)}" target="_blank" rel="noopener" class="mono">${esc(t.number||t.id)}</a>`:esc(t.number||t.id)} ${trkChip(t)}</div>`}).join('')}${poOpen(p)?`<button class="link sm" data-action="trk-new" data-po="${esc(p.id)}">+ Tracking #</button>`:''}</div>`)})};
+
+/* RFQs: samples and shipments for this request */
+const _srcT=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcT(id);if(!id||!S.srcReqs||!sreq(id))return h;const ts=ensureTracks().filter(t=>t.ref&&t.ref.t==='rfq'&&t.ref.id===id);
+ const p=`<section class="panel mb" style="margin-top:16px"><div class="ph"><h3>Samples and shipments</h3>${btn(ic('plus',15)+' Add sample tracking','trk-new',{rfq:id},'sm')}</div>${ts.length?trkTable('trk-rfq',ts.sort(trkSort),'in'):'<div class="pb muted sm">When a supplier ships a sample, add the tracking number here. You’ll see it on the Shipments calendar, and in the bell if it runs late.</div>'}</section>`;return h+p};
+
+/* inbox: spot tracking numbers in an email and offer to track them */
+const _inboxT=VIEWS.inbox;VIEWS.inbox=id=>{const h=_inboxT(id);if(!id)return h;const m=byId(S.emails,id);if(!m)return h;
+ const found=trkFind([m.subject,...(m.thread||[]).filter(x=>x.dir==='in').map(x=>x.body)].join('\n'));if(!found.length)return h;const have=new Set(ensureTracks().map(t=>trkClean(t.number)));
+ const sec=`<section><h4>Tracking numbers in this email</h4>${found.map(f=>{const t=ensureTracks().find(x=>trkClean(x.number)===f.number);const u=trkUrl(t||f);
+  return `<div style="margin:6px 0"><a href="${esc(u)}" target="_blank" rel="noopener" class="mono">${esc(f.number)}</a> <span class="muted sm">${esc(f.carrier)}</span><div style="margin-top:3px">${have.has(f.number)?`${trkChip(t)} <button class="link sm" data-action="trk-edit" data-id="${esc(t.id)}">Open</button>`:btn('Track this shipment','trk-new',{number:f.number,carrier:f.carrier,email:m.id},'sm')}</div></div>`}).join('')}</section>`;
+ return h.replace('<aside class="iside">','<aside class="iside">'+sec)};
+
+(function(){const st=document.createElement('style');st.textContent=`.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+.cal{overflow:hidden}.cal-h,.cal-g{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.cal-h div{padding:8px 10px;font-size:12px;font-weight:600;color:var(--ink-3);border-bottom:1px solid var(--line)}
+.cal-d{min-height:104px;padding:6px 6px 8px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:3px;min-width:0}.cal-d:nth-child(7n){border-right:0}
+.cal-d.out{background:var(--surface-2)}.cal-d.out .cal-n{color:var(--ink-3)}.cal-n{font-size:12px;font-weight:600;color:var(--ink-2)}.cal-d.today .cal-n{background:var(--grid);color:#fff;border-radius:10px;padding:0 7px;align-self:flex-start}
+.cal-e{all:unset;cursor:pointer;display:block;font-size:11.5px;line-height:1.35;padding:2px 6px;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--grid-soft);color:var(--grid)}
+.cal-e.ok{background:var(--ok-soft);color:var(--ok)}.cal-e.alert{background:var(--alert-soft);color:var(--alert)}.cal-e.warn{background:var(--sun-soft);color:#9A6210}.cal-e.wind{background:var(--wind-soft);color:var(--wind)}.cal-e.plain{background:var(--surface-2);color:var(--ink-2)}
+.cal-e:focus-visible{outline:2px solid var(--grid)}@media(max-width:700px){.cal-d{min-height:64px;padding:4px}.cal-e{font-size:0;height:6px;padding:0}.cal-h div{padding:6px 4px}}`;document.head.appendChild(st)})();
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
