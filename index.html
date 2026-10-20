@@ -1673,7 +1673,7 @@ const _renderX=render;render=function(k){_renderX(k);if(!S||parse().r!=='dashboa
 if(!USER.role)USER.role='admin';
 const isOwner=()=>['admin','owner'].includes(String(USER.role||'').toLowerCase());
 const OWNER_ONLY=['finance','accounting','quickbooks'];
-OWNER_ONLY.forEach(k=>{if(!VIEWS[k])return;const v=VIEWS[k];VIEWS[k]=id=>isOwner()?v(id):`<h1 style="font:800 24px var(--fh);margin:0 0 8px">Owners only</h1><div class="empty">This page is for owners. Ask Satish or Denny if you need something from it.</div>`});
+OWNER_ONLY.forEach(k=>{if(!VIEWS[k])return;const v=VIEWS[k];VIEWS[k]=id=>isOwner()?v(id):`<h1 style="font:800 24px var(--fh);margin:0 0 8px">Owners only</h1><div class="empty">This page is for owners. Ask an owner (Satish, Denny, Michael or Ashlie) if you need something from it.</div>`});
 const STAFF_COLS=/^(margin|gm|gm %|gross margin|margin %|buy)$/i,STAFF_KPIS=/^(cost|gross margin|margin)$/i;
 function staffMask(root){if(isOwner()||!root)return;
  root.querySelectorAll('table').forEach(t=>{const hs=[...t.querySelectorAll('thead th')];const idx=hs.map((h,i)=>STAFF_COLS.test(h.textContent.trim())?i:-1).filter(i=>i>=0);if(!idx.length)return;
@@ -1686,7 +1686,7 @@ function staffMask(root){if(isOwner()||!root)return;
 const _renderShellR=renderShell;renderShell=function(){_renderShellR();if(isOwner())return;OWNER_ONLY.forEach(k=>{const a=$(`#side a[data-r="${k}"]`);if(a)a.style.display='none'})};
 const _renderR=render;render=function(k){_renderR(k);staffMask($('#view'))};
 new MutationObserver(()=>staffMask($('#modal-root'))).observe(document.getElementById('modal-root'),{childList:true,subtree:true});
-const _award0=A['q-award'];A['q-award']=d=>{if(!isOwner())return toast('Only owners can award a supplier. Shortlist it and let Satish or Denny know.',true);_award0(d)};
+const _award0=A['q-award'];A['q-award']=d=>{if(!isOwner())return toast('Only owners can award a supplier. Shortlist it and let an owner know.',true);_award0(d)};
 
 /* ================= customer quotes: branded PDF, and quoting the customer straight from an awarded supplier quote ================= */
 const CO={name:'Mass Renewable Energy Solutions',short:'M-RES',phone:'(855) 742-4612',email:'info@massrenewable.com',web:'massrenewable.com'};
