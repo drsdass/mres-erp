@@ -1861,6 +1861,11 @@ A['em-sup-quote']=d=>{const m=byId(S.emails,d.id);const s=emSupplier(m);if(!s)re
 document.addEventListener('change',e=>{const t=e.target;if(!t.dataset||!t.dataset.emSup||!t.value)return;const m=byId(S.emails,t.dataset.emSup),s=byId(S.suppliers,t.value);if(!m||!s)return;
  m.supplier=s.id;delete m.notSup;if(m.cat!=='Vendor')m.cat='Vendor';const ch=[{f:'Supplier',from:'blank',to:s.name}];if(!s.email&&m.from){s.email=String(m.from).toLowerCase();ch.push({f:`${s.name} email`,from:'blank',to:s.email})}
  log(`Linked ${m.fromName}'s email to supplier ${s.name}`,ch);save();rerender();toast(`Linked to ${s.name}. Future emails from ${m.from} are recognised.`)});
+/* supplier conversations wait on the supplier, not a customer: same status underneath, clearer words on screen */
+function supplierWording(root){if(!root||!S)return;const swap=el=>{el.childNodes.forEach(n=>{if(n.nodeType===3&&/waiting on customer/i.test(n.nodeValue))n.nodeValue=n.nodeValue.replace(/customer/i,'supplier');else if(n.nodeType===1&&n.tagName!=='TEXTAREA'&&n.tagName!=='INPUT')swap(n)})};
+ root.querySelectorAll('a.im[href^="#/inbox/"]').forEach(a=>{const m=byId(S.emails,decodeURIComponent(a.getAttribute('href').slice(8)));if(isVendorMail(m))swap(a)});
+ const id=parse().id;const m=id&&byId(S.emails,id);if(isVendorMail(m)){root.querySelectorAll('.ihead,select[data-em="status"],form[data-form="reply"] .check-inline').forEach(swap)}}
+const _renderW=render;render=function(k){_renderW(k);if(parse().r==='inbox')supplierWording($('#view'))};
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
