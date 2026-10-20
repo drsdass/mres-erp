@@ -1872,6 +1872,14 @@ const _renderI=render;render=function(k){const prev=$('#view .idet')?$('#view .i
  const f=$('#view form[data-form="reply"]'),first=$('#view .idet article.msg');if(f&&first&&f.compareDocumentPosition(first)&Node.DOCUMENT_POSITION_PRECEDING){first.parentNode.insertBefore(f,first);f.style.marginBottom='14px'}
  const det=$('#view .idet');if(det&&k&&prevId===parse().id)det.scrollTop=prev;
  if(!k&&parse().id){const ib=$('#view .inbox'),tb=ib&&ib.previousElementSibling;const anchor=tb&&tb.classList.contains('toolbar')?tb:ib;if(anchor&&window.innerWidth>900){const top=anchor.getBoundingClientRect().top,head=($('#top')||{}).offsetHeight||64;if(top>head+20)$('#view').scrollTop+=top-head-12}}};
+/* the reply box starts as one slim bar above the newest message; click it to write */
+(function(){const st=document.createElement('style');st.textContent='form[data-form="reply"].rcol>*:not(.reply-bar){display:none!important}form[data-form="reply"].rcol{padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important}form[data-form="reply"]:not(.rcol) .reply-bar{display:none!important}form[data-form="reply"] textarea{min-height:90px!important}.sig-note{font-size:12px!important;margin:4px 0 6px!important}.reply-bar{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink-2);font:inherit;cursor:text}.reply-bar:hover{border-color:var(--cyan)}.reply-bar b{color:var(--ink)}.reply-bar .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}';document.head.appendChild(st)})();
+const _renderRB=render;render=function(k){_renderRB(k);if(!S||parse().r!=='inbox')return;const f=$('#view form[data-form="reply"]');const id=parse().id;const m=id&&byId(S.emails,id);if(!f||!m)return;
+ if(!f.querySelector('.reply-bar')){const from=typeof defaultFrom==='function'?defaultFrom(m):'';const cc=(m.cc||[]).join(', ');
+  f.insertAdjacentHTML('afterbegin',`<button type="button" class="reply-bar" data-action="reply-open">${ic('mail',16)}<span class="grow"><b>Reply to ${esc(m.fromName||m.from||'')}</b>${from?` <span class="muted">from ${esc(from)}</span>`:''}${cc?` <span class="muted">· cc ${esc(cc)}</span>`:''}</span><span class="muted sm">Click to write</span></button>`)}
+ const ta=f.querySelector('textarea');if(ui.rOpen===id||(ta&&ta.value.trim()))f.classList.remove('rcol');else f.classList.add('rcol')};
+A['reply-open']=()=>{const id=parse().id;ui.rOpen=id;const f=$('#view form[data-form="reply"]');if(!f)return;f.classList.remove('rcol');const ta=f.querySelector('textarea');if(ta)ta.focus()};
+window.addEventListener('hashchange',()=>{if(ui.rOpen&&parse().id!==ui.rOpen)ui.rOpen=null});
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
@@ -2036,7 +2044,7 @@ window.addEventListener('submit',async e=>{const f=e.target;if(!CLOUD||!emailsOk
  let msg=data&&data.error;if(error&&!msg){try{msg=(await error.context.json()).error}catch(x){msg=error.message}}
  if(msg){btns.forEach(x=>x.disabled=false);if(sb)sb.innerHTML=`${ic('mail',15)} Send email`;return toast('Not sent: '+msg,true)}
  log(`Emailed ${m.from} from ${d.from||defaultFrom(m)} on ${m.id}: ${m.subject}`,[{f:'Status',from:m.status,to:d.wait?'Waiting on customer':'Open'}]);
- f.querySelector('textarea').value='';rowQ.add(m.id);kick();toast(`Sent to ${m.from}`)},true);
+ f.querySelector('textarea').value='';ui.rOpen=null;rowQ.add(m.id);kick();toast(`Sent to ${m.from}`);rerender()},true);
 A['att-open']=async d=>{const {data,error}=await CLOUD.storage.from('erp-mail').createSignedUrl(d.path,300);if(error)return toast('Could not open the file: '+error.message,true);window.open(data.signedUrl,'_blank','noopener')};
 A['em-clear-demo']=()=>{const n=S.emails.filter(e=>e.demo).length;S.emails=S.emails.filter(e=>!e.demo);log(`Removed ${n} sample emails from the inbox`);save();toast(`Removed ${n} sample emails`);location.hash='#/inbox';rerender()};
 /* ================= new-email alerts: pop-up in the ERP, desktop notification when the tab is in the background, count in the tab title ================= */
