@@ -1969,8 +1969,9 @@ const _renderMail=render;render=function(k){_renderMail(k);if(!CLOUD||parse().r!
   if((x.att||[]).length)el.insertAdjacentHTML('beforeend',`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${x.att.map(a=>a.path?`<button type="button" class="btn sm" data-action="att-open" data-path="${esc(a.path)}">${ic('box',13)} ${esc(a.name)} <span class="muted">${fmtSize(a.size)}</span></button>`:`<span class="chip plain">${esc(a.name)} (too large, open it in Outlook)</span>`).join('')}</div>`)});
  /* reply box: send as info@, or record that it was answered in Outlook */
  const f=$('#view form[data-form="reply"]');if(!f||!emailsOk)return;
- const to=isAddr(m.from)?m.from:'';const b=f.querySelector('button.primary');
- f.querySelector('.r1 b').innerHTML=to?`Reply to <span style="font-weight:500">${esc(to)}</span> <span class="muted" style="font-weight:400">from ${esc(INBOX)}</span>`:`No email address on file for ${esc(m.fromName)}, so you can only log the reply here`;
+ const ali=/alibaba/i.test(m.from||'')&&/no-?reply|notice|service|message|notification|alibaba\.com$/i.test(m.from||'');const to=isAddr(m.from)&&!ali?m.from:'';const b=f.querySelector('button.primary');const fromAddr=m.inbox||INBOX;
+ f.querySelector('.r1 b').innerHTML=ali?`This is an Alibaba notification. Suppliers only see replies sent on Alibaba, so answer there, then log it here`:to?`Reply to <span style="font-weight:500">${esc(to)}</span> <span class="muted" style="font-weight:400">from ${esc(fromAddr)}</span>`:`No email address on file for ${esc(m.fromName)}, so you can only log the reply here`;
+ if(ali&&b&&!f.querySelector('.ali-open'))b.insertAdjacentHTML('beforebegin',`<a class="btn ali-open" href="https://message.alibaba.com/message/messenger.htm" target="_blank" rel="noopener" style="margin-left:auto">${ic('mail',15)} Reply on Alibaba</a>`);
  if(!b)return;
  if(to){b.name='how';b.value='send';b.innerHTML=`${ic('mail',15)} Send email`;b.insertAdjacentHTML('beforebegin',`<button class="btn" name="how" value="outlook" style="margin-left:auto">Answered in Outlook</button>`)}
  else{b.name='how';b.value='outlook';b.textContent='Log reply'}};
@@ -2030,7 +2031,7 @@ const _renderDg=render;render=function(k){_renderDg(k);if(!CLOUD)return;const b=
 /* ================= sign-off: shown under the reply box so people know it's added ================= */
 const _renderSig=render;render=function(k){_renderSig(k);if(!CLOUD||!emailsOk||parse().r!=='inbox')return;const f=$('#view form[data-form="reply"]');if(!f||f.querySelector('.sig-note'))return;
  const b=f.querySelector('button[value="send"]');if(!b)return;
- b.closest('div,footer')?.insertAdjacentHTML('beforebegin',`<div class="sig-note muted sm" style="margin:6px 0 8px">Your sign-off is added for you: <b>${esc(USER.name)}</b> · Mass Renewable Energy Solutions · (855) 742-4612 · ${esc(INBOX)} · massrenewable.com</div>`)};
+ b.closest('div,footer')?.insertAdjacentHTML('beforebegin',`<div class="sig-note muted sm" style="margin:6px 0 8px">Your sign-off is added for you: <b>${esc(USER.name)}</b> · Mass Renewable Energy Solutions · (855) 742-4612 · ${esc((byId(S.emails,parse().id)||{}).inbox||INBOX)} · massrenewable.com</div>`)};
 
 /* ================= email a customer quote with its PDF ================= */
 const b64OfDoc=doc=>doc.output('datauristring').split(',')[1];
