@@ -1979,6 +1979,7 @@ const _renderMail=render;render=function(k){_renderMail(k);if(!CLOUD||parse().r!
  const f=$('#view form[data-form="reply"]');if(!f||!emailsOk)return;
  const ali=/alibaba/i.test(m.from||'')&&/no-?reply|notice|service|message|notification|alibaba\.com$/i.test(m.from||'');const to=isAddr(m.from)&&!ali?m.from:'';const b=f.querySelector('button.primary');const fromAddr=defaultFrom(m);
  f.querySelector('.r1 b').innerHTML=ali?`This is an Alibaba notification. Suppliers only see replies sent on Alibaba, so answer there, then log it here`:to?`Reply to <span style="font-weight:500">${esc(to)}</span> <span class="muted" style="font-weight:400">from</span> <select name="from" aria-label="Send from" style="font:inherit;font-weight:500;padding:2px 6px;border:1px solid var(--line);border-radius:6px;background:transparent;color:inherit">${OUR_INBOXES.map(a=>`<option value="${esc(a)}" ${a===fromAddr?'selected':''}>${esc(a)}</option>`).join('')}</select>`:`No email address on file for ${esc(m.fromName)}, so you can only log the reply here`;
+ if(to&&!f.querySelector('[name=cc]')){const ta=f.querySelector('textarea');if(ta)ta.insertAdjacentHTML('beforebegin',`<label class="sm muted" style="display:flex;align-items:center;gap:8px;margin:0 0 6px">Cc <input class="input" name="cc" value="${esc((m.cc||[]).join(', '))}" placeholder="Others to copy, separated by commas" style="flex:1;padding:4px 8px"></label>`)}
  if(ali&&b&&!f.querySelector('.ali-open'))b.insertAdjacentHTML('beforebegin',`<a class="btn ali-open" href="https://message.alibaba.com/message/messenger.htm" target="_blank" rel="noopener" style="margin-left:auto">${ic('mail',15)} Reply on Alibaba</a>`);
  if(!b)return;
  if(to){b.name='how';b.value='send';b.innerHTML=`${ic('mail',15)} Send email`;b.insertAdjacentHTML('beforebegin',`<button class="btn" name="how" value="outlook" style="margin-left:auto">Answered in Outlook</button>`)}
@@ -1988,7 +1989,7 @@ window.addEventListener('submit',async e=>{const f=e.target;if(!CLOUD||!emailsOk
  if(how==='outlook'){m.thread.push({dir:'out',by:USER.name,t:new Date().toISOString(),body:text||'Replied in Outlook.',outlook:true});const was=m.status;m.status=d.wait?'Waiting on customer':'Open';if(!m.owner)m.owner=USER.name;log(`Logged an Outlook reply on ${m.id} (${m.fromName})`,stCh(was,m.status));save();rerender();toast('Logged as answered in Outlook');return}
  if(!text)return fail('Write the reply first.');
  const btns=$$('button',f);btns.forEach(x=>x.disabled=true);const sb=f.querySelector('button[value="send"]');if(sb)sb.textContent='Sending…';
- const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{conversationId:m.id,to:m.from,subject:m.subject,text,wait:!!d.wait,from:d.from||defaultFrom(m)}});
+ const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{conversationId:m.id,to:m.from,cc:String(d.cc||'').split(/[,;\s]+/).filter(isAddr),subject:m.subject,text,wait:!!d.wait,from:d.from||defaultFrom(m)}});
  let msg=data&&data.error;if(error&&!msg){try{msg=(await error.context.json()).error}catch(x){msg=error.message}}
  if(msg){btns.forEach(x=>x.disabled=false);if(sb)sb.innerHTML=`${ic('mail',15)} Send email`;return toast('Not sent: '+msg,true)}
  log(`Emailed ${m.from} from ${d.from||defaultFrom(m)} on ${m.id}: ${m.subject}`,[{f:'Status',from:m.status,to:d.wait?'Waiting on customer':'Open'}]);
