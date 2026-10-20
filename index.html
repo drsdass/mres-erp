@@ -1693,6 +1693,7 @@ const CO={name:'Mass Renewable Energy Solutions',short:'M-RES',phone:'(855) 742-
 function loadPDF(){return window.jspdf?Promise.resolve(window.jspdf):new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=()=>res(window.jspdf);s.onerror=()=>rej(new Error('Could not load the PDF maker. Check the internet connection.'));document.head.appendChild(s)})}
 const usd=n=>(n<0?'-$':'$')+Math.abs(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const longDate=s=>s?pd(s).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'';
+function signName(n){const m=(typeof MEMBERS!=='undefined'&&MEMBERS||[]).find(x=>x.name===n);return (m&&m.signs_as&&m.signs_as.trim())||(n===USER.name&&USER.signAs)||n}
 async function quotePDF(q){const {jsPDF}=await loadPDF();const doc=new jsPDF({unit:'pt',format:'letter'});const W=612,M=48;const c=acct(q.acct)||{};
  const navy=[15,42,61],teal=[11,127,171],grey=[107,114,128],ink=[31,41,55],line=[229,231,235];
  const T=(t,x,y,o={})=>{doc.setFont('helvetica',o.b?'bold':'normal');doc.setFontSize(o.s||10);doc.setTextColor(...(o.c||ink));doc.text(String(t??''),x,y,o.a?{align:o.a}:undefined)};
@@ -1705,7 +1706,7 @@ async function quotePDF(q){const {jsPDF}=await loadPDF();const doc=new jsPDF({un
  doc.setDrawColor(...line);doc.setLineWidth(1);doc.line(M,114,W-M,114);
  let y=136;T('PREPARED FOR',M,y,{b:1,s:8,c:teal});T('DETAILS',330,y,{b:1,s:8,c:teal});y+=16;
  const left=[c.name||'Customer',c.contact||'',q.email||c.email||'',q.shipTo?'Ship to: '+q.shipTo:''].filter(Boolean);
- const right=[['Customer PO',q.cpo||'–'],['Lead time',q.lead||'Confirmed on order'],['Payment terms',c.terms||'Net 30'],['Prepared by',q.by||USER.name]];
+ const right=[['Customer PO',q.cpo||'–'],['Lead time',q.lead||'Confirmed on order'],['Payment terms',c.terms||'Net 30'],['Prepared by',signName(q.by||USER.name)]];
  left.forEach((t,i)=>T(t,M,y+i*14,{b:i===0,s:i===0?11:9.5}));right.forEach(([k,v],i)=>{T(k,330,y+i*14,{s:9,c:grey});T(v,420,y+i*14,{s:9.5})});
  y+=Math.max(left.length,right.length)*14+18;
  // line items
@@ -1975,10 +1976,10 @@ function loginScreen(msg){gate(`<h1 style="font:800 22px var(--fh);margin:0 0 4p
 
 async function startWithSession(session){gate('<p class="muted" style="margin:0">Loading the shared data…</p>');
  const email=(session.user.email||'').toLowerCase();
- let {data:members,error:me}=await CLOUD.from('erp_members').select('email,name,role');if(me&&/role/.test(me.message||'')){({data:members,error:me}=await CLOUD.from('erp_members').select('email,name'))}
+ let {data:members,error:me}=await CLOUD.from('erp_members').select('email,name,role,signs_as');if(me&&/signs_as/.test(me.message||''))({data:members,error:me}=await CLOUD.from('erp_members').select('email,name,role'));if(me&&/role/.test(me.message||'')){({data:members,error:me}=await CLOUD.from('erp_members').select('email,name'))}
  const mine=(members||[]).find(m=>m.email.toLowerCase()===email);
  if(me||!mine){await CLOUD.auth.signOut();return loginScreen(me?'Could not reach the database: '+me.message:`${email} is signed in but not on the M-RES team list. Ask Satish to add you.`)}
- ME={id:session.user.id,email};USER.name=mine.name;USER.role=mine.role||'member';USER.email=email;MEMBERS=members||[];USER.initials=mine.name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
+ ME={id:session.user.id,email};USER.name=mine.name;USER.role=mine.role||'member';USER.email=email;USER.signAs=(mine.signs_as||'').trim()||mine.name;MEMBERS=members||[];USER.initials=mine.name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
  members.forEach(m=>{if(!TEAM.includes(m.name))TEAM.push(m.name)});
  let rows,cache=cacheRead(ME.id);
  let mail=null;
@@ -2096,7 +2097,7 @@ const _renderDg=render;render=function(k){_renderDg(k);if(!CLOUD)return;const b=
 /* ================= sign-off: shown under the reply box so people know it's added ================= */
 const _renderSig=render;render=function(k){_renderSig(k);if(!CLOUD||!emailsOk||parse().r!=='inbox')return;const f=$('#view form[data-form="reply"]');if(!f||f.querySelector('.sig-note'))return;
  const b=f.querySelector('button[value="send"]');if(!b)return;
- b.closest('div,footer')?.insertAdjacentHTML('beforebegin',`<div class="sig-note muted sm" style="margin:6px 0 8px">Your sign-off is added for you: <b>${esc(USER.name)}</b> · Mass Renewable Energy Solutions · (855) 742-4612 · <span class="sig-from">${esc(defaultFrom(byId(S.emails,parse().id)||{}))}</span> · massrenewable.com</div>`);const sel=f.querySelector('select[name=from]');if(sel)sel.addEventListener('change',()=>{const x=f.querySelector('.sig-from');if(x)x.textContent=sel.value})};
+ b.closest('div,footer')?.insertAdjacentHTML('beforebegin',`<div class="sig-note muted sm" style="margin:6px 0 8px">Your sign-off is added for you: <b>${esc(USER.signAs||USER.name)}</b> · Mass Renewable Energy Solutions · (855) 742-4612 · <span class="sig-from">${esc(defaultFrom(byId(S.emails,parse().id)||{}))}</span> · massrenewable.com</div>`);const sel=f.querySelector('select[name=from]');if(sel)sel.addEventListener('change',()=>{const x=f.querySelector('.sig-from');if(x)x.textContent=sel.value})};
 
 /* ================= email a customer quote with its PDF ================= */
 const b64OfDoc=doc=>doc.output('datauristring').split(',')[1];
@@ -2119,10 +2120,10 @@ A['quote-email']=d=>{const q=byId(S.quotes,d.id);if(!q)return;const c=acct(q.acc
 
 /* ================= team and roles (owners) ================= */
 const ROLE_LABEL={admin:'Owner',owner:'Owner',member:'Staff'};
-async function loadTeam(){let {data,error}=await CLOUD.from('erp_members').select('email,name,role,digest').order('name');if(error&&/digest/.test(error.message||''))({data,error}=await CLOUD.from('erp_members').select('email,name,role').order('name'));if(error)throw error;MEMBERS=data||[];return MEMBERS}
+async function loadTeam(){let {data,error}=await CLOUD.from('erp_members').select('email,name,role,digest,signs_as').order('name');if(error&&/signs_as/.test(error.message||''))({data,error}=await CLOUD.from('erp_members').select('email,name,role,digest').order('name'));if(error&&/digest/.test(error.message||''))({data,error}=await CLOUD.from('erp_members').select('email,name,role').order('name'));if(error)throw error;MEMBERS=data||[];return MEMBERS}
 A.team=async()=>{closeDD();let list;try{list=await loadTeam()}catch(e){return toast('Could not load the team: '+e.message,true)}const own=isOwner();
- modal('Team and roles',`<p class="muted sm" style="margin-top:0"><b>Owners</b> see everything, award suppliers, change costs and prices, manage the team and restore backups. <b>Staff</b> handle email, orders and sourcing, without margins, Finance, Accounting or QuickBooks.</p>
- ${table('team',['Name','Email','Role','Daily digest',''],list.map(m=>`<tr><td><b>${esc(m.name)}</b>${m.email.toLowerCase()===USER.email?' <span class="muted sm">(you)</span>':''}</td><td class="sm">${esc(m.email)}</td><td>${own&&m.email.toLowerCase()!==USER.email?`<select data-team-role="${esc(m.email)}" aria-label="Role for ${esc(m.name)}">${opt('admin','Owner',['admin','owner'].includes(m.role))}${opt('member','Staff',!['admin','owner'].includes(m.role))}</select>`:esc(ROLE_LABEL[m.role]||'Staff')}</td><td>${'digest' in m?`<label class="check-inline"><input type="checkbox" data-team-digest="${esc(m.email)}" ${m.digest!==false?'checked':''} ${own||m.email.toLowerCase()===USER.email?'':'disabled'}> Email it</label>`:'<span class="muted sm">Run the SQL</span>'}</td><td>${own&&m.email.toLowerCase()!==USER.email?`<button type="button" class="btn sm" data-action="team-remove" data-email="${esc(m.email)}">Remove</button>`:''}</td></tr>`))}
+ modal('Team and roles',`<p class="muted sm" style="margin-top:0"><b>Signs emails as</b> is the name customers and vendors see under emails and on quote PDFs (blank = their own name). <b>Owners</b> see everything, award suppliers, change costs and prices, manage the team and restore backups. <b>Staff</b> handle email, orders and sourcing, without margins, Finance, Accounting or QuickBooks.</p>
+ ${table('team',['Name','Email','Signs emails as','Role','Daily digest',''],list.map(m=>`<tr><td><b>${esc(m.name)}</b>${m.email.toLowerCase()===USER.email?' <span class="muted sm">(you)</span>':''}</td><td class="sm">${esc(m.email)}</td><td>${!('signs_as' in m)?'<span class="muted sm">Run the SQL</span>':own?`<input data-team-sign="${esc(m.email)}" value="${esc(m.signs_as||'')}" placeholder="${esc(m.name)}" aria-label="Name ${esc(m.name)} signs emails with" style="width:150px">`:esc(m.signs_as||m.name)}</td><td>${own&&m.email.toLowerCase()!==USER.email?`<select data-team-role="${esc(m.email)}" aria-label="Role for ${esc(m.name)}">${opt('admin','Owner',['admin','owner'].includes(m.role))}${opt('member','Staff',!['admin','owner'].includes(m.role))}</select>`:esc(ROLE_LABEL[m.role]||'Staff')}</td><td>${'digest' in m?`<label class="check-inline"><input type="checkbox" data-team-digest="${esc(m.email)}" ${m.digest!==false?'checked':''} ${own||m.email.toLowerCase()===USER.email?'':'disabled'}> Email it</label>`:'<span class="muted sm">Run the SQL</span>'}</td><td>${own&&m.email.toLowerCase()!==USER.email?`<button type="button" class="btn sm" data-action="team-remove" data-email="${esc(m.email)}">Remove</button>`:''}</td></tr>`))}
  ${own?`<h3 style="font:700 14px var(--fh);margin:16px 0 8px">Add someone</h3><div class="fg">${fld('Name',inp('name','','placeholder="e.g. JJ"'))}${fld('Email they sign in with',inp('email','','type="email"'))}${fld('Role',`<select name="role">${opt('member','Staff',true)}${opt('admin','Owner')}</select>`)}</div><p class="muted sm">Then invite them from Supabase, Authentication, Users, so they get a sign-in link.</p>`:''}`,
  {wide:true,label:own?'Add to the team':'Close',submit:v=>{if(!own)return;if(!v.name||!isAddr(v.email))return fail('Enter a name and a valid email.');(async()=>{
   const {error}=await CLOUD.from('erp_members').insert({email:v.email.trim().toLowerCase(),name:v.name.trim(),role:v.role});if(error)return toast('Could not add: '+(/row-level|policy/.test(error.message)?'only owners can add people (run the roles SQL in Supabase first)':error.message),true);
@@ -2131,6 +2132,10 @@ document.addEventListener('change',async e=>{const s=e.target;if(!s.dataset||!s.
  const {data,error}=await CLOUD.from('erp_members').update({digest:s.checked}).eq('email',s.dataset.teamDigest).select('email');
  if(error||!data||!data.length){s.checked=!s.checked;return toast('Could not change it'+(error?': '+error.message:'. Only owners can change other people.'),true)}
  if(m)m.digest=s.checked;log(`${s.checked?'Turned on':'Turned off'} the daily digest for ${m?m.name:s.dataset.teamDigest}`);save();toast(`Daily digest ${s.checked?'on':'off'} for ${m?m.name:s.dataset.teamDigest}`)});
+document.addEventListener('change',async e=>{const s=e.target;if(!s.dataset||!s.dataset.teamSign)return;const m=MEMBERS.find(x=>x.email===s.dataset.teamSign);const was=m?(m.signs_as||''):'';const v=s.value.trim();
+ const {data,error}=await CLOUD.from('erp_members').update({signs_as:v||null}).eq('email',s.dataset.teamSign).select('email');
+ if(error||!data||!data.length){toast('Could not change it'+(error?': '+error.message:'. Only owners can change this.'),true);s.value=was;return}
+ if(m)m.signs_as=v||null;if(s.dataset.teamSign.toLowerCase()===USER.email)USER.signAs=v||USER.name;log(`Changed the name ${m?m.name:s.dataset.teamSign} signs emails with`,[{f:'Signs emails as',from:was||(m&&m.name)||'',to:v||(m&&m.name)||''}]);save();toast(`Emails from ${m?m.name:'them'} will now be signed ${v||(m&&m.name)}`)});
 document.addEventListener('change',async e=>{const s=e.target;if(!s.dataset||!s.dataset.teamRole)return;const m=MEMBERS.find(x=>x.email===s.dataset.teamRole);const was=m&&m.role;
  const {data,error}=await CLOUD.from('erp_members').update({role:s.value}).eq('email',s.dataset.teamRole).select('email');
  if(error||!data||!data.length){toast('Could not change the role'+(error?': '+error.message:'. Only owners can change roles.'),true);if(m)s.value=['admin','owner'].includes(was)?'admin':'member';return}
