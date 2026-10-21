@@ -2363,6 +2363,46 @@ A['tag-old']=()=>tagOldEmails(true).catch(e=>toast(e.message,true));
 const _renderTag=render;render=function(k){_renderTag(k);if(!CLOUD||!emailsOk||parse().r!=='inbox')return;const n=(S.emails||[]).filter(e=>e.channel==='Email'&&!e.inbox&&!e.demo).length;const note=$('#view .note');if(!n||!note||note.querySelector('[data-action="tag-old"]'))return;
  note.insertAdjacentHTML('beforeend',btn(`Tag ${n} older email${n===1?'':'s'}`,'tag-old',{},'sm'))};
 
+/* ================= vendor sites: logins for McMaster-Carr, Grainger, TForce and the rest (team only, kept out of backups and exports) ================= */
+IC.key='<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3M16 7l3 3M14 9l2 2"/>';
+let SITES=null,sitesErr='';
+async function loadSites(){const {data,error}=await CLOUD.from('erp_vendor_sites').select('id,name,url,username,password,kind,notes,updated_by,updated_at').order('name');
+ if(error){sitesErr=/does not exist|schema cache|relation/i.test(error.message)?'setup':error.message;SITES=[];return SITES}sitesErr='';SITES=data||[];return SITES}
+const siteHost=u=>{try{return new URL(u).hostname.replace(/^www\./,'')}catch(e){return u||''}};
+const _renderShellV=renderShell;renderShell=function(){_renderShellV();if(!CLOUD||$('#top [data-action="sites"]'))return;const bell=$('#top [data-action="bell"]');
+ if(bell)bell.insertAdjacentHTML('beforebegin',`<button class="icon-btn sites-btn" data-action="sites" aria-label="Vendor sites and logins" title="Vendor sites and logins">${ic('key')}<span class="sites-l">Vendor sites</span></button>`)};
+A.sites=async()=>{if($('#dd.sites-dd'))return closeDD();if(Date.now()-sitesClosedAt<150)return;closeDD();await loadSites();
+ const rows=SITES.map(s=>`<div class="site-row"><div class="grow" style="min-width:0"><a href="${esc(s.url)}" target="_blank" rel="noopener" class="site-name">${esc(s.name)}</a> <span class="muted sm">${esc(s.kind||'')}</span>
+  <div class="sm muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(siteHost(s.url))}${s.username?' · '+esc(s.username):''}</div></div>
+  <div class="site-acts">${s.username?`<button class="btn sm" data-action="site-copy" data-id="${s.id}" data-f="username" title="Copy username">User</button>`:''}${s.password?`<button class="btn sm" data-action="site-copy" data-id="${s.id}" data-f="password" title="Copy password">Password</button>`:''}<a class="btn sm primary" href="${esc(s.url)}" target="_blank" rel="noopener">Open</a></div></div>`).join('');
+ $('#top').insertAdjacentHTML('beforeend',`<div class="dd sites-dd" id="dd" role="dialog" aria-label="Vendor sites" style="width:min(460px,calc(100vw - 24px))"><header><span>Vendor sites and logins</span><button class="link sm" data-action="sites-manage">Add or edit</button></header>
+  ${sitesErr==='setup'?'<div class="empty">Vendor sites aren’t set up yet. Run mres-vendor-sites.sql in Supabase.</div>':sitesErr?`<div class="empty">Could not load: ${esc(sitesErr)}</div>`:rows||'<div class="empty">No sites yet. Click Add or edit.</div>'}
+  <div class="muted sm" style="padding:8px 12px;border-top:1px solid var(--line)">Copy the username and password, then Open and paste them on the site’s sign-in page.</div></div>`)};
+let sitesClosedAt=0;const _closeDDV=closeDD;closeDD=function(){if($('#dd.sites-dd'))sitesClosedAt=Date.now();_closeDDV()};
+A['site-copy']=async d=>{const s=(SITES||[]).find(x=>String(x.id)===String(d.id));if(!s)return;try{await navigator.clipboard.writeText(s[d.f]||'');toast(`${d.f==='password'?'Password':'Username'} for ${s.name} copied`);
+ if(d.f==='password')setTimeout(()=>{navigator.clipboard.readText&&navigator.clipboard.readText().then(t=>{if(t===s.password)navigator.clipboard.writeText('')}).catch(()=>{})},60000)}catch(x){toast('Could not copy. Open Add or edit to see it.',true)}};
+A['sites-manage']=async(d={})=>{closeDD();if(!SITES)await loadSites();if(sitesErr==='setup')return toast('Run mres-vendor-sites.sql in Supabase first.',true);
+ const s=d.id?SITES.find(x=>String(x.id)===String(d.id)):null;
+ const list=SITES.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="muted sm">${esc(siteHost(x.url))}</div></td><td class="sm">${esc(x.username||'')}</td><td class="sm muted">${x.updated_by?esc(x.updated_by)+', ':''}${x.updated_at?fd(String(x.updated_at).slice(0,10)):''}</td><td class="n">${btn('Edit','sites-manage',{id:x.id},'sm')}</td></tr>`);
+ modal(s?`Edit ${s.name}`:'Vendor sites and logins',`${s?'':`${SITES.length?table('sites',['Site','Username','Last changed',''],list):''}<h3 style="font:700 14px var(--fh);margin:16px 0 8px">Add a site</h3>`}
+  <div class="fg">${fld('Name',inp('name',s?s.name:'','placeholder="e.g. McMaster-Carr" required'))}${fld('Type',`<select name="kind">${['Vendor','Shipping','Supplier portal','Other'].map(k=>opt(k,k,(s?s.kind:'Vendor')===k)).join('')}</select>`)}
+  ${fld('Website',inp('url',s?s.url:'','type="url" placeholder="https://"'),true)}${fld('Username',inp('username',s?s.username:'','autocomplete="off"'))}
+  ${fld('Password',`<span style="display:flex;gap:6px"><input class="input" type="password" name="password" value="${esc(s?s.password||'':'')}" autocomplete="new-password" style="flex:1"><button type="button" class="btn sm" data-action="site-peek">Show</button></span>`)}
+  ${fld('Notes',inp('notes',s?s.notes||'':'','placeholder="Account #, who uses it, etc."'),true)}</div>
+  <p class="muted sm" style="margin:8px 0 0">Everyone on the team can see these. They’re stored in Supabase, not in the Excel export or backups.</p>`,
+  {label:s?'Save':'Add site',foot:s&&isOwner()?`<button type="button" class="btn ghost" data-action="site-del" data-id="${s.id}" style="margin-right:auto;color:var(--alert)">Delete</button>`:'',submit:v=>{
+   if(!v.name.trim()||!/^https?:\/\/\S+\.\S+/.test(v.url.trim())){toast('Add a name and a website starting with https://',true);return false}
+   let url=v.url.trim();try{const u=new URL(url);['gclid','gucid','gclsrc','gad_source','gad_campaignid','utm_source','utm_medium','utm_campaign'].forEach(k=>u.searchParams.delete(k));url=u.toString()}catch(e){}
+   const row={name:v.name.trim(),url,kind:v.kind,username:v.username.trim(),password:v.password,notes:v.notes.trim(),updated_by:USER.name,updated_at:new Date().toISOString()};
+   (async()=>{const q=s?CLOUD.from('erp_vendor_sites').update(row).eq('id',s.id).select('id'):CLOUD.from('erp_vendor_sites').insert(row).select('id');const {data,error}=await q;
+    if(error||!data||!data.length)return toast('Could not save: '+(error?error.message:'not allowed'),true);
+    log(`${s?'Updated':'Added'} the ${row.name} login in Vendor sites`,s?['username','url','password'].filter(k=>(s[k]||'')!==(row[k]||'')).map(k=>({f:k==='url'?'Website':k[0].toUpperCase()+k.slice(1),from:k==='password'?'(hidden)':s[k]||'',to:k==='password'?'(changed)':row[k]||''})):[]);save();await loadSites();toast(`${row.name} saved`)})()}})};
+A['site-peek']=()=>{const i=$('#mform [name=password]'),b=$('#mform [data-action="site-peek"]');if(!i)return;i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'Show':'Hide'};
+A['site-del']=async d=>{const s=SITES.find(x=>String(x.id)===String(d.id));if(!s||!confirmBox2(`Delete the ${s.name} login?`))return;const {data,error}=await CLOUD.from('erp_vendor_sites').delete().eq('id',s.id).select('id');
+ if(error||!data||!data.length)return toast('Could not delete'+(error?': '+error.message:'. Only owners can delete.'),true);log(`Deleted the ${s.name} login from Vendor sites`);save();closeModal();await loadSites();toast(`${s.name} deleted`)};
+(function(){const st=document.createElement('style');st.textContent=`.sites-btn{width:auto!important;padding:0 10px;gap:6px;display:inline-flex;align-items:center}.sites-l{font-size:13px;font-weight:600}@media(max-width:800px){.sites-l{display:none}.sites-btn{padding:0}}
+.site-row{display:flex;gap:10px;align-items:center;padding:10px 12px;border-top:1px solid var(--line)}.site-row:first-of-type{border-top:0}.site-name{font-weight:600;color:var(--ink)}.site-acts{display:flex;gap:4px;flex-shrink:0}`;document.head.appendChild(st)})();
+
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
 window.addEventListener('hashchange',()=>{if(!S)return;closeSide();closeDD();if($('#modal-root').innerHTML&&!$('.pal'))closeModal();render()});
