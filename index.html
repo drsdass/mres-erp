@@ -2403,6 +2403,18 @@ A['site-del']=async d=>{const s=SITES.find(x=>String(x.id)===String(d.id));if(!s
 (function(){const st=document.createElement('style');st.textContent=`.sites-btn{width:auto!important;padding:0 10px;gap:6px;display:inline-flex;align-items:center}.sites-l{font-size:13px;font-weight:600}@media(max-width:800px){.sites-l{display:none}.sites-btn{padding:0}}
 .site-row{display:flex;gap:10px;align-items:center;padding:10px 12px;border-top:1px solid var(--line)}.site-row:first-of-type{border-top:0}.site-name{font-weight:600;color:var(--ink)}.site-acts{display:flex;gap:4px;flex-shrink:0}`;document.head.appendChild(st)})();
 
+/* emails sent from Outlook that were filed under the ERP's copy address: ask mail-send to fix them once */
+async function fixSenders(manual){if(!CLOUD||!emailsOk||!S)return;const n=(S.emails||[]).filter(e=>/resend\.app$/i.test(e.from||'')).length;if(!n){if(manual)toast('Nothing to fix.');return}
+ const k='mres-fixsend-'+TODAY;if(!manual){try{if(localStorage.getItem(k))return}catch(x){}}
+ if(manual)toast(`Fixing ${n} email${n===1?'':'s'} sent from Outlook. This takes up to a minute…`);
+ const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{action:'fix-senders'}});
+ if(error||!data||data.error||data.checked==null){if(manual)toast('Could not fix yet: deploy the latest mail-send in Supabase first.',true);return}
+ try{localStorage.setItem(k,'1')}catch(x){}
+ if(data.merged||data.fixed){(S.emails||[]).forEach(e=>rowQ.add(e.id));kick();log(`Fixed ${data.merged+data.fixed} emails sent from Outlook (${data.merged} joined to their conversation)`);save()}
+ if(manual||data.merged||data.fixed)toast(`Fixed ${data.merged+data.fixed} email${data.merged+data.fixed===1?'':'s'} sent from Outlook${data.unknown?`, ${data.unknown} couldn't be read`:''}`)}
+setTimeout(function w(){if(!CLOUD||!emailsOk||!S)return setTimeout(w,5000);fixSenders(false).catch(()=>{})},12000);
+A['fix-senders']=()=>fixSenders(true).catch(e=>toast(e.message,true));
+
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
 window.addEventListener('hashchange',()=>{if(!S)return;closeSide();closeDD();if($('#modal-root').innerHTML&&!$('.pal'))closeModal();render()});
