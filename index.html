@@ -566,6 +566,10 @@ const lateP=p=>p.status!=='Draft'&&poOpen(p)&&p.exp&&dd(p.exp)<0;
 const onPO=sku=>sum(S.pos.filter(p=>p.status!=='Draft'&&poOpen(p)),p=>sum(p.lines.filter(l=>l.sku===sku),l=>l.qty-(l.received||0)));
 const onDraft=sku=>sum(S.pos.filter(p=>p.status==='Draft'),p=>sum(p.lines.filter(l=>l.sku===sku),l=>l.qty));
 function bomCost(a){let c=0,miss=0;a.comps.forEach(x=>{const it=item(x.sku);if(!it||it.cost==null)miss++;else c+=it.cost*x.qty});return{c,miss}}
+/* labor: hours to build one unit (on the build list) at the shop labor rate, $25/hr unless an owner changes it */
+const hoursTxt=h=>String(Math.round((+h||0)*100)/100);
+const laborRate=()=>(S&&+S.laborRate>0)?+S.laborRate:25;
+function buildCost(a){const b=bomCost(a),hrs=+a.hours||0,labor=hrs*laborRate();return{parts:b.c,miss:b.miss,hrs,labor,total:b.c+labor}}
 const canBuild=a=>a.comps.length?Math.min(...a.comps.map(x=>Math.floor(Math.max(0,avail(item(x.sku)))/x.qty))):0;
 const nextNum=(arr,f,start)=>Math.max(start,...arr.map(f).filter(n=>!isNaN(n)))+1;
 
@@ -699,10 +703,10 @@ VIEWS.purchasing=()=>{
 
 /* ================= builds ================= */
 VIEWS.builds=()=>{
- const open=sd=>sd;const cards=S.assemblies.map(a=>{const f=a.finished?item(a.finished):null,bc=bomCost(a),cb=canBuild(a);
+ const open=sd=>sd;const cards=S.assemblies.map(a=>{const f=a.finished?item(a.finished):null,bc=bomCost(a),bk=buildCost(a),cb=canBuild(a);
   const openQty=sum(S.orders.filter(o=>['New','Waiting on parts','Partially shipped'].includes(o.status)).flatMap(o=>o.lines).filter(l=>l.sku===a.finished),rem);
   return `<section class="panel mb"><div class="ph"><h3>${esc(a.id)}${f?` <span class="muted sm" style="font-weight:400">makes ${esc(f.sku)}, ${esc(f.desc)}</span>`:''}</h3><div class="actions">${btn('Record a build','build',{id:a.id},'sm')}${btn(ic('truck',14)+' Order parts for builds','build-po',{id:a.id},'sm primary')}</div></div>
-  ${kpis([{l:'Components',v:a.comps.length},{l:'Parts cost per build',v:bc.miss?`${$f(bc.c)}+`:$f(bc.c),s:bc.miss?`${bc.miss} parts have no cost`:'',c:bc.miss?'dn':''},{l:'Sell price',v:f&&f.price?$f(f.price):'–',s:f&&f.price&&!bc.miss?pctTxt(gmPct(f.price,bc.c))+' margin':''},{l:'Can build now',v:cb,s:'From parts on the shelf'},{l:'Open orders need',v:num(openQty),s:f?`${num(Math.max(0,avail(f)))} finished in stock`:''}]).replace('class="kpis"','class="kpis" style="margin:0;border:0;border-radius:0;border-bottom:1px solid var(--line)"')}
+  ${kpis([{l:'Components',v:a.comps.length},{l:'Cost per build',v:(bc.miss?`${$f(bk.total)}+`:$f(bk.total)),s:`Parts ${$f(bc.c)}${bc.miss?'+':''} + labor ${bk.hrs?`${hoursTxt(bk.hrs)} h × ${$f(laborRate())} = ${usd(bk.labor)}`:'<b>no hours set</b>'}${bc.miss?` · ${bc.miss} parts have no cost`:''}`,c:(bc.miss||!bk.hrs)?'dn':''},{l:'Sell price',v:f&&f.price?$f(f.price):'–',s:f&&f.price&&!bc.miss?pctTxt(gmPct(f.price,bk.total))+' margin':''},{l:'Can build now',v:cb,s:'From parts on the shelf'},{l:'Open orders need',v:num(openQty),s:f?`${num(Math.max(0,avail(f)))} finished in stock`:''}]).replace('class="kpis"','class="kpis" style="margin:0;border:0;border-radius:0;border-bottom:1px solid var(--line)"')}
   ${table('bom-'+a.id,['Part','Description','Vendor','#Per build','#Cost','#On hand','#On vendor PO','#MOQ'],a.comps.map(c=>{const it=item(c.sku)||{};return `<tr><td><button class="link" data-action="part" data-id="${esc(c.sku)}">${esc(c.sku)}</button></td><td class="sm">${esc(it.desc||'')}</td><td class="sm">${it.vendor?esc(vend(it.vendor).name):'<span style="color:var(--alert)">None</span>'}</td><td class="n">${num(c.qty)}</td><td class="n">${it.cost!=null?unitCost(it.cost):'<span style="color:var(--alert)">Missing</span>'}</td><td class="n">${num(it.onhand||0)}</td><td class="n">${num(onPO(c.sku))||'–'}</td><td class="n">${it.moq?num(it.moq):'–'}</td></tr>`}))}</section>`}).join('');
  return phead('Builds','The build lists behind your coolant pumps, brake bleeders and sensor assemblies, taken from the "# need per build" column. Recording a build uses up the components and adds the finished part to stock.','')
  +kpis([{l:'Build lists',v:S.assemblies.length},{l:'With a finished part to sell',v:S.assemblies.filter(a=>a.finished).length},{l:'Components missing a cost',v:new Set(S.assemblies.flatMap(a=>a.comps).filter(c=>item(c.sku)?.cost==null).map(c=>c.sku)).size,c:'dn'},{l:'Builds recorded',v:S.builds.length}])+cards};
@@ -832,7 +836,7 @@ const opt=(v,l,sel)=>`<option value="${esc(v)}" ${sel?'selected':''}>${esc(l)}</
 const fld=(label,inner,full)=>`<label class="f ${full?'full':''}">${label}${inner}</label>`;
 const inp=(name,val='',extra='')=>`<input class="input" name="${name}" value="${esc(val??'')}" ${extra}>`;
 const itemOpts=sel=>S.items.map(i=>opt(i.sku,`${i.sku}, ${i.desc||i.name}`,i.sku===sel)).join('');
-const costOf=sku=>{const it=item(sku);if(!it)return 0;if(it.cost!=null)return it.cost;const a=asmOf(sku);return a?bomCost(a).c:0};
+const costOf=sku=>{const it=item(sku);if(!it)return 0;if(it.cost!=null)return it.cost;const a=asmOf(sku);return a?buildCost(a).total:0};
 function itemFlags(i){const keep=i.flags.filter(f=>/duplicate|twice|filled|Added/.test(f));const isComp=S.assemblies.some(a=>a.comps.some(c=>c.sku===i.sku));if(i.type!=='Non-inventory'&&i.cost==null)keep.push('No cost');if(!i.vendor&&i.type!=='Non-inventory'&&!i.assembly)keep.push('No vendor');if(!isComp&&i.price==null)keep.push('No sell price');i.flags=keep}
 
 /* line builders */
@@ -1778,7 +1782,7 @@ function bomRow(c={},i){const it=c.sku?item(c.sku):null;return `<tr class="bomro
 M.bom=id=>{const a=id?S.assemblies.find(x=>x.id===id):null;const f=a&&a.finished?item(a.finished):null;
  const labels=[...new Set(S.assemblies.flatMap(x=>x.comps.map(c=>c.label)).concat(S.items.map(i=>i.label)).filter(Boolean))];
  modal(a?`Edit parts list: ${a.id}`:'New build list',`<p class="muted sm" style="margin-top:0">List every part that goes into one finished unit. Pick a part we already have, or type a new part number and description and it is added to the item master. Labels group parts on the list, for example "Seal kit" or "Motor end".</p>
- <div class="fg">${fld('Build name',inp('bname',a?a.id:'','required placeholder="e.g. GE 1.5 coolant pump"'))}${fld('Finished part # (what we sell)',inp('fsku',f?f.sku:'','list="bom-skus" placeholder="e.g. EQP-PMP-GE15-001"'))}${fld('Finished part description',inp('fdesc',f?(f.desc||f.name):'','placeholder="Shown on quotes and orders"'))}${fld('Builds planned (how many we need to make)',inp('plan',a&&a.plan||'','type="number" min="0" placeholder="0"'))}</div>
+ <div class="fg">${fld('Build name',inp('bname',a?a.id:'','required placeholder="e.g. GE 1.5 coolant pump"'))}${fld('Finished part # (what we sell)',inp('fsku',f?f.sku:'','list="bom-skus" placeholder="e.g. EQP-PMP-GE15-001"'))}${fld('Finished part description',inp('fdesc',f?(f.desc||f.name):'','placeholder="Shown on quotes and orders"'))}${fld('Builds planned (how many we need to make)',inp('plan',a&&a.plan||'','type="number" min="0" placeholder="0"'))}${fld(`Hours to build one (labor at ${$f(laborRate())}/hr)`,inp('hours',a&&a.hours||'','type="number" min="0" step="0.25" placeholder="e.g. 3.5"'))}</div>
  <datalist id="bom-skus">${S.items.map(i=>`<option value="${esc(i.sku)}">${esc(i.desc||i.name||'')}</option>`).join('')}</datalist><datalist id="bom-labels">${labels.map(l=>`<option value="${esc(l)}">`).join('')}</datalist>
  <div class="tbl-wrap" style="margin-top:12px"><table style="table-layout:fixed;width:100%;min-width:640px"><colgroup><col style="width:23%"><col style="width:33%"><col style="width:19%"><col style="width:10%"><col style="width:9%"><col style="width:46px"></colgroup><thead><tr><th>Part #</th><th>Description</th><th>Label</th><th class="n">Per build</th><th class="n">On hand</th><th></th></tr></thead><tbody id="bom-rows">${(a?a.comps:[{},{},{}]).map(bomRow).join('')}</tbody></table></div>
  <div style="margin-top:8px">${btn(ic('plus',14)+' Add a part','bom-add',{},'sm')}</div>`,{wide:true,label:a?'Save parts list':'Create build list',submit:d=>{
@@ -1790,12 +1794,12 @@ M.bom=id=>{const a=id?S.assemblies.find(x=>x.id===id):null;const f=a&&a.finished
   const ch=[],added=[];
   rows.forEach(r=>{let it=item(r.sku)||S.items.find(i=>i.sku.toLowerCase()===r.sku.toLowerCase());if(!it){it=newItem(r.sku,r.desc||r.sku,r.label);added.push(r.sku)}else{if(r.desc&&!it.desc)it.desc=r.desc;if(r.label&&!it.label)it.label=r.label}r.sku=it.sku});
   let fin=null;if(fsku){fin=item(fsku)||S.items.find(i=>i.sku.toLowerCase()===fsku.toLowerCase());if(!fin){fin=newItem(fsku,d.fdesc||name,'',{cat:'Finished goods'});added.push(fsku)}else if(d.fdesc&&!fin.desc)fin.desc=d.fdesc}
-  const comps=rows.map(r=>({sku:r.sku,qty:r.qty,...(r.label?{label:r.label}:{})}));const plan=Math.max(0,Math.round(+d.plan||0));
+  const comps=rows.map(r=>({sku:r.sku,qty:r.qty,...(r.label?{label:r.label}:{})}));const plan=Math.max(0,Math.round(+d.plan||0));const hours=Math.max(0,Math.round((+d.hours||0)*100)/100);
   if(a){const before=a.comps.map(c=>`${c.sku}×${c.qty}${c.label?' ('+c.label+')':''}`).join(', '),was=a.id;
    if(a.finished&&a.finished!==(fin&&fin.sku)){const o=item(a.finished);if(o&&o.assembly===a.id)delete o.assembly}
-   a.id=name;a.comps=comps;a.finished=fin?fin.sku:null;a.plan=plan;const after=comps.map(c=>`${c.sku}×${c.qty}${c.label?' ('+c.label+')':''}`).join(', ');
+   if((+a.hours||0)!==hours)ch.push({f:'Hours to build',from:fmtV(+a.hours||0),to:fmtV(hours)});a.id=name;a.comps=comps;a.finished=fin?fin.sku:null;a.plan=plan;a.hours=hours;const after=comps.map(c=>`${c.sku}×${c.qty}${c.label?' ('+c.label+')':''}`).join(', ');
    if(was!==name)ch.push({f:'Build name',from:was,to:name});if(before!==after)ch.push({f:'Parts',from:before,to:after})}
-  else{S.assemblies.push({id:name,comps,finished:fin?fin.sku:null,plan,created:TODAY,by:USER.name});ch.push({f:'Parts',from:'blank',to:comps.map(c=>`${c.sku}×${c.qty}`).join(', ')})}
+  else{S.assemblies.push({id:name,comps,finished:fin?fin.sku:null,plan,hours,created:TODAY,by:USER.name});if(hours)ch.push({f:'Hours to build',from:'blank',to:fmtV(hours)});ch.push({f:'Parts',from:'blank',to:comps.map(c=>`${c.sku}×${c.qty}`).join(', ')})}
   if(fin)fin.assembly=name;
   S.items.forEach(i=>{i.usedIn=S.assemblies.filter(x=>x.comps.some(c=>c.sku===i.sku)).map(x=>x.id);itemFlags(i)});
   if(added.length)ch.push({f:'New parts added',from:'blank',to:added.join(', ')});
@@ -2085,6 +2089,7 @@ M.bomCheck=(id,qty)=>{const a=S.assemblies.find(x=>x.id===id);if(!a)return toast
   ${onord.length?`<p class="sm muted" style="margin:0 0 8px">${onord.length} short part${onord.length===1?' is':'s are'} already on a vendor PO, so ${onord.length===1?'it’s':'they’re'} covered once ${onord.length===1?'it arrives':'they arrive'}.</p>`:''}
   ${noCost||noVendor?`<p class="sm" style="margin:0 0 8px;color:var(--alert)">${[noVendor?`${noVendor} missing part${noVendor===1?' has':'s have'} no vendor`:'',noCost?`${noCost} ha${noCost===1?'s':'ve'} no cost`:''].filter(Boolean).join(' and ')}. Add them in the Item master so they can be ordered.</p>`:''}
   <div class="tbl-wrap"><table data-tbl="bomchk"><thead><tr><th>Part</th><th>Description, vendor</th><th class="n">Per unit</th><th class="n">Need</th><th class="n">Available</th><th class="n">On vendor PO</th><th class="n">Still short</th><th>Status</th></tr></thead><tbody>${body||'<tr><td colspan="8" class="empty">This build list has no parts yet.</td></tr>'}</tbody></table></div>
+  <div class="bc-cost">${(()=>{const bk=buildCost(a),fc=f&&f.cost!=null?f.cost:null;return `<b>Cost for ${num(qty)}:</b> parts ${$f(bk.parts*qty)}${bk.miss?'+':''} + labor ${bk.hrs?`${hoursTxt(bk.hrs*qty)} h at ${$f(laborRate())}/hr = ${usd(bk.labor*qty)}`:'<span style="color:var(--alert)">no build hours set (Edit parts list)</span>'} = <b>${$f(bk.total*qty)}${bk.miss?'+':''}</b>${qty>1?` <span class="muted">(${$f(bk.total)} each)</span>`:''}${f&&f.price?` · sells for ${$f(f.price)} each, ${pctTxt(gmPct(f.price,bk.total))} margin`:''}`})()}</div>
   <p class="muted sm" style="margin:8px 0 0">Available is on hand minus anything already reserved for orders.</p>`,
   {wide:true,foot:`${btn('Edit parts list','bom-edit',{id:a.id},'ghost')}<span style="flex:1"></span>${miss.length?btn(ic('truck',15)+` Order what’s missing for ${num(qty)}`,'bomchk-po',{id:a.id,q:qty},'primary'):cb>=qty?btn('Record a build','build',{id:a.id},'primary'):''}`});
  const q=$('#bomq');if(q)q.addEventListener('change',()=>M.bomCheck(id,q.value))};
@@ -2098,7 +2103,8 @@ const _siB=searchIndex;searchIndex=function(){const r=_siB();S.assemblies.forEac
 const _vbC=VIEWS.builds;VIEWS.builds=id=>{const h=_vbC(id);if(!S.assemblies.length)return h;
  const pick=`<section class="panel mb bc-pick"><div class="pb" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Check a product</b><span class="muted sm">Pick what you want to build and how many. You’ll see every part, what’s on the shelf and what’s missing.</span><span style="flex:1"></span>
   <select id="bc-a" aria-label="Product to build">${S.assemblies.slice().sort((x,y)=>x.id.localeCompare(y.id)).map(a=>`<option value="${esc(a.id)}">${esc(a.id)}${a.finished?' ('+esc(a.finished)+')':''}</option>`).join('')}</select>
-  <input class="input" id="bc-n" type="number" min="1" value="1" style="width:80px" aria-label="How many">${btn('Check parts','bomchk-pick',{},'primary')}</div></section>`;
+  <input class="input" id="bc-n" type="number" min="1" value="1" style="width:80px" aria-label="How many">${btn('Check parts','bomchk-pick',{},'primary')}</div>
+  <div class="pb sm" style="border-top:1px solid var(--line);padding-top:8px;padding-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">Labor rate <b>${$f(laborRate())}/hr</b><span class="muted">· used for every build’s cost (hours to build × rate)</span>${isOwner()?btn('Change','labor-rate',{},'sm ghost'):''}${S.assemblies.some(a=>!(+a.hours>0))?`<span style="color:var(--alert)">· ${S.assemblies.filter(a=>!(+a.hours>0)).length} build list${S.assemblies.filter(a=>!(+a.hours>0)).length===1?' has':'s have'} no hours yet</span>`:''}</div></section>`;
  const i=h.indexOf('<section class="panel mb" id="plan-panel"');return i>=0?h.slice(0,i)+pick+h.slice(i):pick+h};
 A['bomchk-pick']=()=>{const s=$('#bc-a'),n=$('#bc-n');if(s)M.bomCheck(s.value,n?n.value:1)};
 const _renderBC=render;render=function(k){_renderBC(k);if(!S)return;const {r}=parse();
@@ -2106,10 +2112,19 @@ const _renderBC=render;render=function(k){_renderBC(k);if(!S)return;const {r}=pa
   if(act&&!act.querySelector('[data-action="bomchk"]'))act.insertAdjacentHTML('afterbegin',btn(ic('search',14)+' Check parts','bomchk',{id:a.id,q:a.plan||1},'sm'))})};
 const _partBC=M.part;M.part=sku=>{_partBC(sku);const a=asmOf(sku);const b=$('#mform .mbody');if(a&&b)b.insertAdjacentHTML('afterbegin',`<div class="note" style="display:flex;gap:10px;align-items:center;margin-bottom:10px"><span class="grow">We build this from the <b>${esc(a.id)}</b> build list (${a.comps.length} parts). Can build ${num(canBuild(a))} now.</span>${btn('Check parts','bomchk',{id:a.id,q:a.plan||1},'sm primary')}</div>`)};
 (function(){const st=document.createElement('style');st.textContent=`.bc-top{display:flex;gap:16px;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}.bc-q{display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600}
-.bc-k{display:grid;grid-template-columns:1.6fr repeat(4,1fr);gap:8px;margin-bottom:12px}.bc-k>div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}.bc-k span{font-size:12px;color:var(--ink-3)}.bc-k b{font-size:16px}
+.bc-cost{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 12px;font-size:13px;background:var(--surface-2)}.bc-k{display:grid;grid-template-columns:1.6fr repeat(4,1fr);gap:8px;margin-bottom:12px}.bc-k>div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}.bc-k span{font-size:12px;color:var(--ink-3)}.bc-k b{font-size:16px}
 .bc-k .ok{background:var(--ok-soft);border-color:transparent}.bc-k .ok b,.bc-k .ok span{color:var(--ok)}.bc-k .bad{background:var(--alert-soft);border-color:transparent}.bc-k .bad b,.bc-k .bad span{color:var(--alert)}
 tr.bc-g td{background:var(--surface-2);padding-top:6px;padding-bottom:6px}tr.bc-short td{background:color-mix(in srgb,var(--alert-soft) 45%,transparent)}
 @media(max-width:800px){.bc-k{grid-template-columns:1fr 1fr}.bc-k>div:first-child{grid-column:1/-1}}`;document.head.appendChild(st)})();
+
+A['labor-rate']=()=>{if(!isOwner())return toast('Only owners can change the labor rate.',true);modal('Labor rate',`<p class="muted" style="margin-top:0">Every build’s cost is parts plus hours to build × this rate.</p>${fld('Dollars per hour',inp('rate',laborRate(),'type="number" min="0" step="0.5"'))}`,{label:'Save rate',submit:d=>{const r=Math.round((+d.rate||0)*100)/100;if(!(r>0))return fail('Enter a rate above $0.');const was=laborRate();if(r===was)return;S.laborRate=r;log('Changed the labor rate for builds',[{f:'Labor rate',from:$f(was)+'/hr',to:$f(r)+'/hr'}]);toast(`Labor rate is now ${$f(r)}/hr`)}})};
+/* owners: copy the full build cost (parts + labor) onto the finished part, so quotes and order margins use it */
+A['bc-setcost']=d=>{const a=S.assemblies.find(x=>x.id===d.id);const f=a&&a.finished&&item(a.finished);if(!f||!isOwner())return;const bk=buildCost(a),was=f.cost;f.cost=Math.round(bk.total*100)/100;
+ S.orders.filter(isOpen).forEach(o=>o.lines.forEach(l=>{if(l.sku===f.sku&&!l.cost)l.cost=f.cost}));log(`Set ${f.sku} cost from its build list (parts + ${hoursTxt(bk.hrs)} h labor)`,[{f:'Cost',from:was==null?'blank':$f(was),to:$f(f.cost)}]);save();rerender();toast(`${f.sku} cost is now ${$f(f.cost)}`)};
+const _renderLab=render;render=function(k){_renderLab(k);if(!S||parse().r!=='builds'||!isOwner())return;
+ S.assemblies.forEach(a=>{const f=a.finished&&item(a.finished);if(!f)return;const bk=buildCost(a);if(bk.miss||!bk.hrs||Math.abs((f.cost??-1)-bk.total)<0.01)return;
+  const t=$$('#view table').find(x=>x.dataset.tbl==='bom-'+a.id);const sec=t&&t.closest('section');const k1=sec&&[...sec.querySelectorAll('.kpi')].find(x=>/Cost per build/.test(x.textContent));
+  if(k1&&!k1.querySelector('[data-action="bc-setcost"]'))k1.insertAdjacentHTML('beforeend',`<div class="sm" style="margin-top:4px">${f.cost!=null?`${esc(f.sku)} cost is ${$f(f.cost)}. `:''}<button class="link sm" data-action="bc-setcost" data-id="${esc(a.id)}">Use ${$f(bk.total)} as its cost</button></div>`)})};
 
 /* ================= packing slip: a printable PDF for the box, no prices ================= */
 function slipLines(o,mode){const sh=S.shipments.filter(s=>s.order===o.id).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
