@@ -2111,6 +2111,51 @@ const _partBC=M.part;M.part=sku=>{_partBC(sku);const a=asmOf(sku);const b=$('#mf
 tr.bc-g td{background:var(--surface-2);padding-top:6px;padding-bottom:6px}tr.bc-short td{background:color-mix(in srgb,var(--alert-soft) 45%,transparent)}
 @media(max-width:800px){.bc-k{grid-template-columns:1fr 1fr}.bc-k>div:first-child{grid-column:1/-1}}`;document.head.appendChild(st)})();
 
+/* ================= packing slip: a printable PDF for the box, no prices ================= */
+function slipLines(o,mode){const sh=S.shipments.filter(s=>s.order===o.id).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+ // packed or waiting to ship: the slip lists what's left to send; already shipped: the slip for the latest shipment
+ if(!sh.length||(mode!=='ship'&&(mode==='pack'||['Ready to pick','Packed'].includes(o.status))))return{mode:'pack',date:TODAY,ship:null,lines:o.lines.filter(l=>rem(l)>0||!sh.length).map(l=>({sku:l.sku,ordered:l.qty,qty:sh.length?rem(l):(rem(l)||l.qty),back:0}))};
+ const last=sh[sh.length-1],day=sh.filter(s=>s.date===last.date);
+ return{mode:'ship',date:last.date,ship:last,lines:o.lines.map(l=>({sku:l.sku,ordered:l.qty,qty:sum(day.filter(s=>s.sku===l.sku),s=>+s.qty||0),back:rem(l)})).filter(x=>x.qty||x.back)}}
+async function packingSlipPDF(o,mode){const {jsPDF}=await loadPDF();const doc=new jsPDF({unit:'pt',format:'letter'});const W=612,M=48;const c=acct(o.acct)||{};const sl=slipLines(o,mode);
+ const navy=[15,42,61],teal=[11,127,171],grey=[107,114,128],ink=[31,41,55],line=[229,231,235];
+ const T=(t,x,y,op={})=>{doc.setFont('helvetica',op.b?'bold':'normal');doc.setFontSize(op.s||10);doc.setTextColor(...(op.c||ink));doc.text(String(t??''),x,y,op.a?{align:op.a}:undefined)};
+ doc.setFillColor(...teal);doc.rect(0,0,W,6,'F');
+ T('MASS RENEWABLE',M,52,{b:1,s:17,c:navy});T('ENERGY SOLUTIONS',M,66,{b:1,s:8.5,c:teal});T([CO.phone,CO.email,CO.web].join('  ·  '),M,82,{s:8.5,c:grey});
+ T('PACKING SLIP',W-M,52,{b:1,s:20,c:navy,a:'right'});T(o.so?'SO '+o.so:o.id,W-M,70,{b:1,s:11,c:teal,a:'right'});T(`Ship date: ${longDate(sl.date)}`,W-M,86,{s:9,c:grey,a:'right'});
+ doc.setDrawColor(...line);doc.setLineWidth(1);doc.line(M,104,W-M,104);
+ let y=126;T('SHIP TO',M,y,{b:1,s:8,c:teal});T('ORDER',330,y,{b:1,s:8,c:teal});y+=16;
+ const to=[c.name||aname(o.acct)||'Customer',...String(o.shipTo||'').split(/\n|,\s*(?=\S)/).map(s=>s.trim()).filter(Boolean).slice(0,4),c.contact||'',c.phone||''].filter(Boolean);
+ const s0=sl.ship||{},pk=o.pack||{};
+ const right=[['Customer PO',o.cpo||'–'],...(o.endPo?[['End customer PO',o.endPo]]:[]),['Order date',o.date?longDate(o.date):'–'],['Ship method',s0.carrier||o.shipMethod||'–'],['Tracking #',s0.tracking||o.tracking||'–'],['Boxes',String(s0.boxes||pk.boxes||'–')],...((s0.weight||pk.weight)?[['Weight',`${s0.weight||pk.weight} lb`]]:[])];
+ to.forEach((t,i)=>T(t,M,y+i*14,{b:i===0,s:i===0?11:9.5}));right.forEach(([k,v],i)=>{T(k,330,y+i*14,{s:9,c:grey});T(v,430,y+i*14,{s:9.5,b:k==='Tracking #'&&v!=='–'})});
+ y+=Math.max(to.length,right.length)*14+20;
+ const cols=[[M,'#'],[M+22,'PART'],[M+150,'DESCRIPTION'],[W-M-130,'ORDERED','right'],[W-M-62,'SHIPPED','right'],[W-M,'BACKORDER','right']];
+ doc.setFillColor(243,244,246);doc.rect(M-6,y-12,W-2*M+12,20,'F');cols.forEach(([x,h,a])=>T(h,x,y+2,{b:1,s:8,c:grey,a}));y+=22;
+ let tot=0;sl.lines.forEach((l,i)=>{const it=item(l.sku)||{};doc.setFontSize(9);const desc=doc.splitTextToSize(String(it.desc||it.name||''),W-M-130-(M+150)-50);const h=Math.max(1,desc.length)*12+8;
+  if(y+h>690){doc.addPage();y=60}tot+=l.qty;
+  T(i+1,M,y,{s:9,c:grey});T(l.sku,M+22,y,{b:1,s:9.5});desc.forEach((d,j)=>T(d,M+150,y+j*12,{s:9}));T(num(l.ordered),W-M-130,y,{s:9.5,a:'right'});T(num(l.qty),W-M-62,y,{s:10,b:1,a:'right'});T(l.back?num(l.back):'–',W-M,y,{s:9.5,a:'right',c:l.back?[194,65,12]:grey});
+  y+=h;doc.setDrawColor(...line);doc.line(M-6,y-8,W-M+6,y-8)});
+ y+=6;T(`Total units in this shipment: ${num(tot)}`,W-M,y,{b:1,s:10,a:'right'});y+=14;
+ if(sl.lines.some(l=>l.back))T('Items on backorder will ship separately as soon as they are available.',M,y,{s:9,c:[194,65,12]});
+ y=Math.max(y+40,600);if(y>700){doc.addPage();y=80}
+ doc.setDrawColor(...line);doc.line(M,y,M+230,y);doc.line(330,y,W-M,y);T('Received by (print and sign)',M,y+12,{s:8,c:grey});T('Date',330,y+12,{s:8,c:grey});
+ T('Please check the contents against this slip and report any shortage or damage within 5 business days: '+CO.phone+' or '+CO.email+'.',M,y+40,{s:8.5,c:grey});
+ T('Thank you for your business.',M,y+56,{b:1,s:9.5,c:navy});
+ const n=doc.getNumberOfPages();for(let i=1;i<=n;i++){doc.setPage(i);T(`${CO.name} · Packing slip ${o.so?'SO '+o.so:o.id} · Page ${i} of ${n}`,W/2,770,{s:7.5,c:grey,a:'center'})}
+ return{doc,name:`Packing slip ${o.so?'SO '+o.so:o.id}${sl.mode==='ship'?' '+sl.date:''}.pdf`}}
+A['slip']=async d=>{const o=byId(S.orders,d.id);if(!o)return;try{const {doc,name}=await packingSlipPDF(o,d.mode);let w=null;try{w=window.open(doc.output('bloburl'),'_blank')}catch(e){}if(!w)doc.save(name);log(`Printed a packing slip for ${oLabel(o)}`);save();toast('Packing slip ready. Print it from the new tab.')}catch(e){toast(e.message,true)}};
+A['slip-save']=async d=>{const o=byId(S.orders,d.id);if(!o)return;try{const {doc,name}=await packingSlipPDF(o,d.mode);doc.save(name)}catch(e){toast(e.message,true)}};
+function offerSlip(id,what,mode){const o=byId(S.orders,id);if(!o)return;modal(`${oLabel(o)} ${what}`,`<p style="margin-top:0">Print the packing slip and put it in the box${o.pack&&o.pack.boxes>1?' (one copy in the first box is enough)':''}. It lists the parts and quantities, with no prices.</p>`,{foot:`${btn('Not now','close-modal','','ghost')}${btn('Download','slip-save',{id,mode},'')}${btn('Print packing slip','slip',{id,mode},'primary')}`})}
+/* after Pick and pack, and after Ship, offer the slip */
+const _pickS=M.pick;M.pick=id=>{_pickS(id);const sub=onSubmit;if(sub)onSubmit=(d,f)=>{const r=sub(d,f);if(r!==false)setTimeout(()=>offerSlip(id,'is packed','pack'),60);return r};
+ const ft=$('#mform footer');if(ft)ft.insertAdjacentHTML('afterbegin',`<button type="button" class="btn ghost" data-action="slip" data-mode="pack" data-id="${esc(id)}" style="margin-right:auto">Packing slip</button>`)};
+const _shipS=M.ship;M.ship=id=>{_shipS(id);const sub=onSubmit;if(sub)onSubmit=(d,f)=>{const r=sub(d,f);if(r!==false)setTimeout(()=>offerSlip(id,'is shipped','ship'),60);return r}};
+/* a Packing slip button on the order page and the warehouse lists */
+const _renderS=render;render=function(k){_renderS(k);if(!S)return;const {r,id}=parse();
+ if(r==='sales'&&id){const o=byId(S.orders,id);const act=$('#view .phead .actions');if(o&&act&&!act.querySelector('[data-action="slip"]')&&(o.pack||S.shipments.some(s=>s.order===o.id)||['Ready to pick','Packed'].includes(o.status))){const shipped=S.shipments.some(s=>s.order===o.id),toSend=['Ready to pick','Packed'].includes(o.status);act.insertAdjacentHTML('afterbegin',(shipped?btn(ic('box',15)+(toSend?' Last shipment slip':' Packing slip'),'slip',{id:o.id,mode:'ship'}):'')+(toSend?btn(ic('box',15)+' Packing slip','slip',{id:o.id,mode:'pack'}):''))}}
+ if(r==='warehouse')$$('#view [data-action="ship"],#view [data-action="pick"]').forEach(b=>{if(b.parentElement.querySelector(`[data-action="slip"][data-id="${b.dataset.id}"]`))return;b.insertAdjacentHTML('beforebegin',`<button class="btn sm ghost" data-action="slip" data-mode="pack" data-id="${esc(b.dataset.id)}" title="Packing slip">${ic('box',14)} Slip</button> `)})};
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
