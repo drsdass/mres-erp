@@ -2067,6 +2067,50 @@ const _inboxT=VIEWS.inbox;VIEWS.inbox=id=>{const h=_inboxT(id);if(!id)return h;c
 .cal-e.ok{background:var(--ok-soft);color:var(--ok)}.cal-e.alert{background:var(--alert-soft);color:var(--alert)}.cal-e.warn{background:var(--sun-soft);color:#9A6210}.cal-e.wind{background:var(--wind-soft);color:var(--wind)}.cal-e.plain{background:var(--surface-2);color:var(--ink-2)}
 .cal-e:focus-visible{outline:2px solid var(--grid)}@media(max-width:700px){.cal-d{min-height:64px;padding:4px}.cal-e{font-size:0;height:6px;padding:0}.cal-h div{padding:6px 4px}}`;document.head.appendChild(st)})();
 
+/* ================= build check: pull up a product (e.g. a mag drive pump), see every part it needs and what's missing ================= */
+function bomRows(a,qty){return a.comps.map(c=>{const real=item(c.sku),it=real||{sku:c.sku};const need=c.qty*qty,av=real?Math.max(0,avail(real)):0,po=onPO(c.sku),short=Math.max(0,need-av),after=Math.max(0,short-po);
+ return{c,it,need,av,po,short,after,sub:asmOf(c.sku),st:short===0?'ok':after===0?'po':'short'}})}
+M.bomCheck=(id,qty)=>{const a=S.assemblies.find(x=>x.id===id);if(!a)return toast('That build list no longer exists.',true);
+ qty=Math.max(1,Math.floor(+qty||a.plan||1));const f=a.finished?item(a.finished):null;const rows=bomRows(a,qty);
+ const miss=rows.filter(r=>r.st==='short'),onord=rows.filter(r=>r.st==='po'),ready=rows.filter(r=>r.st==='ok');
+ const buy=sum(miss,r=>Math.max(r.after,r.it.moq||0)*(r.it.cost||0)),noCost=miss.filter(r=>r.it.cost==null).length,noVendor=miss.filter(r=>!r.it.vendor).length;
+ const cb=canBuild(a);
+ const groups={};rows.forEach(r=>{const k=(r.c.label||'').trim()||'Other parts';(groups[k]=groups[k]||[]).push(r)});
+ const stChip=r=>r.st==='ok'?chip('In stock','ok'):r.st==='po'?chip('On order','warn'):chip(`Short ${num(r.after)}`,'alert');
+ const body=Object.entries(groups).map(([g,rs])=>`<tr class="bc-g"><td colspan="8"><b>${esc(g)}</b> <span class="muted sm">${rs.filter(r=>r.st==='ok').length} of ${rs.length} ready</span></td></tr>`+rs.map(r=>`<tr class="${r.st==='short'?'bc-short':''}"><td><button class="link" data-action="part" data-id="${esc(r.c.sku)}">${esc(r.c.sku)}</button>${r.sub?`<div class="sm">${chip('Built here','wind')} <button class="link sm" data-action="bomchk" data-id="${esc(r.sub.id)}" data-q="${r.short||r.need}">check its parts</button></div>`:''}</td><td class="sm">${esc(r.it.desc||r.it.name||'')}${r.it.vendor?`<div class="muted">${esc(vend(r.it.vendor).name)}</div>`:'<div style="color:var(--alert)">No vendor</div>'}</td><td class="n">${num(r.c.qty)}</td><td class="n"><b>${num(r.need)}</b></td><td class="n">${num(r.av)}</td><td class="n">${r.po?num(r.po):'–'}</td><td class="n">${r.after?`<b style="color:var(--alert)">${num(r.after)}</b>`:'0'}</td><td>${stChip(r)}</td></tr>`).join('')).join('');
+ modal(`${a.id}: parts check`,`<div class="bc-top"><div>${f?`<div><b>${esc(f.sku)}</b> ${esc(f.desc||f.name||'')}</div><div class="muted sm">${num(Math.max(0,avail(f)))} finished in stock</div>`:'<div class="muted sm">No finished part number set on this build list</div>'}</div>
+  <label class="bc-q">How many to build <input class="input" id="bomq" type="number" min="1" step="1" value="${qty}" style="width:90px"></label></div>
+  <div class="bc-k"><div class="${cb>=qty?'ok':'bad'}"><span>${cb>=qty?'Ready to build':'Not ready yet'}</span><b>${cb>=qty?`All ${rows.length} parts on the shelf`:`${miss.length+onord.length} of ${rows.length} parts short`}</b></div>
+   <div><span>Can build now</span><b>${num(cb)}</b></div><div><span>Parts ready</span><b>${ready.length} of ${rows.length}</b></div><div><span>Short, not on order</span><b style="${miss.length?'color:var(--alert)':''}">${miss.length}</b></div><div><span>To buy what’s missing</span><b>${miss.length?$f(buy)+(noCost?'+':''):'$0'}</b></div></div>
+  ${onord.length?`<p class="sm muted" style="margin:0 0 8px">${onord.length} short part${onord.length===1?' is':'s are'} already on a vendor PO, so ${onord.length===1?'it’s':'they’re'} covered once ${onord.length===1?'it arrives':'they arrive'}.</p>`:''}
+  ${noCost||noVendor?`<p class="sm" style="margin:0 0 8px;color:var(--alert)">${[noVendor?`${noVendor} missing part${noVendor===1?' has':'s have'} no vendor`:'',noCost?`${noCost} ha${noCost===1?'s':'ve'} no cost`:''].filter(Boolean).join(' and ')}. Add them in the Item master so they can be ordered.</p>`:''}
+  <div class="tbl-wrap"><table data-tbl="bomchk"><thead><tr><th>Part</th><th>Description, vendor</th><th class="n">Per unit</th><th class="n">Need</th><th class="n">Available</th><th class="n">On vendor PO</th><th class="n">Still short</th><th>Status</th></tr></thead><tbody>${body||'<tr><td colspan="8" class="empty">This build list has no parts yet.</td></tr>'}</tbody></table></div>
+  <p class="muted sm" style="margin:8px 0 0">Available is on hand minus anything already reserved for orders.</p>`,
+  {wide:true,foot:`${btn('Edit parts list','bom-edit',{id:a.id},'ghost')}<span style="flex:1"></span>${miss.length?btn(ic('truck',15)+` Order what’s missing for ${num(qty)}`,'bomchk-po',{id:a.id,q:qty},'primary'):cb>=qty?btn('Record a build','build',{id:a.id},'primary'):''}`});
+ const q=$('#bomq');if(q)q.addEventListener('change',()=>M.bomCheck(id,q.value))};
+A.bomchk=d=>M.bomCheck(d.id,d.q);
+A['bomchk-po']=d=>{const a=S.assemblies.find(x=>x.id===d.id);if(!a)return;const n=bomRows(a,+d.q||1).filter(r=>r.after>0).map(r=>({sku:r.c.sku,gap:r.after}));if(!n.length)return toast('Nothing to order: stock and open POs cover it.');
+ const r=draftPOs(n,`${num(+d.q||1)} × ${a.id}`);if(r!==false){log(`Drafted POs for the parts missing to build ${num(+d.q||1)} × ${a.id}`);save();closeModal();ui.tabs.purchasing='Purchase orders';location.hash='#/purchasing';rerender()}};
+
+/* find it: search bar, a picker at the top of Builds, a button on each build card and on the finished part */
+const _siB=searchIndex;searchIndex=function(){const r=_siB();S.assemblies.forEach(a=>{const f=a.finished?item(a.finished):null;
+ r.push({g:'Build lists',t:`${a.id}${f?', '+f.sku:''}`,s:`${a.comps.length} parts, can build ${canBuild(a)} now`,k:[a.id,f?f.sku+' '+(f.desc||'')+' '+(f.name||''):'',...a.comps.map(c=>c.sku+' '+(c.label||''))].join(' '),go:()=>M.bomCheck(a.id)})});return r};
+const _vbC=VIEWS.builds;VIEWS.builds=id=>{const h=_vbC(id);if(!S.assemblies.length)return h;
+ const pick=`<section class="panel mb bc-pick"><div class="pb" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Check a product</b><span class="muted sm">Pick what you want to build and how many. You’ll see every part, what’s on the shelf and what’s missing.</span><span style="flex:1"></span>
+  <select id="bc-a" aria-label="Product to build">${S.assemblies.slice().sort((x,y)=>x.id.localeCompare(y.id)).map(a=>`<option value="${esc(a.id)}">${esc(a.id)}${a.finished?' ('+esc(a.finished)+')':''}</option>`).join('')}</select>
+  <input class="input" id="bc-n" type="number" min="1" value="1" style="width:80px" aria-label="How many">${btn('Check parts','bomchk-pick',{},'primary')}</div></section>`;
+ const i=h.indexOf('<section class="panel mb" id="plan-panel"');return i>=0?h.slice(0,i)+pick+h.slice(i):pick+h};
+A['bomchk-pick']=()=>{const s=$('#bc-a'),n=$('#bc-n');if(s)M.bomCheck(s.value,n?n.value:1)};
+const _renderBC=render;render=function(k){_renderBC(k);if(!S)return;const {r}=parse();
+ if(r==='builds')S.assemblies.forEach(a=>{const t=$$('#view table').find(x=>x.dataset.tbl==='bom-'+a.id);const act=t&&t.closest('section')&&t.closest('section').querySelector('.actions');
+  if(act&&!act.querySelector('[data-action="bomchk"]'))act.insertAdjacentHTML('afterbegin',btn(ic('search',14)+' Check parts','bomchk',{id:a.id,q:a.plan||1},'sm'))})};
+const _partBC=M.part;M.part=sku=>{_partBC(sku);const a=asmOf(sku);const b=$('#mform .mbody');if(a&&b)b.insertAdjacentHTML('afterbegin',`<div class="note" style="display:flex;gap:10px;align-items:center;margin-bottom:10px"><span class="grow">We build this from the <b>${esc(a.id)}</b> build list (${a.comps.length} parts). Can build ${num(canBuild(a))} now.</span>${btn('Check parts','bomchk',{id:a.id,q:a.plan||1},'sm primary')}</div>`)};
+(function(){const st=document.createElement('style');st.textContent=`.bc-top{display:flex;gap:16px;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}.bc-q{display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600}
+.bc-k{display:grid;grid-template-columns:1.6fr repeat(4,1fr);gap:8px;margin-bottom:12px}.bc-k>div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}.bc-k span{font-size:12px;color:var(--ink-3)}.bc-k b{font-size:16px}
+.bc-k .ok{background:var(--ok-soft);border-color:transparent}.bc-k .ok b,.bc-k .ok span{color:var(--ok)}.bc-k .bad{background:var(--alert-soft);border-color:transparent}.bc-k .bad b,.bc-k .bad span{color:var(--alert)}
+tr.bc-g td{background:var(--surface-2);padding-top:6px;padding-bottom:6px}tr.bc-short td{background:color-mix(in srgb,var(--alert-soft) 45%,transparent)}
+@media(max-width:800px){.bc-k{grid-template-columns:1fr 1fr}.bc-k>div:first-child{grid-column:1/-1}}`;document.head.appendChild(st)})();
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
