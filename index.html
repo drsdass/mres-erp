@@ -2504,6 +2504,86 @@ async function fixSenders(manual){if(!CLOUD||!emailsOk||!S)return;const n=(S.ema
 setTimeout(function w(){if(!CLOUD||!emailsOk||!S)return setTimeout(w,5000);fixSenders(false).catch(()=>{})},12000);
 A['fix-senders']=()=>fixSenders(true).catch(e=>toast(e.message,true));
 
+/* ================= part photos: take a picture on a phone or upload one, keep it on the part, show it on builds, send it to a customer ================= */
+IC.camera='<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/>';
+const PHB='part-photos',phCache=new Map();
+const phOf=sku=>{const it=item(sku);return it&&Array.isArray(it.photos)?it.photos:[]};
+async function phSign(paths){const now=Date.now(),need=[...new Set(paths)].filter(p=>{const c=phCache.get(p);return !c||c.exp<now});
+ if(need.length){const {data,error}=await CLOUD.storage.from(PHB).createSignedUrls(need,3600);if(!error)(data||[]).forEach((r,i)=>{if(r&&r.signedUrl)phCache.set(r.path||need[i],{url:r.signedUrl,exp:now+3300e3})})}
+ return p=>(phCache.get(p)||{}).url||''}
+async function phFill(root=document){if(!CLOUD)return;const imgs=[...root.querySelectorAll('img[data-ph]')].filter(i=>!i.src||i.dataset.done!=='1');if(!imgs.length)return;
+ const get=await phSign(imgs.map(i=>i.dataset.ph));imgs.forEach(i=>{const u=get(i.dataset.ph);if(u){i.src=u;i.dataset.done='1'}else i.closest('.ph-t')?.classList.add('ph-missing')})}
+const phThumb=(sku,size=34)=>{const p=phOf(sku)[0];return p?`<img data-ph="${esc(p.path)}" alt="Photo of ${esc(sku)}" class="ph-mini" style="width:${size}px;height:${size}px" data-action="ph-view" data-sku="${esc(sku)}" data-i="0">`:''};
+/* shrink a phone photo to 1600 px JPEG so it uploads fast and fits in an email */
+async function phShrink(file,max=1600){let src;try{src=await createImageBitmap(file,{imageOrientation:'from-image'})}catch(e){src=await new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error('That file isn’t a photo the browser can read. Try a JPG or PNG.'));im.src=URL.createObjectURL(file)})}
+ const w=src.width,h=src.height,k=Math.min(1,max/Math.max(w,h));const c=document.createElement('canvas');c.width=Math.round(w*k);c.height=Math.round(h*k);c.getContext('2d').drawImage(src,0,0,c.width,c.height);
+ return{blob:await new Promise(r=>c.toBlob(r,'image/jpeg',0.85)),w:c.width,h:c.height}}
+async function phUpload(sku,files){const it=item(sku);if(!it)return;if(!Array.isArray(it.photos))it.photos=[];let n=0;
+ for(const f of [...files].slice(0,10)){if(!/^image\//.test(f.type||'image/')&&!/\.(jpe?g|png|heic|webp)$/i.test(f.name))continue;
+  try{toast(`Uploading photo${files.length>1?` ${n+1} of ${files.length}`:''}…`);const {blob,w,h}=await phShrink(f);const path=`parts/${sku.replace(/[^\w.-]+/g,'_')}/${crypto.randomUUID()}.jpg`;
+   const {error}=await CLOUD.storage.from(PHB).upload(path,blob,{contentType:'image/jpeg',upsert:false});if(error)throw new Error(/bucket|not found/i.test(error.message)?'Photos aren’t set up yet. Run mres-part-photos.sql in Supabase.':error.message);
+   it.photos.push({path,by:USER.name,at:new Date().toISOString(),w,h,note:''});n++}catch(e){toast('Photo not added: '+e.message,true);break}}
+ if(n){log(`Added ${n} photo${n===1?'':'s'} to part ${sku}`);save();toast(`${n} photo${n===1?'':'s'} added to ${sku}`)}return n}
+function phStrip(sku){const ps=phOf(sku);return `<section class="ph-box" data-ph-sku="${esc(sku)}"><div class="ph-h"><b>Photos</b><span class="muted sm">${ps.length?`${ps.length} on file · the first one shows on builds and lists`:'None yet'}</span><span style="flex:1"></span>
+  <label class="btn sm primary">${ic('camera',14)} Take photo<input type="file" accept="image/*" capture="environment" hidden data-ph-up="${esc(sku)}"></label>
+  <label class="btn sm">${ic('plus',14)} Upload<input type="file" accept="image/*" multiple hidden data-ph-up="${esc(sku)}"></label>${ps.length?btn('Send to a customer','ph-send',{sku},'sm'):''}</div>
+  ${ps.length?`<div class="ph-grid">${ps.map((p,i)=>`<button type="button" class="ph-t" data-action="ph-view" data-sku="${esc(sku)}" data-i="${i}" title="${esc((p.note?p.note+' · ':'')+'Added by '+(p.by||'')+' '+fd(String(p.at||'').slice(0,10)))}"><img data-ph="${esc(p.path)}" alt="Photo ${i+1} of ${esc(sku)}">${i===0?'<span class="ph-main">Main</span>':''}</button>`).join('')}</div>`:''}</section>`}
+document.addEventListener('change',async e=>{const inp=e.target;if(!inp.dataset||!inp.dataset.phUp||!inp.files||!inp.files.length)return;e.stopPropagation();const sku=inp.dataset.phUp;
+ const n=await phUpload(sku,inp.files);inp.value='';if(!n)return;const box=document.querySelector(`.ph-box[data-ph-sku="${CSS&&CSS.escape?CSS.escape(sku):sku}"]`);if(box){box.outerHTML=phStrip(sku);phFill(document.getElementById('modal-root'))}else rerender()},true);
+/* the photo strip at the top of every part */
+const _partPh=M.part;M.part=sku=>{_partPh(sku);if(!CLOUD)return;const b=$('#mform .mbody');if(!b||!item(sku))return;b.insertAdjacentHTML('afterbegin',phStrip(sku));phFill(b)};
+/* full-size view */
+A['ph-view']=async d=>{const ps=phOf(d.sku),i=Math.min(+d.i||0,ps.length-1),p=ps[i];if(!p)return;const it=item(d.sku)||{};const get=await phSign([p.path]);const own=isOwner()||p.by===USER.name;
+ modal(`${d.sku}: photo ${i+1} of ${ps.length}`,`<div class="ph-big"><img src="${esc(get(p.path))}" alt="Photo of ${esc(d.sku)}"></div>
+  <p class="sm" style="margin:8px 0 0"><b>${esc(d.sku)}</b> ${esc(it.desc||it.name||'')} <span class="muted">· added by ${esc(p.by||'')} on ${fd(String(p.at||'').slice(0,10))}</span></p>
+  <label class="f full" style="margin-top:8px">Note (e.g. “front view”, “nameplate”, “as received from vendor”)<input class="input" id="ph-note" value="${esc(p.note||'')}"></label>`,
+  {wide:true,foot:`${btn('‹ Back to part','part',{id:d.sku},'ghost')}<span style="flex:1"></span>${ps.length>1?btn('‹','ph-view',{sku:d.sku,i:(i-1+ps.length)%ps.length},'sm')+btn('›','ph-view',{sku:d.sku,i:(i+1)%ps.length},'sm'):''}${i>0?btn('Make main photo','ph-main',{sku:d.sku,i},''):''}${own?btn('Delete','ph-del',{sku:d.sku,i},'ghost'):''}<a class="btn" href="${esc(get(p.path))}" download="${esc(d.sku)}-${i+1}.jpg" target="_blank" rel="noopener">Download</a>${btn('Send to a customer','ph-send',{sku:d.sku,i},'primary')}`});
+ const n=$('#ph-note');if(n)n.addEventListener('change',()=>{const was=p.note||'';p.note=n.value.trim();if(was!==p.note){log(`Updated a photo note on ${d.sku}`,[{f:'Note',from:was,to:p.note}]);save();toast('Note saved')}})};
+A['ph-main']=d=>{const ps=phOf(d.sku),i=+d.i;if(!ps[i])return;ps.unshift(ps.splice(i,1)[0]);log(`Changed the main photo of ${d.sku}`);save();toast('Main photo changed');A['ph-view']({sku:d.sku,i:0})};
+A['ph-del']=async d=>{const it=item(d.sku),ps=phOf(d.sku),i=+d.i,p=ps[i];if(!p||!confirmBox2('Delete this photo? This can’t be undone.'))return;
+ const {error}=await CLOUD.storage.from(PHB).remove([p.path]);if(error&&!/not found/i.test(error.message))return toast('Could not delete: '+error.message,true);
+ it.photos.splice(i,1);log(`Deleted a photo from ${d.sku}`);save();toast('Photo deleted');M.part(d.sku)};
+/* send photos to a customer: "would this work?" with the part number on the picture */
+function phLabel(img,it){const c=document.createElement('canvas');const bar=Math.max(54,Math.round(img.height*0.075));c.width=img.width;c.height=img.height+bar;const g=c.getContext('2d');
+ g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0);g.fillStyle='#0f2a3d';g.fillRect(0,img.height,c.width,bar);
+ const fs=Math.round(bar*0.36);g.fillStyle='#fff';g.font=`bold ${fs}px Arial, sans-serif`;g.textBaseline='middle';g.fillText(`Part # ${it.sku}`,Math.round(bar*0.3),img.height+bar*0.36);
+ g.font=`${Math.round(fs*0.78)}px Arial, sans-serif`;g.fillStyle='#cbe7f2';const desc=String(it.desc||it.name||'').slice(0,90);g.fillText(desc,Math.round(bar*0.3),img.height+bar*0.74);
+ g.textAlign='right';g.font=`bold ${Math.round(fs*0.7)}px Arial, sans-serif`;g.fillStyle='#5fc4e8';g.fillText('MASS RENEWABLE ENERGY SOLUTIONS',c.width-Math.round(bar*0.3),img.height+bar*0.36);
+ return c}
+async function phAttach(sku,list,label){const it=item(sku);const get=await phSign(list.map(p=>p.path));const out=[];
+ for(const [k,p] of list.entries()){const r=await fetch(get(p.path));if(!r.ok)throw new Error('Could not load a photo');const blob=await r.blob();let fin=blob;
+  if(label){const bmp=await createImageBitmap(blob);const c=phLabel(bmp,it);fin=await new Promise(res=>c.toBlob(res,'image/jpeg',0.88))}
+  const b64=await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(',')[1]);fr.readAsDataURL(fin)});
+  out.push({filename:`${sku.replace(/[^\w.-]+/g,'_')}${list.length>1?'-'+(k+1):''}.jpg`,content:b64,contentType:'image/jpeg'})}return out}
+A['ph-send']=d=>{const it=item(d.sku);const ps=phOf(d.sku);if(!it||!ps.length)return;const pick=d.i!=null?[+d.i]:[0];
+ const emails=[...new Set([...S.accounts.map(a=>a.email),...(S.contacts||[]).map(c=>c.email)].filter(Boolean))];
+ const msg=`Hi,\n\nAttached is a photo of what we have: part # ${it.sku}${it.desc?' ('+it.desc+')':''}.\n\nWould this work for you? If you need something different, send us a photo or the part number of what you have and we'll find the right match.\n\nThank you,`;
+ modal(`Send ${it.sku} photo${ps.length>1?'s':''} to a customer`,`<div class="fg">${fld('To',inp('to','','type="email" list="ph-emails" required placeholder="buyer@company.com"'))}<datalist id="ph-emails">${emails.map(e=>`<option value="${esc(e)}">`).join('')}</datalist>
+  ${fld('Customer (optional)',`<select name="acct"><option value="">Not linked</option>${S.accounts.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(a=>opt(a.id,a.name)).join('')}</select>`)}
+  ${fld('Subject',inp('subject',`Photo of part ${it.sku}${it.desc?' – '+it.desc:''}`),true)}${fld('Message',`<textarea name="text" rows="8">${esc(msg)}</textarea>`,true)}</div>
+  <div class="ph-pick">${ps.map((p,i)=>`<label class="ph-t ${pick.includes(i)?'on':''}"><input type="checkbox" name="ph${i}" ${pick.includes(i)?'checked':''}><img data-ph="${esc(p.path)}" alt="Photo ${i+1}"></label>`).join('')}</div>
+  <label class="check-inline" style="margin-top:8px"><input type="checkbox" name="label" checked> Put the part number and M-RES name on the photo</label>
+  <p class="muted sm" style="margin:6px 0 0">Sent from ${esc(INBOX)} with your sign-off. A copy lands in the Inbox so the team sees the answer.</p>`,{wide:true,label:'Send photo',submit:(v,f)=>{
+   if(!isAddr(v.to))return fail('Enter the customer’s email address.');const list=ps.filter((p,i)=>v['ph'+i]);if(!list.length)return fail('Pick at least one photo.');if(list.length>5)return fail('Send 5 photos or fewer at a time.');
+   const a=v.acct?acct(v.acct):S.accounts.find(x=>(x.email||'').toLowerCase()===v.to.trim().toLowerCase());
+   (async()=>{try{toast('Sending…');const att=await phAttach(it.sku,list,!!v.label);
+     const body={to:v.to.trim(),subject:v.subject,text:v.text,wait:true,attachments:att,newConversation:{fromName:(a&&a.contact)||(a&&a.name)||v.to.split('@')[0],company:a?a.name:'',acct:a?a.id:null,links:[],cat:'Quote request'}};
+     const {data,error}=await CLOUD.functions.invoke('mail-send',{body});let err=data&&data.error;if(error&&!err){try{err=(await error.context.json()).error}catch(x){err=error.message}}if(err)throw new Error(err);
+     log(`Emailed ${list.length} photo${list.length===1?'':'s'} of ${it.sku} to ${v.to.trim()}`);save();toast(`Photo sent to ${v.to.trim()}`)}catch(e){toast('Not sent: '+e.message,true)}})()}});
+ phFill($('#modal-root'));$$('#mform .ph-pick input').forEach(x=>x.addEventListener('change',()=>x.closest('.ph-t').classList.toggle('on',x.checked)))};
+/* show the main photo next to parts on builds, the parts check, the item master and the finished part */
+const _renderPh=render;render=function(k){_renderPh(k);if(!CLOUD||!S)return;const {r}=parse();
+ if(r==='builds'||r==='items'||r==='purchasing')$$('#view [data-action="part"]').forEach(b=>{const sku=b.dataset.id;if(!phOf(sku).length||b.previousElementSibling?.classList?.contains('ph-mini'))return;b.insertAdjacentHTML('beforebegin',phThumb(sku,30))});
+ if(r==='builds')S.assemblies.forEach(a=>{if(!a.finished||!phOf(a.finished).length)return;const t=$$('#view table').find(x=>x.dataset.tbl==='bom-'+a.id);const h=t&&t.closest('section')&&t.closest('section').querySelector('.ph h3');if(h&&!h.querySelector('.ph-mini'))h.insertAdjacentHTML('afterbegin',phThumb(a.finished,40))});
+ phFill($('#view'))};
+const _bcPh=M.bomCheck;M.bomCheck=(id,qty)=>{_bcPh(id,qty);if(!CLOUD)return;$$('#mform [data-action="part"]').forEach(b=>{if(phOf(b.dataset.id).length)b.insertAdjacentHTML('beforebegin',phThumb(b.dataset.id,30))});
+ const a=S.assemblies.find(x=>x.id===id);const top=$('#mform .bc-top>div');if(a&&a.finished&&top&&phOf(a.finished).length)top.insertAdjacentHTML('afterbegin',phThumb(a.finished,64));phFill($('#modal-root'))};
+(function(){const st=document.createElement('style');st.textContent=`.ph-box{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:14px;background:var(--surface-2)}.ph-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ph-grid,.ph-pick{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.ph-t{all:unset;cursor:pointer;position:relative;width:96px;height:96px;border-radius:8px;overflow:hidden;border:2px solid transparent;background:var(--surface)}.ph-t img{width:100%;height:100%;object-fit:cover;display:block}
+.ph-t:hover,.ph-t:focus-visible,.ph-t.on{border-color:var(--grid)}.ph-pick input{position:absolute;top:6px;left:6px;z-index:1;width:18px;height:18px}.ph-main{position:absolute;left:4px;bottom:4px;background:rgba(15,42,61,.85);color:#fff;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:4px}
+.ph-missing{opacity:.4}.ph-mini{width:30px;height:30px;object-fit:cover;border-radius:5px;vertical-align:middle;margin-right:8px;cursor:zoom-in;border:1px solid var(--line);background:var(--surface-2)}
+.ph-big{background:#111;border-radius:8px;display:flex;justify-content:center;max-height:62vh}.ph-big img{max-width:100%;max-height:62vh;object-fit:contain}`;document.head.appendChild(st)})();
+
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
 window.addEventListener('hashchange',()=>{if(!S)return;closeSide();closeDD();if($('#modal-root').innerHTML&&!$('.pal'))closeModal();render()});
