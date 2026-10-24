@@ -2658,6 +2658,13 @@ const _bcPh=M.bomCheck;M.bomCheck=(id,qty)=>{_bcPh(id,qty);if(!CLOUD)return;$$('
 .ph-missing{opacity:.4}.ph-mini{width:30px;height:30px;object-fit:cover;border-radius:5px;vertical-align:middle;margin-right:8px;cursor:zoom-in;border:1px solid var(--line);background:var(--surface-2)}
 .ph-big{background:#111;border-radius:8px;display:flex;justify-content:center;max-height:62vh}.ph-big img{max-width:100%;max-height:62vh;object-fit:contain}`;document.head.appendChild(st)})();
 
+/* inbox: a conversation we started from Outlook says "Sent to", not "From"; team members' own addresses are labelled as team */
+const _inboxWho=VIEWS.inbox;VIEWS.inbox=id=>{let h=_inboxWho(id);if(!id)return h;const m=byId(S.emails,id);if(!m)return h;
+ const ours=(m.thread||[])[0]&&m.thread[0].dir==='out';const team=(MEMBERS||[]).find(x=>String(x.email||'').toLowerCase()===String(m.from||'').toLowerCase());
+ if(ours)h=h.replace('<aside class="iside"><section><h4>From</h4>','<aside class="iside"><section><h4>Sent to</h4><div class="sm muted" style="margin:-2px 0 6px">We started this email from Outlook</div>');
+ if(team)h=h.replace(/(<aside class="iside"><section><h4>(?:From|Sent to)<\/h4>[\s\S]*?<div class="sm muted">[^<]*<\/div>)/,`$1<div class="sm" style="margin-top:6px">${chip('Team member: '+team.name,'wind')}</div>`);
+ return h};
+
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
 window.addEventListener('hashchange',()=>{if(!S)return;closeSide();closeDD();if($('#modal-root').innerHTML&&!$('.pal'))closeModal();render()});
