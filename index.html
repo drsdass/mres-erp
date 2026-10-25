@@ -816,7 +816,7 @@ VIEWS.inbox=id=>{
   <section class="iact"><h4>Turn this into</h4>${btn(ic('tag',15)+' Quote','em-quote',{id:sel.id},'sm')}${btn(ic('truck',15)+' Sales order','em-order',{id:sel.id},'sm')}${btn('Link existing record','em-link',{id:sel.id},'sm ghost')}</section></aside></div>`}
  return `<p class="note">${ic('mail',14)} These are sample emails built around your real orders. They get replaced by the actual info@ mailbox once it is connected.</p>`+phead('Inbox',`Everything sent to ${INBOX}, plus calls to (855) 742-4612. Every request gets an owner and a linked quote or order, so nothing gets lost between the email, the vendor and the warehouse.`,btn(ic('phone',16)+' Log a call or email','em-new',{},'primary'))
  +kpis([{l:'Waiting for our reply',v:nr.length,c:nr.length?'dn':'up',s:nr.length?`Oldest waiting ${hrsTxt(oldest)}`:'All caught up'},{l:'Unassigned',v:un.length,c:un.length?'dn':'up'},{l:'Median first response',v:hrsTxt(med),s:'Target under 4 h'},{l:'Orders from email',v:$c(sold),s:`${all.flatMap(m=>m.links).filter(l=>l.t==='order'||l.t==='quote').length} quotes and orders linked`}])
- +`<div class="toolbar">${seg('emF',['All','Needs reply','Unassigned','Mine','Closed'])}<select data-set="emCat" aria-label="Category">${['All',...EM_CATS].map(c=>`<option ${c===cat?'selected':''}>${c}</option>`).join('')}</select><select data-set="emBox" aria-label="Inbox">${['All inboxes',...BOXES.map(x=>x.tag)].map(c=>`<option ${c===box?'selected':''}>${c}</option>`).join('')}</select><input class="input" type="search" placeholder="Search sender, subject, order number" data-filter-list="im" aria-label="Search inbox" style="flex:0 1 280px"></div>
+ +`<div class="toolbar">${seg('emF',['All','Needs reply','Unassigned','Mine','Closed','Trash'])}<select data-set="emCat" aria-label="Category">${['All',...EM_CATS].map(c=>`<option ${c===cat?'selected':''}>${c}</option>`).join('')}</select><select data-set="emBox" aria-label="Inbox">${['All inboxes',...BOXES.map(x=>x.tag)].map(c=>`<option ${c===box?'selected':''}>${c}</option>`).join('')}</select><input class="input" type="search" placeholder="Search sender, subject, order number" data-filter-list="im" aria-label="Search inbox" style="flex:0 1 280px"></div>
  <div class="inbox ${sel?'has-sel':''}"><div class="ilist">${ls.map(li).join('')||`<div class="empty">No emails in “${esc(f)}”. ${f==='Needs reply'?'Everyone has been answered.':''}</div>`}</div><div class="idet">${det}</div></div>`};
 const CANNED={
  'Received, on it':m=>`Hi ${m.fromName.split(' ')[0]},\n\nThanks for contacting Mass Renewable Energy Solutions. We have your request and ${m.owner||USER.name} is handling it. You'll hear back within one business day.\n\nMass Renewable Energy Solutions\n(855) 742-4612`,
@@ -2229,6 +2229,47 @@ async function stockAlerts(){if(typeof CLOUD==='undefined'||!CLOUD||!S||!USER||!
  L.push('Open Purchasing > Reorder in the ERP to draft the POs: '+(location.origin||'')+'/#/purchasing');
  try{await CLOUD.functions.invoke('mail-send',{body:{action:'notify',subject:`Stock alert: ${[newLow.length?`${newLow.length} part${newLow.length===1?'':'s'} below minimum`:'',newBr.length?`${newBr.length} build part${newBr.length===1?'':'s'} to order`:''].filter(Boolean).join(', ')}`,text:L.join('\n')}});log(`Emailed a stock alert to info@ (${newLow.length+newBr.length} parts)`);save()}catch(e){}}
 setTimeout(function w(){if(typeof CLOUD==='undefined'||!CLOUD||!S||!USER||!USER.email)return setTimeout(w,8000);stockAlerts().catch(()=>{});setInterval(()=>stockAlerts().catch(()=>{}),10*60e3)},20000);
+
+/* ================= inbox: tidy messy email text, delete to Trash (30 days), block a sender ================= */
+const ENT2={nbsp:' ',amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",zwnj:'',zwj:'',shy:'',lrm:'',rlm:'',ndash:'–',mdash:'—',hellip:'…',rsquo:'’',lsquo:'‘',rdquo:'”',ldquo:'“',bull:'•',middot:'·',copy:'©',reg:'®',trade:'™',euro:'€',pound:'£',deg:'°',times:'×'};
+function tidyMail(s){return String(s||'').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,(m,k)=>k[0]==='#'?(()=>{const n=k[1].toLowerCase()==='x'?parseInt(k.slice(2),16):+k.slice(1);try{return String.fromCodePoint(n)}catch(e){return''}})():(k.toLowerCase() in ENT2?ENT2[k.toLowerCase()]:m))
+ .replace(/[​-‏⁠﻿͏­؜᠎]/g,'').replace(/\S*BannerStart[\s\S]*?\S*BannerEnd\s*/g,'').replace(/[ \t ]+$/gm,'').replace(/\n{3,}/g,'\n\n').trim()}
+const MESSY=/&(zwnj|nbsp|#\d+|#x[0-9a-f]+|amp|zwj);|BannerStart|[​-‍﻿͏]/i;
+function tidyAll(){if(!S||!Array.isArray(S.emails))return 0;let n=0;S.emails.forEach(m=>(m.thread||[]).forEach(x=>{if(x.body&&MESSY.test(x.body)){x.body=tidyMail(x.body);n++}}));if(n)save();return n}
+setTimeout(function w(){try{if(tidyAll())rerender()}catch(e){}setTimeout(w,30000)},4000);
+
+/* Trash: deleted conversations move out of the inbox for 30 days, then they're gone */
+function ensureTrash(){if(!Array.isArray(S.trash))S.trash=[];const cut=iso(addDays(T0,-30));const before=S.trash.length;S.trash=S.trash.filter(t=>(t.deletedOn||TODAY)>=cut);if(S.trash.length!==before)save();return S.trash}
+function mailRules(){if(!S.mailRules||typeof S.mailRules!=='object')S.mailRules={block:[]};if(!Array.isArray(S.mailRules.block))S.mailRules.block=[];return S.mailRules}
+function trashMails(ids,why){ensureTrash();const set=new Set(ids);const moved=S.emails.filter(m=>set.has(m.id));if(!moved.length)return 0;
+ S.emails=S.emails.filter(m=>!set.has(m.id));moved.forEach(m=>S.trash.unshift({...m,deletedOn:TODAY,deletedBy:USER.name}));S.trash=S.trash.slice(0,400);
+ log(`Deleted ${moved.length===1?`${moved[0].id} (${moved[0].fromName||moved[0].from}: ${moved[0].subject})`:moved.length+' email conversations'}${why?', '+why:''}`);save();return moved.length}
+const senderOf=m=>String(m.from||'').toLowerCase();
+A['em-del']=d=>{const m=byId(S.emails,d.id);if(!m)return;const from=senderOf(m),same=S.emails.filter(x=>senderOf(x)===from&&from);const ali=/alibaba\.com$/.test(from);
+ modal('Delete this email?',`<p style="margin-top:0"><b>${esc(m.subject||'(no subject)')}</b><br><span class="muted sm">${esc(m.fromName||'')} · ${esc(m.from||'')}</span></p>
+  <p class="muted sm">Deleted emails go to <b>Trash</b> in the Inbox for 30 days, so you can bring one back.</p>
+  ${same.length>1?`<label class="check-inline"><input type="checkbox" name="all"> Delete all ${same.length} conversations from ${esc(from)}</label>`:''}
+  ${from?`<label class="check-inline" style="margin-top:6px"><input type="checkbox" name="block"> Block this sender: future emails from ${esc(from)} won’t come into the Inbox</label>`:''}
+  ${ali?`<p class="sm" style="margin:6px 0 0;color:#9A6210">Blocking ${esc(from)} only stops these emails showing in the Inbox. Supplier quotes and messages from Alibaba still go into Sourcing.</p>`:''}`,
+  {label:'Delete',submit:v=>{const ids=v.all?same.map(x=>x.id):[m.id];const n=trashMails(ids,v.block?'and blocked the sender':'');
+   if(v.block&&from){const r=mailRules();if(!r.block.includes(from)){r.block.push(from);log(`Blocked ${from} from the Inbox`)}save()}
+   const next=S.emails.filter(needsReply)[0];location.hash='#/inbox';toast(`${n} conversation${n===1?'':'s'} moved to Trash${v.block?`. ${from} is blocked`:''}`)}});};
+A['em-restore']=d=>{ensureTrash();const i=S.trash.findIndex(t=>t.id===d.id);if(i<0)return;const t=S.trash.splice(i,1)[0];delete t.deletedOn;delete t.deletedBy;if(!S.emails.some(m=>m.id===t.id))S.emails.push(t);log(`Restored ${t.id} (${t.subject}) from Trash`);save();toast('Moved back to the Inbox');rerender()};
+A['em-purge']=d=>{ensureTrash();const t=S.trash.find(x=>x.id===d.id);if(!t||!confirmBox2('Delete this email for good? It can’t be brought back.'))return;S.trash=S.trash.filter(x=>x!==t);log(`Deleted ${t.id} for good`);save();rerender()};
+A['em-empty']=()=>{ensureTrash();if(!S.trash.length||!confirmBox2(`Delete all ${S.trash.length} emails in Trash for good?`))return;const n=S.trash.length;S.trash=[];log(`Emptied the Trash (${n} emails)`);save();rerender()};
+A['em-unblock']=d=>{const r=mailRules();r.block=r.block.filter(x=>x!==d.addr);log(`Unblocked ${d.addr}`);save();toast(`${d.addr} can email the Inbox again`);rerender()};
+A['em-block-add']=()=>{modal('Block a sender',`<p class="muted sm" style="margin-top:0">Emails from this address won’t come into the Inbox. Use <b>@domain.com</b> to block a whole company.</p>${fld('Email address or @domain',inp('addr','','placeholder="promo@example.com or @example.com"'))}`,{label:'Block',submit:v=>{const a=v.addr.trim().toLowerCase();if(!/^([^@\s]+)?@[^@\s]+\.[^@\s]+$/.test(a))return fail('Enter an email address or @domain.com');const r=mailRules();if(!r.block.includes(a))r.block.push(a);log(`Blocked ${a} from the Inbox`);toast(`${a} blocked`)}})};
+/* the Delete button on each conversation, and the Trash view */
+const _inboxT2=VIEWS.inbox;VIEWS.inbox=id=>{if(ui.emF==='Trash'&&!id){const tr=ensureTrash(),bl=mailRules().block;const h=_inboxT2(null);const cut=h.indexOf('<div class="toolbar">');
+  const body=`<div class="toolbar">${seg('emF',['All','Needs reply','Unassigned','Mine','Closed','Trash'])}<span class="grow"></span>${tr.length?btn('Empty Trash','em-empty',{},'sm ghost'):''}</div>
+  <section class="panel mb"><div class="ph"><h3>Trash</h3><span class="muted sm">Deleted emails stay here for 30 days</span></div>${table('trash',['Deleted','From','Subject','By',''],tr.map(t=>`<tr><td class="nowrap">${fd(t.deletedOn)}</td><td><b>${esc(t.fromName||'')}</b><div class="muted sm">${esc(t.from||'')}</div></td><td>${esc(t.subject||'')}</td><td class="sm">${esc(t.deletedBy||'')}</td><td class="n nowrap">${btn('Restore','em-restore',{id:t.id},'sm')} ${btn('Delete for good','em-purge',{id:t.id},'sm ghost')}</td></tr>`),'Trash is empty.')}</section>
+  <section class="panel"><div class="ph"><h3>Blocked senders</h3>${btn('Block a sender','em-block-add',{},'sm')}</div>${table('blocked',['Address',''],bl.map(a=>`<tr><td>${esc(a)}</td><td class="n">${btn('Unblock','em-unblock',{addr:a},'sm')}</td></tr>`),'Nobody is blocked.')}<div class="pb muted sm">Blocked senders’ emails don’t come into the Inbox. Alibaba supplier quotes still go into Sourcing.</div></section>`;
+  return (cut>0?h.slice(0,cut):h)+body}
+ let h=_inboxT2(id);if(!id||!byId(S.emails,id))return h;
+ const del=`<button class="btn sm ghost" data-action="em-del" data-id="${esc(id)}" style="color:var(--alert)">${ic('x',14)} Delete</button>`;
+ return /data-action="em-mine"/.test(h)?h.replace(/(<button[^>]*data-action="em-mine"[^>]*>[^<]*<\/button>)/,'$1 '+del):h.replace(/(<select data-em="status"[\s\S]*?<\/select><\/label>)/,'$1'+del)};
+/* sender blocking in the app as well: anything from a blocked address that still arrives is moved to Trash */
+setTimeout(function w2(){try{const bl=(S&&S.mailRules&&S.mailRules.block)||[];if(bl.length){const hit=S.emails.filter(m=>{const f=senderOf(m);return f&&bl.some(b=>b.startsWith('@')?f.endsWith(b):f===b)&&(m.thread||[]).every(x=>x.dir==='in')});if(hit.length){trashMails(hit.map(m=>m.id),'blocked sender');if(parse().r==='inbox')rerender()}}}catch(e){}setTimeout(w2,60000)},9000);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
