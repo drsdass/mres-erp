@@ -2708,9 +2708,9 @@ const _inboxWho=VIEWS.inbox;VIEWS.inbox=id=>{let h=_inboxWho(id);if(!id)return h
 
 /* ================= Compose: a Gmail-style new email window, from anywhere in the ERP ================= */
 IC.trash='<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>';IC.pen='<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M14 6l4 4"/>';IC.clip='<path d="M20 11.5 12.2 19.3a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>';IC.minus='<path d="M5 12h14"/>';IC.expand='<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>';
-const CP={open:false,min:false,big:false,to:[],cc:[],bcc:[],showCc:false,files:[],from:'',subject:'',body:'',link:null,sending:false};
+const CP={open:false,min:false,big:false,to:[],cc:[],bcc:[],showCc:false,files:[],from:'',subject:'',body:'',link:null,sending:false,conv:null,title:'New message',onSent:null,keep:true};
 const cpKey=()=>'mres-draft-'+(USER&&USER.email||'');
-function cpSave(){try{localStorage.setItem(cpKey(),JSON.stringify({to:CP.to,cc:CP.cc,bcc:CP.bcc,from:CP.from,subject:CP.subject,body:CP.body,link:CP.link,showCc:CP.showCc}))}catch(e){}const s=$('#cp .cp-saved');if(s)s.textContent=CP.to.length||CP.subject||CP.body?'Draft saved':''}
+function cpSave(){if(!CP.keep)return;try{localStorage.setItem(cpKey(),JSON.stringify({to:CP.to,cc:CP.cc,bcc:CP.bcc,from:CP.from,subject:CP.subject,body:CP.body,link:CP.link,showCc:CP.showCc}))}catch(e){}const s=$('#cp .cp-saved');if(s)s.textContent=CP.to.length||CP.subject||CP.body?'Draft saved':''}
 function cpLoad(){try{return JSON.parse(localStorage.getItem(cpKey())||'null')}catch(e){return null}}
 /* everyone we can email: customers, contacts, suppliers, vendors, the team, and anyone who has emailed us */
 function cpPeople(){const m=new Map();const add=(email,name,sub,kind,w=1)=>{email=String(email||'').trim().toLowerCase();if(!isAddr(email))return;const c=m.get(email);if(c){c.w+=w;if(!c.name&&name)c.name=name;if(!c.sub&&sub)c.sub=sub;return}m.set(email,{email,name:name||'',sub:sub||'',kind,w})};
@@ -2726,7 +2726,7 @@ function cpLinkOpts(){const o=[];(S.quotes||[]).slice(-40).reverse().forEach(q=>
  S.pos.filter(poOpen).slice().reverse().forEach(p=>o.push(['po|'+p.id,`${p.id}, ${vend(p.vendor).name}`]));(S.srcReqs||[]).filter(r=>r.status!=='Closed').forEach(r=>o.push(['rfq|'+r.id,`${r.no||r.id} ${r.title}`]));return o}
 function cpRender(){let el=$('#cp');if(!CP.open){if(el)el.remove();return}if(!el){document.body.insertAdjacentHTML('beforeend','<div id="cp" role="dialog" aria-label="New message"></div>');el=$('#cp')}
  el.className=(CP.min?'min ':'')+(CP.big?'big':'');const subj=CP.subject||'New message';
- el.innerHTML=`<header class="cp-h" data-cp="min"><b>${esc(CP.min?subj:'New message')}</b><span class="grow"></span><button type="button" data-cp="min" aria-label="${CP.min?'Open':'Minimize'}">${ic('minus',16)}</button><button type="button" data-cp="big" aria-label="Full size">${ic('expand',15)}</button><button type="button" data-cp="close" aria-label="Close (draft is kept)">${ic('x',16)}</button></header>
+ el.innerHTML=`<header class="cp-h" data-cp="min"><b>${esc(CP.min?subj:CP.title)}</b><span class="grow"></span><button type="button" data-cp="min" aria-label="${CP.min?'Open':'Minimize'}">${ic('minus',16)}</button><button type="button" data-cp="big" aria-label="Full size">${ic('expand',15)}</button><button type="button" data-cp="close" aria-label="Close (draft is kept)">${ic('x',16)}</button></header>
  ${CP.min?'':`<div class="cp-b"><div class="cp-row"><span class="cp-l">From</span><select data-cp-from>${OUR_INBOXES.map(a=>`<option ${a===(CP.from||OUR_INBOXES[0])?'selected':''}>${a}</option>`).join('')}</select></div>
   ${cpRow('to','To')}${CP.showCc?cpRow('cc','Cc')+cpRow('bcc','Bcc'):''}
   <div class="cp-sug" hidden></div>
@@ -2734,12 +2734,14 @@ function cpRender(){let el=$('#cp');if(!CP.open){if(el)el.remove();return}if(!el
   <textarea class="cp-body" data-cp-body placeholder="Write your message. Your sign-off is added for you." aria-label="Message">${esc(CP.body)}</textarea>
   ${CP.files.length?`<div class="cp-files">${CP.files.map((f,i)=>`<span class="cp-file">${ic('clip',13)} ${esc(f.name)} <span class="muted">${fmtSize(f.size)}</span><button type="button" data-cp-rmf="${i}" aria-label="Remove ${esc(f.name)}">×</button></span>`).join('')}</div>`:''}
   <div class="cp-sig muted sm">Sign-off added: <b>${esc(USER.signAs||USER.name)}</b> · Mass Renewable Energy Solutions · <span>${esc(CP.from||OUR_INBOXES[0])}</span></div>
-  <div class="cp-more"><select data-cp-link aria-label="Link to a record"><option value="">Link to a quote, order, PO or RFQ (optional)</option>${cpLinkOpts().map(([v,l])=>`<option value="${esc(v)}" ${CP.link===v?'selected':''}>${esc(l)}</option>`).join('')}</select>
+  <div class="cp-more">${CP.conv?'<label class="check-inline sm" style="flex:1"><input type="checkbox" data-cp-wait '+(CP.wait!==false?'checked':'')+'> Waiting on their reply</label>':''}<select data-cp-link ${CP.conv?'hidden':''} aria-label="Link to a record"><option value="">Link to a quote, order, PO or RFQ (optional)</option>${cpLinkOpts().map(([v,l])=>`<option value="${esc(v)}" ${CP.link===v?'selected':''}>${esc(l)}</option>`).join('')}</select>
    <select data-cp-canned aria-label="Insert saved reply"><option value="">Saved replies</option>${Object.keys(CANNED).map(k=>`<option>${esc(k)}</option>`).join('')}</select></div></div>
  <footer class="cp-f"><button type="button" class="btn primary" data-cp="send" ${CP.sending?'disabled':''}>${CP.sending?'Sending…':'Send'}</button><label class="cp-ic" title="Attach files">${ic('clip',18)}<input type="file" multiple hidden data-cp-file></label><span class="cp-saved muted sm"></span><span class="grow"></span><span class="muted sm cp-kb">Ctrl+Enter to send</span><button type="button" class="cp-ic" data-cp="discard" title="Discard draft" aria-label="Discard draft">${ic('trash',17)}</button></footer>`}`;
  if(!CP.min){const t=el.querySelector('[data-cp-in="to"]');if(t&&!CP.to.length&&document.activeElement!==el.querySelector('[data-cp-body]'))setTimeout(()=>t.focus(),0)}}
-function cpOpen(pre={}){if(!CLOUD)return toast('Sending email works on the live ERP.',true);const d=!CP.open&&!pre.fresh?cpLoad():null;
- if(!CP.open){Object.assign(CP,{to:[],cc:[],bcc:[],files:[],from:'',subject:'',body:'',link:null,showCc:false},d||{})}
+function cpOpen(pre={}){if(!CLOUD)return toast('Sending email works on the live ERP.',true);
+ if(pre.fresh){if(CP.open&&(CP.body.trim()||CP.to.length)&&!confirmBox2('Replace the email you’re writing?'))return;
+  Object.assign(CP,{to:[],cc:[],bcc:[],files:[],from:'',subject:'',body:'',link:null,showCc:false,conv:null,title:'New message',onSent:null,keep:false,acct:null,wait:true},{acct:pre.acct||null,conv:pre.conv||null,title:pre.title||'New message',onSent:pre.onSent||null,cc:pre.cc||[],showCc:!!(pre.cc&&pre.cc.length),files:pre.files||[]})}
+ else{const d=!CP.open?cpLoad():null;if(!CP.open)Object.assign(CP,{to:[],cc:[],bcc:[],files:[],from:'',subject:'',body:'',link:null,showCc:false,conv:null,title:'New message',onSent:null,keep:true},d||{})}
  if(pre.to)CP.to=[...new Set([...CP.to,...[].concat(pre.to)])];if(pre.subject)CP.subject=pre.subject;if(pre.body)CP.body=pre.body;if(pre.link)CP.link=pre.link;if(pre.from)CP.from=pre.from;
  CP.open=true;CP.min=false;cpRender()}
 function cpAdd(f,raw){const parts=String(raw||'').split(/[,;\s]+/).map(x=>x.replace(/^.*<|>.*$/g,'').trim().toLowerCase()).filter(Boolean);let bad=0;parts.forEach(e=>{if(!isAddr(e))bad++;if(!CP[f].includes(e))CP[f].push(e)});return bad}
@@ -2749,13 +2751,15 @@ async function cpSend(){const i=cpField('to');if(i&&i.value.trim())cpAdd('to',i.
  if(!CP.body.trim())return toast('Write a message first.',true);if(!CP.subject.trim()&&!confirmBox2('Send without a subject?'))return;
  CP.sending=true;cpRender();
  try{const atts=await Promise.all(CP.files.map(f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res({filename:f.name,content:String(r.result).split(',')[1],contentType:f.type||'application/octet-stream'});r.onerror=()=>rej(new Error('Could not read '+f.name));r.readAsDataURL(f)})));
-  const p=cpPeople().find(x=>x.email===CP.to[0])||{};const a=S.accounts.find(x=>(x.email||'').toLowerCase()===CP.to[0])||((S.contacts||[]).find(c=>(c.email||'').toLowerCase()===CP.to[0])&&acct((S.contacts||[]).find(c=>(c.email||'').toLowerCase()===CP.to[0]).acct));
+  const p=cpPeople().find(x=>x.email===CP.to[0])||{};const a=(CP.acct&&acct(CP.acct))||S.accounts.find(x=>(x.email||'').toLowerCase()===CP.to[0])||((S.contacts||[]).find(c=>(c.email||'').toLowerCase()===CP.to[0])&&acct((S.contacts||[]).find(c=>(c.email||'').toLowerCase()===CP.to[0]).acct));
   const [lt,lid]=(CP.link||'').split('|');const kind=p.kind==='Supplier'||p.kind==='Vendor'||lt==='po'||lt==='rfq'?'Vendor':lt==='quote'?'Quote request':lt==='order'?'Order status':'Other';
-  const body={to:CP.to,cc:CP.cc,bcc:CP.bcc,from:CP.from||OUR_INBOXES[0],subject:CP.subject.trim(),text:CP.body,wait:true,attachments:atts,newConversation:{fromName:p.name||CP.to[0].split('@')[0],company:a?a.name:(p.sub&&p.sub!=='Team'?p.sub:''),acct:a?a.id:null,links:lid?[{t:lt,id:lid}]:[],cat:kind}};
+  const body={to:CP.to,cc:CP.cc,bcc:CP.bcc,from:CP.from||OUR_INBOXES[0],subject:CP.subject.trim(),text:CP.body,wait:CP.wait!==false,attachments:atts};
+  if(CP.conv)body.conversationId=CP.conv;else body.newConversation={fromName:p.name||CP.to[0].split('@')[0],company:a?a.name:(p.sub&&p.sub!=='Team'?p.sub:''),acct:a?a.id:null,links:lid?[{t:lt,id:lid}]:[],cat:kind};
   const {data,error}=await CLOUD.functions.invoke('mail-send',{body});let err=data&&data.error;if(error&&!err){try{err=(await error.context.json()).error}catch(x){err=error.message}}if(err)throw new Error(err);
-  log(`Emailed ${CP.to.join(', ')}: ${CP.subject.trim()||'(no subject)'}`);save();try{localStorage.removeItem(cpKey())}catch(e){}
-  const cid=data&&data.conversationId;Object.assign(CP,{open:false,sending:false,to:[],cc:[],bcc:[],files:[],subject:'',body:'',link:null});cpRender();
-  if(cid){rowQ.add(cid);kick()}toastAct(`Message sent to ${body.to.join(', ')}`,cid?['View',()=>{location.hash='#/inbox/'+cid}]:null)}
+  const after=CP.onSent;if(CP.conv){const m=byId(S.emails,CP.conv);log(`Replied to ${CP.conv}${m?` (${m.fromName||m.from})`:''}`)}else log(`Emailed ${CP.to.join(', ')}: ${CP.subject.trim()||'(no subject)'}`);if(CP.keep)try{localStorage.removeItem(cpKey())}catch(e){}
+  if(typeof after==='function')try{after(data,body)}catch(e){console.error(e)}save();
+  const cid=data&&data.conversationId;Object.assign(CP,{open:false,sending:false,to:[],cc:[],bcc:[],files:[],subject:'',body:'',link:null,conv:null,onSent:null,keep:true,title:'New message',acct:null,wait:true});cpRender();if(parse().r==='inbox')rerender();
+  if(cid){rowQ.add(cid);kick()}toastAct(`Message sent to ${body.to.join(', ')}`,cid&&parse().id!==cid?['View',()=>{location.hash='#/inbox/'+cid}]:null)}
  catch(e){CP.sending=false;cpRender();toast('Not sent: '+e.message,true)}}
 function toastAct(t,act){toast(t);if(!act)return;setTimeout(()=>{const ts=$$('.toast');const el=ts[ts.length-1];if(el&&!el.querySelector('button')){el.insertAdjacentHTML('beforeend',` <button type="button" class="link" style="color:inherit;text-decoration:underline;margin-left:8px">${act[0]}</button>`);el.querySelector('button').onclick=act[1]}},30)}
 /* events */
@@ -2765,7 +2769,7 @@ document.addEventListener('click',e=>{const t=e.target;if(!t.closest)return;cons
  const s=t.closest('[data-cp-pick]');if(s&&cp){const f=s.dataset.f;CP[f].push(s.dataset.cpPick);cpSave();cpRender();const n=cpField(f);if(n)n.focus();return}
  const b=t.closest('[data-cp]');if(b&&cp){const a=b.dataset.cp;e.stopPropagation();
   if(a==='min'){if(b.tagName==='HEADER'&&!CP.min&&t.closest('button'))return;CP.min=!CP.min;cpRender()}else if(a==='big'){CP.big=!CP.big;CP.min=false;cpRender()}
-  else if(a==='close'){CP.open=false;cpSave();cpRender();if(CP.to.length||CP.body)toast('Draft kept. Click Compose to finish it.')}
+  else if(a==='close'){if(!CP.keep&&CP.body.trim()&&!confirmBox2('Close without sending? This reply won’t be kept.'))return;CP.open=false;cpSave();cpRender();if(CP.keep&&(CP.to.length||CP.body))toast('Draft kept. Click Compose to finish it.')}
   else if(a==='discard'){if((CP.body||CP.subject)&&!confirmBox2('Discard this draft?'))return;try{localStorage.removeItem(cpKey())}catch(x){}Object.assign(CP,{open:false,to:[],cc:[],bcc:[],files:[],subject:'',body:'',link:null});cpRender()}
   else if(a==='showcc'){CP.showCc=true;cpRender()}else if(a==='send')cpSend();return}
  if(cp&&t.closest('.cp-chips')&&!t.closest('button')){const i=t.closest('.cp-chips').querySelector('input');if(i)i.focus()}},true);
@@ -2785,6 +2789,7 @@ document.addEventListener('keydown',e=>{const t=e.target;
 document.addEventListener('change',e=>{const t=e.target;if(!t.closest||!t.closest('#cp'))return;e.stopPropagation();
  if(t.dataset.cpFrom!==undefined){CP.from=t.value;const s=$('#cp .cp-sig span');if(s)s.textContent=t.value;cpSave()}
  else if(t.dataset.cpLink!==undefined){CP.link=t.value||null;cpSave()}
+ else if(t.dataset.cpWait!==undefined){CP.wait=t.checked}
  else if(t.dataset.cpCanned!==undefined&&t.value){const p=cpPeople().find(x=>x.email===CP.to[0]);const txt=CANNED[t.value]({fromName:(p&&p.name)||'there',owner:USER.name,links:CP.link?[{t:CP.link.split('|')[0],id:CP.link.split('|')[1]}]:[]});CP.body=CP.body.trim()?CP.body.replace(/\s*$/,'\n\n')+txt:txt;cpSave();cpRender()}
  else if(t.dataset.cpFile!==undefined)cpFiles(t.files)},true);
 function cpFiles(files){const add=[...files];if(CP.files.length+add.length>5)return toast('Attach 5 files or fewer.',true);const big=add.find(f=>f.size>10*1024*1024);if(big)return toast(`${big.name} is over 10 MB.`,true);CP.files.push(...add);cpRender()}
@@ -2809,6 +2814,46 @@ const _inboxC=VIEWS.inbox;VIEWS.inbox=id=>{const h=_inboxC(id);if(!CLOUD)return 
 .cp-sig{padding:2px 14px 6px}.cp-more{display:flex;gap:8px;padding:6px 14px;border-top:1px solid var(--line);flex-wrap:wrap}.cp-more select{flex:1;min-width:180px;font-size:13px}
 .cp-f{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line)}.cp-f .btn.primary{border-radius:18px;padding:0 22px}.cp-ic{all:unset;cursor:pointer;display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;color:var(--ink-2)}.cp-ic:hover{background:var(--surface-2)}
 .cp-top{display:inline-flex;align-items:center;gap:6px;margin-right:6px}@media(max-width:700px){#cp,#cp.big{right:0;left:0;width:100vw;transform:none;bottom:0;height:100dvh;max-height:100dvh;border-radius:0}#cp.min{height:auto;width:100vw}.cp-kb{display:none}.cp-top span{display:none}}`;document.head.appendChild(st)})();
+
+/* ================= one email window for everything: Reply, Reply all, Forward, quotes and photos all open Compose ================= */
+const canCompose=m=>m&&m.channel==='Email'&&isAddr(m.from)&&!(/alibaba/i.test(m.from||'')&&/no-?reply|notice|service|message|notification|alibaba\.com$/i.test(m.from||''));
+const reSubj=s=>/^re:/i.test(s||'')?s:'Re: '+(s||'');
+async function filesFromStore(list){const out=[];for(const a of list||[]){if(!a.path)continue;try{const {data}=await CLOUD.storage.from('erp-mail').createSignedUrl(a.path,300);const r=await fetch(data.signedUrl);const b=await r.blob();out.push(new File([b],a.name||'attachment',{type:a.type||b.type||'application/octet-stream'}))}catch(e){}}return out}
+A['em-reply']=d=>{const m=byId(S.emails,d.id);if(!canCompose(m))return;const all=d.all==='1';
+ cpOpen({fresh:true,title:all?'Reply all':'Reply',conv:m.id,cc:all?(m.cc||[]).filter(isAddr):[]});CP.to=[m.from.toLowerCase()];CP.subject=reSubj(m.subject);CP.from=defaultFrom(m);CP.wait=true;cpRender();setTimeout(()=>$('#cp [data-cp-body]')?.focus(),0)};
+A['em-fwd']=async d=>{const m=byId(S.emails,d.id);if(!m)return;const x=[...(m.thread||[])].reverse().find(t=>t.dir==='in')||m.thread[m.thread.length-1]||{};
+ const when=x.t?new Date(x.t).toLocaleString('en-US',{dateStyle:'medium',timeStyle:'short'}):'';
+ cpOpen({fresh:true,title:'Forward'});CP.subject=/^fwd?:/i.test(m.subject||'')?m.subject:'Fwd: '+(m.subject||'');CP.from=defaultFrom(m);CP.link=(m.links||[]).map(l=>['quote','order','po','rfq'].includes(l.t)?l.t+'|'+l.id:'').find(Boolean)||null;
+ CP.body=`\n\n---------- Forwarded message ----------\nFrom: ${x.dir==='out'?'Mass Renewable Energy Solutions':(m.fromName||'')+' <'+m.from+'>'}\nDate: ${when}\nSubject: ${m.subject||''}\n\n${x.body||''}`;cpRender();setTimeout(()=>{const i=$('#cp [data-cp-in="to"]');if(i)i.focus()},0);
+ if((x.att||[]).some(a=>a.path)){toast('Adding the attachments…');const fs=await filesFromStore(x.att);if(CP.open){CP.files.push(...fs.slice(0,5));cpRender()}}};
+/* the conversation: Reply / Reply all / Forward above the messages; the old box stays for logging a reply made in Outlook or on Alibaba */
+const _renderUni=render;render=function(k){_renderUni(k);if(!CLOUD||!emailsOk||parse().r!=='inbox')return;const {id}=parse();const m=id?byId(S.emails,id):null;if(!m)return;
+ const f=$('#view form[data-form="reply"]');if(!f||$('#view .em-acts'))return;const ok=canCompose(m);
+ f.insertAdjacentHTML('beforebegin',`<div class="em-acts">${ok?`${btn(ic('mail',15)+' Reply','em-reply',{id:m.id},'primary')}${(m.cc||[]).length?btn('Reply all','em-reply',{id:m.id,all:'1'},''):''}`:''}${btn('Forward','em-fwd',{id:m.id},'')}<span class="grow"></span><button type="button" class="link sm" data-action="em-logform">${ok?'Log a reply made in Outlook or by phone':'Log the reply you sent on Alibaba'}</button></div>`);
+ if(ok&&ui.rOpen!==m.id)f.style.display='none'};
+A['em-logform']=()=>{const id=parse().id;ui.rOpen=id;const f=$('#view form[data-form="reply"]');if(f){f.style.display='';f.classList.remove('rcol');const ta=f.querySelector('textarea');if(ta)ta.focus()}};
+const _replyOpenU=A['reply-open'];A['reply-open']=d=>{const m=byId(S.emails,parse().id);if(CLOUD&&emailsOk&&canCompose(m)&&ui.rOpen!==m.id)return A['em-reply']({id:m.id});_replyOpenU(d)};
+/* quotes: Email and Follow up open the same window with the PDF attached */
+const pdfFile=async q=>{const doc=await quotePDF({...q});const b=doc.output('blob');return new File([b],quoteFile(q),{type:'application/pdf'})};
+A['quote-email']=async d=>{const q=byId(S.quotes,d.id);if(!q)return;const c=acct(q.acct)||{};const conv=quoteConv(q);closeModal();
+ const to=q.email||c.email||(conv&&conv.from)||'';const first=(c.contact||'').split(/\s+/)[0];
+ const msg=`Hi${first?' '+first:''},\n\nThank you for the opportunity. Our quote ${q.id} is attached${q.lead?`, with a lead time of ${q.lead}`:''}. It is valid until ${longDate(q.valid||iso(addDays(pd(q.date||TODAY),30)))}.\n\nTo order, reply to this email or send your PO to ${INBOX}. Let me know if you have any questions.\n\nThank you,`;
+ let file;try{file=await pdfFile(q)}catch(e){return toast(e.message,true)}
+ cpOpen({fresh:true,title:`Email quote ${q.id}`,acct:q.acct||null,conv:conv?conv.id:null,files:[file],onSent:(data,body)=>{const sentTo=body.to[0];const ch=[];if(q.status==='Draft'){ch.push(...stCh('Draft','Sent'));q.status='Sent'}q.sentOn=TODAY;q.sentTo=sentTo;q.by=q.by||USER.name;
+   if(c&&c.id&&!c.email){c.email=sentTo;ch.push({f:`${c.name} email`,from:'blank',to:c.email})}log(`Emailed quote ${q.id} to ${sentTo}`,ch);if(data&&data.conversationId)rowQ.add(data.conversationId);kick();rerender()}});
+ CP.to=to?[to.toLowerCase()]:[];CP.subject=conv?reSubj(conv.subject):`Quote ${q.id} from Mass Renewable Energy Solutions`;CP.body=msg;CP.link='quote|'+q.id;if(conv)CP.from=defaultFrom(conv);cpRender()};
+A['quote-fu']=async d=>{const q=byId(S.quotes,d.id);if(!q)return;const c=acct(q.acct)||{};const conv=quoteConv(q);closeModal();const to=q.sentTo||c.email||(conv&&conv.from)||'';const first=(c.contact||'').split(/\s+/)[0];
+ const msg=q.fuCount?`Hi${first?' '+first:''},\n\nChecking in once more on quote ${q.id}. If the timing or quantities have changed, I'm happy to re-quote. If you've gone another way, just let me know and I'll close it out.\n\nThank you,`
+  :`Hi${first?' '+first:''},\n\nI wanted to follow up on our quote ${q.id}${q.sentOn?` from ${longDate(q.sentOn)}`:''}. Do you have any questions, or would you like us to adjust quantities or lead time? We can get the order moving as soon as we have your PO.\n\nThank you,`;
+ let file=null;try{file=await pdfFile(q)}catch(e){}
+ cpOpen({fresh:true,title:`Follow up on ${q.id}`,acct:q.acct||null,conv:conv?conv.id:null,files:file?[file]:[],onSent:(data,body)=>{q.fuOn=TODAY;q.fuCount=(q.fuCount||0)+1;if(!q.sentTo)q.sentTo=body.to[0];log(`Emailed a follow-up on quote ${q.id} to ${body.to[0]}`,[{f:'Follow-ups',from:String(q.fuCount-1),to:String(q.fuCount)}]);if(data&&data.conversationId)rowQ.add(data.conversationId);kick();rerender()}});
+ CP.to=to?[to.toLowerCase()]:[];CP.subject=conv?reSubj(conv.subject):`Following up: quote ${q.id} from Mass Renewable Energy Solutions`;CP.body=msg;CP.link='quote|'+q.id;if(conv)CP.from=defaultFrom(conv);cpRender()};
+/* photos: Send to a customer opens the same window with the photo attached, labelled with the part number */
+A['ph-send']=async d=>{const it=item(d.sku);const ps=phOf(d.sku);if(!it||!ps.length)return;const pick=d.i!=null?[ps[+d.i]]:ps.slice(0,Math.min(ps.length,3));closeModal();toast('Getting the photo ready…');
+ let att;try{att=await phAttach(it.sku,pick,true)}catch(e){return toast(e.message,true)}const files=att.map(a=>{const bin=atob(a.content),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return new File([u],a.filename,{type:'image/jpeg'})});
+ cpOpen({fresh:true,title:`Photo of ${it.sku}`,files,onSent:(data,body)=>log(`Emailed ${files.length} photo${files.length===1?'':'s'} of ${it.sku} to ${body.to.join(', ')}`)});
+ CP.subject=`Photo of part ${it.sku}${it.desc?' – '+it.desc:''}`;CP.body=`Hi,\n\nAttached is a photo of what we have: part # ${it.sku}${it.desc?' ('+it.desc+')':''}.\n\nWould this work for you? If you need something different, send us a photo or the part number of what you have and we'll find the right match.\n\nThank you,`;cpRender()};
+(function(){const st=document.createElement('style');st.textContent=`.em-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px}.em-acts .btn{border-radius:18px}`;document.head.appendChild(st)})();
 
 /* ================= boot ================= */
 try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}
