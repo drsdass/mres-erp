@@ -2233,8 +2233,8 @@ setTimeout(function w(){if(typeof CLOUD==='undefined'||!CLOUD||!S||!USER||!USER.
 /* ================= inbox: tidy messy email text, delete to Trash (30 days), block a sender ================= */
 const ENT2={nbsp:' ',amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",zwnj:'',zwj:'',shy:'',lrm:'',rlm:'',ndash:'–',mdash:'—',hellip:'…',rsquo:'’',lsquo:'‘',rdquo:'”',ldquo:'“',bull:'•',middot:'·',copy:'©',reg:'®',trade:'™',euro:'€',pound:'£',deg:'°',times:'×'};
 function tidyMail(s){return String(s||'').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,(m,k)=>k[0]==='#'?(()=>{const n=k[1].toLowerCase()==='x'?parseInt(k.slice(2),16):+k.slice(1);try{return String.fromCodePoint(n)}catch(e){return''}})():(k.toLowerCase() in ENT2?ENT2[k.toLowerCase()]:m))
- .replace(/[​-‏⁠﻿͏­؜᠎]/g,'').replace(/\S*BannerStart[\s\S]*?\S*BannerEnd\s*/g,'').replace(/[ \t ]+$/gm,'').replace(/\n{3,}/g,'\n\n').trim()}
-const MESSY=/&(zwnj|nbsp|#\d+|#x[0-9a-f]+|amp|zwj);|BannerStart|[​-‍﻿͏]/i;
+ .replace(/[​-‏⁠﻿͏­؜᠎]/g,'').replace(/\S*BannerStart[\s\S]*?\S*BannerEnd\s*/g,'').replace(/https?:\/\/urldefense\.(?:proofpoint\.)?com\/[^\s<>"\]]+/gi, u => { let m = u.match(/\/v2\/url\?u=([^&]+)/i); if (m) return m[1].replace(/_/g, '/').replace(/-([0-9A-F]{2})/g, (x, h) => String.fromCharCode(parseInt(h, 16))); m = u.match(/\/v3\/__(.+?)__;/i); return m ? m[1] : u; }).replace(/<(?:mailto|tel):[^>\s]*>/gi, '').replace(/(\S)<https?:\/\/[^>\s]+>/g, '$1').replace(/\[(?:cid:[^\]]+|[^\]\n]{1,100}\.(?:png|jpe?g|gif|bmp|webp))\]/gi, '').replace(/[ \t ]+$/gm,'').replace(/\n{3,}/g,'\n\n').trim()}
+const MESSY=/&(zwnj|nbsp|#\d+|#x[0-9a-f]+|amp|zwj);|BannerStart|urldefense\.|<(mailto|tel):|\[cid:|\S<https?:\/\/|\[[^\]\n]{1,100}\.(png|jpe?g|gif)\]|[​-‍﻿͏]/i;
 function tidyAll(){if(!S||!Array.isArray(S.emails))return 0;let n=0;S.emails.forEach(m=>(m.thread||[]).forEach(x=>{if(x.body&&MESSY.test(x.body)){x.body=tidyMail(x.body);n++}}));if(n)save();return n}
 setTimeout(function w(){try{if(tidyAll())rerender()}catch(e){}setTimeout(w,30000)},4000);
 
