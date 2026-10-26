@@ -1831,7 +1831,7 @@ const _renderB=render;render=function(k){_renderB(k);if(!S||parse().r!=='builds'
  staffMask($('#view'))};
 
 /* ================= which of our addresses an email was sent to, as a colour-coded tag ================= */
-const BOXES=[{addr:'info@massrenewable.com',tag:'info@',bg:'rgba(14,165,233,.16)',fg:'#0284c7'},{addr:'sourcing@massrenewable.com',tag:'sourcing@',bg:'rgba(245,158,11,.20)',fg:'#c2410c'}];
+const BOXES=[{addr:'info@massrenewable.com',tag:'info@',bg:'rgba(14,165,233,.16)',fg:'#0284c7'},{addr:'sourcing@massrenewable.com',tag:'sourcing@',bg:'rgba(245,158,11,.20)',fg:'#c2410c'},{addr:'engineering@massrenewable.com',tag:'engineering@',bg:'rgba(139,92,246,.18)',fg:'#7c3aed'}];
 function boxOf(m){if(!m||m.channel==='Phone')return'';const i=String(m.inbox||'').toLowerCase();const b=BOXES.find(x=>x.addr===i);return b?b.tag:''}
 function inboxTag(m,big){const t=boxOf(m);const b=BOXES.find(x=>x.tag===t);if(!b)return big?'<span class="muted">an address not recorded yet (older email)</span>':(m.channel==='Email'&&!m.demo?'<span class="chip plain" title="Older email: not tagged yet" style="font-size:11px;padding:0 6px;margin-left:6px">?</span>':'');
  return `<span class="chip" title="Sent to ${esc(b.addr)}" style="background:${b.bg};color:${b.fg};font-weight:600;${big?'':'font-size:11px;padding:0 6px;margin-left:6px'}">${big?esc(b.addr):b.tag}</span>`}
@@ -2403,7 +2403,7 @@ async function cloudBoot(){
  if(/access_token|error_description/.test(location.hash))history.replaceState(null,'',location.pathname+location.search+'#/dashboard');
  const {data:{session}}=await CLOUD.auth.getSession();if(!session)return loginScreen();startWithSession(session)}
 
-const OUR_INBOXES=((typeof CFG!=='undefined'&&CFG.inboxes)||['info@massrenewable.com','sourcing@massrenewable.com']).map(x=>String(x).toLowerCase());
+const OUR_INBOXES=((typeof CFG!=='undefined'&&CFG.inboxes)||['info@massrenewable.com','sourcing@massrenewable.com','engineering@massrenewable.com']).map(x=>String(x).toLowerCase());
 const defaultFrom=m=>{const i=String(m.inbox||'').toLowerCase();if(OUR_INBOXES.includes(i))return i;return m.cat==='Vendor'&&OUR_INBOXES.includes('sourcing@massrenewable.com')?'sourcing@massrenewable.com':OUR_INBOXES[0]};
 /* ================= live info@ inbox: send replies through the ERP, attachments, Outlook replies ================= */
 const isAddr=s=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s||''));
@@ -2743,6 +2743,7 @@ function cpOpen(pre={}){if(!CLOUD)return toast('Sending email works on the live 
   Object.assign(CP,{to:[],cc:[],bcc:[],files:[],from:'',subject:'',body:'',link:null,showCc:false,conv:null,title:'New message',onSent:null,keep:false,acct:null,wait:true},{acct:pre.acct||null,conv:pre.conv||null,title:pre.title||'New message',onSent:pre.onSent||null,cc:pre.cc||[],showCc:!!(pre.cc&&pre.cc.length),files:pre.files||[]})}
  else{const d=!CP.open?cpLoad():null;if(!CP.open)Object.assign(CP,{to:[],cc:[],bcc:[],files:[],from:'',subject:'',body:'',link:null,showCc:false,conv:null,title:'New message',onSent:null,keep:true},d||{})}
  if(pre.to)CP.to=[...new Set([...CP.to,...[].concat(pre.to)])];if(pre.subject)CP.subject=pre.subject;if(pre.body)CP.body=pre.body;if(pre.link)CP.link=pre.link;if(pre.from)CP.from=pre.from;
+ if(!CP.from){const eng=OUR_INBOXES.find(a=>a.startsWith('engineering@'));CP.from=eng&&/engineering/i.test(USER.signAs||'')?eng:OUR_INBOXES[0]}
  CP.open=true;CP.min=false;cpRender()}
 function cpAdd(f,raw){const parts=String(raw||'').split(/[,;\s]+/).map(x=>x.replace(/^.*<|>.*$/g,'').trim().toLowerCase()).filter(Boolean);let bad=0;parts.forEach(e=>{if(!isAddr(e))bad++;if(!CP[f].includes(e))CP[f].push(e)});return bad}
 function cpField(f){const i=$(`#cp [data-cp-in="${f}"]`);return i}
