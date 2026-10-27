@@ -622,7 +622,7 @@ function months(n=6){const out=[];for(let i=n-1;i>=0;i--){const d=new Date(T0.ge
 /* ================= router ================= */
 const VIEWS={};
 const NAV=[['Overview',[['dashboard','Dashboard','grid'],['inbox','Inbox','mail']]],['Orders',[['sales','Sales orders','tag'],['warehouse','Pick, ship and receive','truck'],['crm','Customers','target']]],['Supply',[['purchasing','Purchasing','box'],['builds','Builds','wrench'],['items','Item master','search']]],['Business',[['finance','Finance','dollar'],['data','Workbook and data','refresh'],['activity','Activity log','shield']]]];
-function parse(){const h=location.hash.replace(/^#\/?/,'')||'dashboard';const i=h.indexOf('/');const r=i<0?h:h.slice(0,i),id=i<0?null:decodeURIComponent(h.slice(i+1));return{r:VIEWS[r]?r:'dashboard',id}}
+function parse(){const h=location.hash.replace(/^#\/?/,'')||'mywork';const i=h.indexOf('/');const r=i<0?h:h.slice(0,i),id=i<0?null:decodeURIComponent(h.slice(i+1));return{r:VIEWS[r]?r:'dashboard',id}}
 function navCounts(){return{inbox:S.emails.filter(needsReply).length,sales:S.orders.filter(o=>whoKey(o)==='you').length,warehouse:S.orders.filter(o=>o.status==='Ready to pick'||o.status==='Packed').length,purchasing:supplyDemand().filter(r=>r.gap>0).length,data:S.issues.filter(i=>i.sev==='alert').length}}
 function renderShell(){const c=navCounts(),{r}=parse();
  $('#side').innerHTML=`<a class="brand" href="#/dashboard" aria-label="Mass Renewable Energy Solutions, dashboard">${LOGO}<span><b>MASS RENEWABLE</b><small>ENERGY SOLUTIONS</small></span></a><nav class="nav">${NAV.map(([g,items])=>`<h6>${g}</h6>`+items.map(([k,l,i])=>`<a href="#/${k}" data-r="${k}" class="${r===k?'on':''}" ${r===k?'aria-current="page"':''}>${ic(i)}<span>${l}</span>${c[k]?`<span class="cnt ${['sales','purchasing','data'].includes(k)?'hot':''}">${c[k]}</span>`:''}</a>`).join('')).join('')}</nav>
@@ -1252,7 +1252,7 @@ M.award=qid=>{const q=byId(S.squotes,qid),s=sup(q.supplier),r=sreq(q.req);const 
  modal(`Award to ${s.name}`,`<p style="margin-top:0">This marks the quote awarded, the other quotes not selected, and closes the request.</p><div class="fg">${fld('ERP vendor',`<select name="vendor">${opt('__new',`+ Add ${s.name} as a vendor`,!s.vendor)}${S.vendors.map(v=>opt(v.id,v.name,v.id===s.vendor)).join('')}</select>`)}${fld('Part',`<select name="sku"><option value="">No part yet</option>${S.items.map(i=>opt(i.sku,`${i.sku}, ${i.desc||i.name}`,i.sku===r?.sku)).join('')}</select>`)}${fld('PO quantity',inp('qty',qty,'type="number" min="1"'))}${fld('Unit cost on the PO',inp('cost',price,'type="number" min="0" step="0.01"'))}<label class="check-inline f full"><input type="checkbox" name="updCost" checked> Make this the part’s vendor and set its cost to the landed cost (${unitCost(landed(q))})</label><label class="check-inline f full"><input type="checkbox" name="po" checked> Draft a purchase order</label></div>`,{wide:true,label:'Award',submit:d=>{let v=d.vendor;if(v==='__new'){v='V-'+nextNum(S.vendors,x=>+x.id.split('-')[1],10);S.vendors.push({id:v,name:s.name,lead:q.leadDays||null,contact:s.contact||'',email:s.email||'',phone:s.whatsapp||''})}s.vendor=v;
   const ch=[{f:'Quote',from:q.status,to:'Awarded'}];q.status='Awarded';reqQuotes(q.req).filter(x=>x.id!==q.id&&liveQ(x)).forEach(x=>x.status='Not selected');if(r){ch.push({f:'Request',from:r.status,to:'Awarded'});r.status='Awarded';r.awarded=q.id}
   const pit=d.sku&&item(d.sku);if(pit&&d.updCost){const b={vendor:vend(pit.vendor).name,cost:pit.cost,lead:pit.lead};pit.vendor=v;pit.cost=Math.round(landed(q)*100)/100;pit.lead=q.leadDays||pit.lead;pit.src=[{v,cost:pit.cost,lead:pit.lead||21,mpn:pit.sku}];itemFlags(pit);ch.push(...diffs(b,{vendor:vend(v).name,cost:pit.cost,lead:pit.lead},{vendor:`${pit.sku} vendor`,cost:`${pit.sku} cost`,lead:`${pit.sku} lead time`}))}
-  if(d.po&&d.sku){const id=nextId(S.pos,'PO-');S.pos.push({id,vendor:v,type:'Stock',date:TODAY,exp:null,lines:[{sku:d.sku,qty:+d.qty||qty,cost:+d.cost||price,received:0}],status:'Draft',forOrders:r?r.title:''});ch.push({f:'Draft PO',from:'blank',to:id})}
+  if(d.po&&d.sku){const id=nextId(S.pos,'PO-');S.pos.push({id,vendor:v,type:'Stock',date:TODAY,exp:null,lines:[{sku:d.sku,qty:+d.qty||qty,cost:+d.cost||price,received:0}],status:'Draft',forOrders:r?r.title:'',rfq:r?r.id:null});if(r)r.po=id;ch.push({f:'Draft PO',from:'blank',to:id})}
   log(`Awarded ${r?r.title:'quote'} to ${s.name} at ${unitCost(price)}${q.incoterm?' '+q.incoterm:''}`,ch);toast(`Awarded to ${s.name}${d.po&&d.sku?'. Draft PO created in Purchasing.':''}`)}})};
 A['sreq-new']=()=>M.sreq();A['sreq-edit']=d=>M.sreq(d.id);A.sup=d=>M.sup(d.id);A['sup-msg']=d=>{closeModal();M.supMsg(d.id)};A['sup-new']=()=>M.supNew();A['stask-new']=d=>{closeModal();M.stask({sup:d.sup,req:d.req})};
 A['stask-done']=d=>{const t=byId(S.stasks,d.id);t.done=true;t.doneOn=TODAY;log(`Completed supplier follow-up: ${t.text}`,[{f:'Follow-up',from:'Open',to:'Done'}]);save();rerender()};
@@ -2753,6 +2753,100 @@ setTimeout(function w(){if(!S||!S.smsgs||(typeof CLOUD!=='undefined'&&CLOUD&&!US
 
 /* Alibaba notification emails already filed in Sourcing don't need sorting again */
 const _sortQueuePK=sortQueue;sortQueue=function(){const filed=new Set((S.smsgs||[]).map(m=>m.emailId).filter(Boolean));return _sortQueuePK().filter(m=>!filed.has(m.id))};
+
+/* ================= My work: everything that needs this person, on one page =================
+   Instead of checking the Inbox, Sort emails, Triage, Part requests, Shipments, Reorder and the bell one by one,
+   everyone lands here. Each card is one kind of job; each row opens the exact thing to deal with; the page empties
+   as the work gets done. Cards for pages someone has hidden from their menu are left out. */
+const MW_MAX=5;
+const mwKey=()=>String((USER&&(USER.email||USER.name))||'me').toLowerCase();
+function mwHidden(){const m=(S.menus||{})[mwKey()];return Array.isArray(m)?m:(isOwner()?[]:MENU_DEFAULT_HIDE)}
+const mwSees=r=>!mwHidden().includes(r);
+function mwCard(o){if(!o.n)return '';const rows=o.rows.slice(0,MW_MAX).map(x=>`<li ${x.attrs||''} style="cursor:pointer"><div class="grow"><b>${x.t}</b>${x.s?`<div class="muted sm">${x.s}</div>`:''}</div>${x.r?`<div class="sm nowrap" style="${x.hot?'color:var(--alert)':''}">${x.r}</div>`:''}</li>`).join('');
+ return `<section class="panel mw-card" style="border-left:4px solid var(--${o.tone==='alert'?'alert':o.tone==='warn'?'warn':'info'},#22b8d6)"><div class="ph"><h3>${o.title} <span class="chip ${o.tone==='alert'?'alert':o.tone==='warn'?'warn':'info'}" style="margin-left:6px">${o.n}</span></h3>${o.go?`<button class="link sm" ${o.go}>Open all ›</button>`:''}</div>${o.help?`<div class="pb muted sm" style="padding-top:0">${o.help}</div>`:''}<ul class="alist">${rows}</ul>${o.n>MW_MAX?`<div class="pb muted sm">+${o.n-MW_MAX} more</div>`:''}</section>`}
+const mwGo=(to,tk,tv)=>`data-action="go" data-to="${to}"${tk?` data-tk="${tk}" data-tv="${esc(tv)}"`:''}`;
+function mwCards(){const C=[],me=USER.name;const fr=typeof frs==='function'?frs():[];
+ /* --- yours --- */
+ const wait=fr.filter(r=>r.from===me&&r.status==='Waiting on requester');
+ C.push({title:'Questions waiting on your answer',tone:'alert',n:wait.length,help:'Someone asked about a part you requested. Answer so they can keep looking.',rows:wait.map(r=>({t:esc(r.what),s:esc(((r.thread||[]).filter(m=>!m.sys&&m.user!==me).slice(-1)[0]||{}).text||''),r:esc(r.id),attrs:`data-action="fr-open" data-id="${esc(r.id)}"`})),go:mwGo('requests','requests','Waiting on me')});
+ const mine=fr.filter(r=>r.assignee===me&&!['Received','Closed','Can’t find','Waiting on requester'].includes(r.status));
+ C.push({title:'Part requests you’re working on',tone:'info',n:mine.length,rows:mine.map(r=>({t:`${num(r.qty)} × ${esc(r.what)}`,s:`For ${esc(r.forWhat||'–')} · asked by ${esc(r.from)} · ${esc(r.status)}`,r:r.needBy?fd(r.needBy):'',hot:r.needBy&&dd(r.needBy)<0,attrs:`data-action="fr-open" data-id="${esc(r.id)}"`})),go:mwGo('requests','requests','Mine')});
+ /* --- the team's, for whoever has that page --- */
+ if(mwSees('requests')){const nw=fr.filter(r=>r.status==='New');C.push({title:'New part requests, nobody on them',tone:'warn',n:nw.length,help:'Open one and click “I’ll take it”.',rows:nw.map(r=>({t:`${num(r.qty)} × ${esc(r.what)}`,s:`${esc(r.from)} · for ${esc(r.forWhat||'–')}${r.urgency&&r.urgency!=='Normal'?' · <b style="color:var(--alert)">'+esc(r.urgency)+'</b>':''}`,r:r.needBy?fd(r.needBy):'',attrs:`data-action="fr-open" data-id="${esc(r.id)}"`})),go:mwGo('requests','requests','Open')})}
+ if(mwSees('inbox')){const rep=S.emails.filter(m=>needsReply(m)).sort((a,b)=>lastMsg(a).t<lastMsg(b).t?-1:1);
+  C.push({title:'Emails waiting for a reply',tone:rep.some(m=>hrsSince(lastMsg(m).t)>24)?'alert':'warn',n:rep.length,rows:rep.map(m=>({t:esc(m.fromName||m.from),s:esc(m.subject||''),r:ago(lastMsg(m).t),hot:hrsSince(lastMsg(m).t)>24,attrs:`data-pk-email="${esc(m.id)}"`})),go:mwGo('inbox')});
+  if(typeof sortQueue==='function'){const q=sortQueue();C.push({title:'Emails to file',tone:'info',n:q.length,help:'Link each to its RFQ, PO or order so it shows up there.',rows:q.map(m=>({t:esc(m.fromName||m.from),s:esc(m.subject||''),r:fd(String(lastMsg(m).t||'').slice(0,10)),attrs:`data-pk-email="${esc(m.id)}" data-pk-sort="1"`})),go:mwGo('sortmail')})}}
+ if(mwSees('sourcing')){const by=new Map();[...(S.smsgs||[]).filter(m=>!m.req&&m.dir==='in'),...(S.squotes||[]).filter(q=>!q.req&&liveQ(q))].forEach(x=>{if(!by.has(x.supplier))by.set(x.supplier,[]);by.get(x.supplier).push(x)});
+  C.push({title:'Supplier conversations to assign',tone:'warn',n:by.size,help:'Read the conversation, pick the RFQ, assign all.',rows:[...by.entries()].map(([sid,it])=>{const f=it[0];return{t:esc((sup(sid)||{}).name||'Supplier'),s:`${it.length} message${it.length===1?'':'s'} or quote${it.length===1?'':'s'}`,attrs:`data-pk-row="${f.text!=null?'sm':'sq'}:${esc(f.id)}"`}}),go:mwGo('sourcing','sourcing','Triage')});
+  const decide=(S.srcReqs||[]).filter(r=>r.status==='Open'&&reqQuotes(r.id).filter(liveQ).length>=2);
+  C.push({title:'RFQs with quotes to compare',tone:'info',n:decide.length,help:'Two or more quotes are in. Check Best deal and award one.',rows:decide.map(r=>{const b=bestQ(r.id);return{t:esc((r.no||'')+' '+r.title),s:`${reqQuotes(r.id).filter(liveQ).length} quotes${b?` · best ${unitCost(landed(b))} delivered from ${esc(sup(b.supplier).name)}`:''}`,attrs:`data-action="go" data-to="sourcing/${esc(r.id)}"`}}),go:mwGo('sourcing','sourcing','RFQs')})}
+ if(mwSees('shipments')&&typeof trkLate==='function'){const late=trkLate(),today=trkToday();const all=[...late,...today];
+  C.push({title:'Shipments late or arriving today',tone:late.length?'alert':'info',n:all.length,rows:all.map(t=>({t:esc(t.party||t.kind||''),s:`${esc(t.what||'')}${t.number?' · '+esc(t.carrier+' '+t.number):''}`,r:late.includes(t)?'late':'today',hot:late.includes(t),attrs:`data-action="go" data-to="shipments"`})),go:mwGo('shipments','shipments','Coming in')})}
+ if(mwSees('sales')){const you=S.orders.filter(o=>whoKey(o)==='you');C.push({title:'Orders that need the next step',tone:'alert',n:you.length,rows:you.map(o=>({t:esc(oLabel(o)+', '+aname(o.acct)),s:esc(o.status),attrs:`data-action="go" data-to="${esc(oHref(o).replace(/^#\//,''))}"`})),go:mwGo('sales')})}
+ if(mwSees('purchasing')){const rl=typeof reorderList==='function'?reorderList():[],br=typeof buildRisks==='function'?buildRisks().filter(x=>x.late||x.days<=7):[];
+  C.push({title:'Parts to reorder',tone:br.length?'alert':'warn',n:rl.length+br.length,help:'Below minimum stock, or needed for a build soon.',rows:[...br.map(x=>({t:esc(x.it.sku),s:`Order ${num(x.short)} ${x.late?'now':'by '+fd(x.orderBy)} for the ${esc(x.a.name||x.a.id)} build`,hot:x.late,attrs:`data-action="go" data-to="purchasing" data-tk="purchasing" data-tv="Reorder"`})),...rl.map(x=>({t:esc(x.it.sku),s:`${esc(x.it.desc||x.it.name||'')} · ${num(x.have)} on hand or ordered, min ${num(x.it.min)} · order ${num(x.q)}`,attrs:`data-action="go" data-to="purchasing" data-tk="purchasing" data-tv="Reorder"`}))],go:mwGo('purchasing','purchasing','Reorder')});
+  const g=supplyDemand().filter(r=>r.gap>0);C.push({title:'Parts short for open orders',tone:'alert',n:g.length,rows:g.map(r=>({t:esc(r.sku),s:`${num(r.gap)} short`,attrs:`data-action="part" data-id="${esc(r.sku)}"`})),go:mwGo('purchasing','purchasing','Shortages')});
+  const dr=S.pos.filter(p=>p.status==='Draft');C.push({title:'Draft POs to send',tone:'info',n:dr.length,rows:dr.map(p=>({t:esc(p.id+', '+vend(p.vendor).name),s:p.lines.map(l=>`${num(l.qty)} × ${esc(l.sku)}`).join(', '),attrs:`data-action="go" data-to="purchasing" data-tk="purchasing" data-tv="Purchase orders"`})),go:mwGo('purchasing','purchasing','Purchase orders')})}
+ if(mwSees('finance')&&isOwner()){const od=S.invoices.filter(i=>invStatus(i)==='Overdue');C.push({title:'Overdue invoices',tone:'alert',n:od.length,rows:od.map(i=>({t:esc(i.ref||i.id),s:$f(i.amount-i.paid)+' outstanding',attrs:`data-action="go" data-to="finance" data-tk="finance" data-tv="Receivables"`})),go:mwGo('finance','finance','Receivables')})}
+ return C.filter(c=>c.n)}
+VIEWS.mywork=()=>{const C=mwCards();const n=C.reduce((a,c)=>a+c.n,0);const hr=new Date().getHours();
+ const hi=`${hr<12?'Good morning':hr<17?'Good afternoon':'Good evening'}, ${esc(String(USER.name||'').split(' ')[0])}`;
+ const order=['alert','warn','info'];C.sort((a,b)=>order.indexOf(a.tone)-order.indexOf(b.tone));
+ return phead(hi,n?`${n} thing${n===1?'':'s'} need${n===1?'s':''} you. Most urgent first; click any line to deal with it.`:'Nothing needs you right now.',btn(ic('plus',16)+' Request a part','fr-new',{},'')+btn(ic('back',16)+' Dashboard','go',{to:'dashboard'},'ghost'))
+  +(C.length?`<div class="mw-grid">${C.map(mwCard).join('')}</div>`:`<section class="panel"><div class="pb" style="text-align:center;padding:48px 16px"><div style="font-size:40px">✓</div><h3 style="margin:8px 0 4px">All clear</h3><div class="muted">No questions, requests, emails, shipments or reorders waiting on you.</div></div></section>`)};
+NAV[0][1].unshift(['mywork','My work','check']);
+const _navCountsMW=navCounts;navCounts=function(){const c=_navCountsMW();try{c.mywork=mwCards().filter(x=>x.tone!=="info").length}catch(e){}return c};
+document.head.insertAdjacentHTML('beforeend','<style>.mw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start}.mw-grid .panel{margin:0}.mw-card .alist li:hover{background:var(--hover,rgba(0,0,0,.03))}@media(max-width:600px){.mw-grid{grid-template-columns:1fr}}</style>');
+/* rows that open the reader */
+document.addEventListener('click',e=>{const li=e.target.closest&&e.target.closest('[data-pk-email],[data-pk-row]');if(!li||!li.closest('.mw-card'))return;e.preventDefault();
+ const card=li.closest('.mw-card');if(li.dataset.pkEmail){const list=[...card.querySelectorAll('[data-pk-email]')].map(x=>'email:'+x.dataset.pkEmail);pkOpen('email',li.dataset.pkEmail,list);return}
+ const k=li.dataset.pkRow,i=k.indexOf(':');PK={kind:k.slice(0,i),id:k.slice(i+1),list:[...card.querySelectorAll('[data-pk-row]')].map(x=>x.dataset.pkRow)};pkShow()});
+
+/* ================= Menus: each person sees the pages they use ================= */
+const MENU_DEFAULT_HIDE=['finance','accounting','quickbooks','data','activity'];
+const _renderShellMW=renderShell;renderShell=function(){_renderShellMW();const hide=mwHidden();const nav=$('#side .nav');if(!nav)return;
+ hide.forEach(r=>{const a=nav.querySelector(`a[data-r="${r}"]`);if(a&&!a.classList.contains('on'))a.remove()});
+ $$('#side .nav h6').forEach(h=>{let n=h.nextElementSibling,any=false;while(n&&n.tagName!=='H6'){if(n.tagName==='A')any=true;n=n.nextElementSibling}if(!any)h.remove()});
+ if(!nav.querySelector('.mw-menu'))nav.insertAdjacentHTML('beforeend',`<button type="button" class="link sm mw-menu" data-action="menu-edit" style="margin:14px 12px 4px;opacity:.75">${hide.length?`${hide.length} page${hide.length===1?'':'s'} hidden · `:''}Customize menu</button>`)};
+A['menu-edit']=()=>{const people=isOwner()&&Array.isArray(typeof MEMBERS!=='undefined'?MEMBERS:null)&&MEMBERS.length?MEMBERS:[{email:USER.email||USER.name,name:USER.name,role:USER.role}];
+ ui.menuFor=ui.menuFor||mwKey();const who=people.find(p=>String(p.email||p.name).toLowerCase()===ui.menuFor)||people[0];const key=String(who.email||who.name).toLowerCase();
+ const saved=(S.menus||{})[key];const hidden=Array.isArray(saved)?saved:(['admin','owner'].includes(String(who.role||'').toLowerCase())?[]:MENU_DEFAULT_HIDE);
+ const all=NAV.flatMap(([g,items])=>items.map(([k,l])=>({k,l,g})));
+ modal('Customize menu',`${people.length>1?`<div class="fg">${fld('Menu for',`<select name="who" data-menu-who>${people.map(p=>opt(String(p.email||p.name).toLowerCase(),p.name+(String(p.email||p.name).toLowerCase()===mwKey()?' (you)':''),String(p.email||p.name).toLowerCase()===key)).join('')}</select>`)}</div>`:''}
+  <p class="muted sm" style="margin-top:0">Untick pages ${key===mwKey()?'you don’t':'they don’t'} use. Hidden pages still work: links, search and the bell can open them, they just leave the menu. My work only shows cards for pages that are in the menu.</p>
+  <div style="columns:2;column-gap:24px">${NAV.map(([g,items])=>`<div style="break-inside:avoid;margin-bottom:10px"><div class="sm muted" style="margin-bottom:4px">${esc(g)}</div>${items.map(([k,l])=>`<label class="check-inline" style="display:flex;margin:3px 0"><input type="checkbox" name="show" value="${esc(k)}" ${hidden.includes(k)?'':'checked'} ${['mywork','dashboard'].includes(k)?'disabled checked':''}> ${esc(l)}</label>`).join('')}</div>`).join('')}</div>`,
+ {label:'Save menu',submit:(d,f)=>{const shown=new Set($$('[name=show]:checked',f).map(x=>x.value));S.menus=S.menus||{};S.menus[key]=all.map(x=>x.k).filter(k=>!shown.has(k)&&!['mywork','dashboard'].includes(k));log(`Changed the menu for ${who.name}`);toast('Menu saved');setTimeout(()=>renderShell(),0)}})};
+document.addEventListener('change',e=>{if(!e.target.dataset||e.target.dataset.menuWho===undefined)return;e.stopPropagation();ui.menuFor=e.target.value;closeModal();setTimeout(()=>A['menu-edit'](),0)},true);
+
+/* ================= The trail: request → RFQ → quotes → award → PO → shipment → received → in stock ================= */
+function trailFor(o){let fr=o.fr||null,r=o.rfq?sreq(o.rfq):null,po=o.po?byId(S.pos,o.po):null;
+ if(fr&&!r&&fr.rfq)r=sreq(fr.rfq);if(r&&!fr&&typeof frs==='function')fr=frs().find(x=>x.rfq===r.id)||null;
+ if(r&&!po)po=S.pos.find(p=>p.rfq===r.id)||(r.po&&byId(S.pos,r.po))||null;
+ if(po&&!r&&po.rfq)r=sreq(po.rfq);if(r&&!fr&&typeof frs==='function')fr=frs().find(x=>x.rfq===r.id)||null;
+ const qs=r?reqQuotes(r.id).filter(liveQ):[],aw=r&&r.awarded?byId(S.squotes,r.awarded):null,best=r?bestQ(r.id):null;
+ const trk=po&&typeof ensureTracks==='function'?ensureTracks().filter(t=>t.ref&&t.ref.t==='po'&&t.ref.id===po.id):[];
+ const qty=po?sum(po.lines,l=>+l.qty||0):0,rec=po?sum(po.lines,l=>+l.received||0):0;const sku=(po&&po.lines[0]&&po.lines[0].sku)||(r&&r.sku)||'';const it=sku?item(sku):null;
+ const S_=[
+  {l:'Request',on:!!fr,v:fr?fr.id:'—',a:fr?`data-action="fr-open" data-id="${esc(fr.id)}"`:'',s:fr?`${num(fr.qty)} for ${esc(fr.from)}`:''},
+  {l:'RFQ',on:!!r,v:r?(r.no||r.id):'—',a:r?`data-action="go" data-to="sourcing/${esc(r.id)}"`:'',s:r?esc(r.status):''},
+  {l:'Quotes',on:qs.length>0,v:qs.length?`${qs.length}`:'none yet',s:best?`best ${unitCost(landed(best))}`:'',a:r?`data-action="go" data-to="sourcing/${esc(r.id)}"`:''},
+  {l:'Awarded',on:!!aw,v:aw?esc(sup(aw.supplier).name.split(' ').slice(0,2).join(' ')):'—',s:aw?unitCost(aw.unitPrice):'',a:aw?`data-action="sup" data-id="${esc(aw.supplier)}"`:''},
+  {l:'PO',on:!!po,v:po?po.id:'—',s:po?esc(po.status):'',a:po?`data-action="go" data-to="purchasing" data-tk="purchasing" data-tv="Purchase orders"`:''},
+  {l:'Shipped',on:trk.length>0,v:trk.length?esc(trk[0].carrier||'Tracking'):'—',s:trk.length?(trk[0].delivered?'delivered':trk[0].eta?'due '+fd(trk[0].eta):''):'',a:trk.length?`data-action="go" data-to="shipments"`:''},
+  {l:'Received',on:rec>0,v:po?`${num(rec)} of ${num(qty)}`:'—',s:rec&&rec>=qty?'complete':'',a:''},
+  {l:'In stock',on:!!(it&&+it.onhand>0&&rec>0),v:it?num(it.onhand||0):'—',s:it?esc(it.sku):'',a:it?`data-action="part" data-id="${esc(it.sku)}"`:''}];
+ let last=-1;S_.forEach((x,i)=>{if(x.on)last=i});
+ return `<div class="trail" role="list" aria-label="Where this part is">${S_.map((x,i)=>`<div role="listitem" class="trail-s ${x.on?'done':''} ${i===last+1?'next':''}" ${x.a||''} ${x.a?'style="cursor:pointer"':''}><div class="trail-l">${x.l}</div><div class="trail-v">${x.v}</div>${x.s?`<div class="trail-x">${x.s}</div>`:''}</div>`).join('<div class="trail-arrow" aria-hidden="true">›</div>')}</div>`}
+document.head.insertAdjacentHTML('beforeend','<style>.trail{display:flex;align-items:stretch;gap:4px;overflow-x:auto;padding:4px 0 12px}.trail-s{flex:1 0 92px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card,#fff);opacity:.6}.trail-s.done{opacity:1;border-color:#22b8d6;background:rgba(34,184,214,.07)}.trail-s.next{opacity:1;border-style:dashed;border-color:var(--warn,#d97706)}.trail-l{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#6b7280)}.trail-v{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.trail-x{font-size:12px;color:var(--muted,#6b7280);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.trail-arrow{align-self:center;color:var(--muted,#9ca3af)}</style>');
+/* on the RFQ page */
+const _srcTrail=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcTrail(id);if(!id||!sreq(id))return h;const t=`<section class="panel mb"><div class="ph"><h3>Where this stands</h3></div><div class="pb" style="padding-top:0">${trailFor({rfq:id})}</div></section>`;
+ const i=h.indexOf('<div class="kpis">');return i>0?h.slice(0,i)+t+h.slice(i):t+h};
+/* on the part request */
+const _mFrTrail=M.fr;M.fr=id=>{_mFrTrail(id);const r=fr(id);const b=$('#modal-root .mb, #modal-root .body, #modal-root form > div, #modal-root .mbody');const host=$('#modal-root .grid2e');if(r&&host)host.insertAdjacentHTML('beforebegin',trailFor({fr:r}))};
+/* on each PO row */
+const _renderTrail=render;render=function(k){_renderTrail(k);const {r}=parse();if(r!=='purchasing')return;
+ $$('#view table[data-tbl="pos"] tbody tr').forEach(tr=>{const b=tr.querySelector('td b');const p=b&&byId(S.pos,b.textContent.trim());if(!p)return;const rq=p.rfq&&sreq(p.rfq);const f=rq&&typeof frs==='function'&&frs().find(x=>x.rfq===rq.id);
+  if((rq||f)&&!tr.querySelector('.po-trail'))b.insertAdjacentHTML('afterend',`<div class="sm po-trail">${rq?`<button class="link sm" data-action="go" data-to="sourcing/${esc(rq.id)}">${esc(rq.no||rq.id)}</button>`:''}${f?` · <button class="link sm" data-action="fr-open" data-id="${esc(f.id)}">${esc(f.id)}</button>`:''}</div>`)})};
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
