@@ -2480,6 +2480,132 @@ A['ali-forget']=d=>{if(!isOwner())return;const s=(S.suppliers||[]).find(x=>x.id=
  log('Removed a non-M-RES Alibaba chat');save();location.hash='#/sourcing';rerender()};
 const _mSupAc=M.sup;M.sup=id=>{_mSupAc(id);if(!isOwner())return;const f=$('.modal footer, .modal .foot, .modal .mfoot');if(f&&!f.querySelector('[data-action="ali-forget"]')){const b=document.createElement('button');b.type='button';b.className='btn ghost';b.dataset.action='ali-forget';b.dataset.id=id;b.textContent='Not M-RES: remove';b.title='Removes this supplier and its chats from the ERP for everyone';f.prepend(b)}};
 
+/* ================= Part requests: "can you find me…" in one place instead of texts =================
+   Anyone (Denny, JJ…) asks the team to find a product. Quantity, what it's for and when it's needed are required,
+   so nothing gets lost in translation. Questions and answers stay on the request, status shows who is on it,
+   and every new request, question and update is emailed to info@ so the whole team sees it. */
+const FR_STATUS=['New','Looking','Waiting on requester','Quoted','Ordered','Received','Closed','Can’t find'];
+const FR_OPEN=s=>!['Received','Closed','Can’t find'].includes(s);
+const FR_TONE={New:'warn',Looking:'info','Waiting on requester':'alert',Quoted:'wind',Ordered:'info',Received:'ok',Closed:'plain','Can’t find':'plain'};
+const FR_URG=['Normal','Urgent','Machine down'];
+function frs(){if(!Array.isArray(S.findReqs))S.findReqs=[];return S.findReqs}
+const fr=id=>frs().find(r=>r.id===id);
+const frChip=r=>chip(r.status,FR_TONE[r.status]||'plain');
+const frUrg=r=>r.urgency&&r.urgency!=='Normal'?chip(r.urgency,'alert'):'';
+const frDue=r=>r.needBy?`${fd(r.needBy)}${FR_OPEN(r.status)&&dd(r.needBy)<0?` <span class="sm" style="color:var(--alert)">${-dd(r.needBy)}d late</span>`:''}`:'<span class="muted">–</span>';
+const frMine=r=>r.from===USER.name&&r.status==='Waiting on requester';
+async function frNotify(r,what,body){if(typeof CLOUD==='undefined'||!CLOUD)return;
+ const url=(location.origin+location.pathname).replace(/index\.html$/,'')+'#/requests/'+r.id;
+ const L=[what,'',`${r.id}: ${r.what}`,`Quantity: ${num(r.qty)} ${r.unit||'pcs'}`,r.partNo?`Part / model: ${r.partNo}`:'',`For: ${r.forWhat||'–'}`,`Needed by: ${r.needBy?fd(r.needBy):'not set'}${r.urgency&&r.urgency!=='Normal'?' ('+r.urgency+')':''}`,`Requested by: ${r.from}`,`Who’s on it: ${r.assignee||'Anyone'}`,`Status: ${r.status}`,body?'\n'+body:'','',`Open it in the ERP: ${url}`].filter(x=>x!=='');
+ try{await CLOUD.functions.invoke('mail-send',{body:{action:'notify',subject:`Part request ${r.id}: ${what.split('.')[0]} (${r.what.slice(0,60)})`,text:L.join('\n')}})}catch(e){}}
+
+/* ---------- new / edit ---------- */
+M.frNew=(id)=>{const r=id?fr(id):null;
+ modal(r?`Edit ${r.id}`:'Request a part',`<p class="muted" style="margin-top:0">${r?'':'Tell the team what you need found. Everyone sees it here and gets an email, and questions and answers stay on the request.'}</p>
+ <div class="fg">${fld('What do you need?',inp('what',r?.what||'','required placeholder="e.g. AC axial fan, 115V, 172 mm, for the cabinet cooler"'),true)}
+ ${fld('How many?',inp('qty',r?.qty??'','type="number" min="1" step="1" required placeholder="Required"'))}${fld('Unit',`<select name="unit">${['pcs','sets','ft','m','lbs','kg','boxes'].map(u=>opt(u,u,u===(r?.unit||'pcs'))).join('')}</select>`)}
+ ${fld('Part number or model (if you know it)',inp('partNo',r?.partNo||'','placeholder="e.g. 4656N, EBM-Papst W2E200"'))}
+ ${fld('What is it for?',inp('forWhat',r?.forWhat||'','required placeholder="Customer, job, turbine or order, e.g. WECS PO 4512, or stock"'))}
+ ${fld('Needed by',inp('needBy',r?.needBy||'','type="date"'))}${fld('How urgent',`<select name="urgency">${FR_URG.map(u=>opt(u,u,u===(r?.urgency||'Normal'))).join('')}</select>`)}
+ ${fld('Who should look',`<select name="assignee">${['Anyone',...TEAM.filter(t=>!['Sales','Purchasing','Warehouse','Accounting'].includes(t))].map(t=>opt(t,t,t===(r?.assignee||'Anyone'))).join('')}</select>`)}
+ ${fld('Specs, sizes, photos or links',`<textarea name="specs" placeholder="Voltage, dimensions, material, brand you used before, a link to the old part or a listing">${esc(r?.specs||'')}</textarea>`,true)}
+ ${fld('Budget per unit (optional, USD)',inp('budget',r?.budget??'','type="number" min="0" step="0.01"'))}
+ ${r?'':`<div class="f full">Spec sheets, drawings or photos (optional)<input type="file" name="files" id="fr-newfiles" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.dwg,.dxf,.step,.stp,.zip" class="input" style="padding:8px"><span class="muted sm">PDF, Word, Excel, drawings or photos, up to 25 MB each. On a phone you can take a picture.</span></div>`}</div>`,
+ {label:r?'Save':'Send request',submit:d=>{const what=d.what.trim(),qty=+d.qty;
+  if(!what)return fail('Say what you need.');if(!(qty>0))return fail('Add how many you need. That is the one thing that always gets lost in a text.');if(!d.forWhat.trim())return fail('Say what it is for (customer, job, order, or stock).');
+  const v={what,qty,unit:d.unit,partNo:d.partNo.trim(),forWhat:d.forWhat.trim(),needBy:d.needBy||null,urgency:d.urgency,assignee:d.assignee,specs:d.specs,budget:d.budget===''?null:+d.budget};
+  if(r){const b={...r};Object.assign(r,v);const ch=diffs(b,r,{what:'What',qty:'Quantity',unit:'Unit',partNo:'Part number',forWhat:'For',needBy:'Needed by',urgency:'Urgency',assignee:'Who’s on it',specs:'Specs',budget:'Budget'});if(!ch.length){toast('No changes');return}
+   r.thread.push({t:new Date().toISOString(),user:USER.name,sys:true,text:'Changed '+ch.map(c=>`${c.f}: ${c.from} → ${c.to}`).join('; ')});log(`Updated part request ${r.id}`,ch);frNotify(r,`${USER.name} changed the request.`,ch.map(c=>`${c.f}: ${c.from} → ${c.to}`).join('\n'));toast('Saved');setTimeout(()=>M.fr(r.id),0)}
+  else{const pick=[...(($('#fr-newfiles')||{}).files||[])];const id=nextId(frs(),'FR-');const n={id,...v,from:USER.name,created:new Date().toISOString(),status:'New',thread:[]};frs().unshift(n);
+   log(`${USER.name} requested ${num(qty)} ${v.unit} of ${what} (${id})`,[{f:'For',from:'blank',to:v.forWhat},{f:'Needed by',from:'blank',to:v.needBy||'not set'}]);(async()=>{const k=pick.length?await frUpload(n,pick):0;frNotify(n,`New part request from ${USER.name}.`,[v.specs,k?`Files attached: ${n.files.map(f=>f.name).join(', ')}`:''].filter(Boolean).join('\n\n'));if(k)rerender()})();
+   toast(`${id} sent to the team`);setTimeout(()=>{location.hash='#/requests/'+id},0)}}})};
+
+/* ---------- one request ---------- */
+M.fr=id=>{const r=fr(id);if(!r)return;const rq=r.rfq&&sreq(r.rfq);
+ const thread=(r.thread||[]).map(m=>m.sys?`<div class="sm muted" style="padding:4px 0">${esc(m.user)} · ${esc(m.text)} · ${new Date(m.t).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>`
+  :`<div class="msg ${m.user===r.from?'in':'out'}" style="padding:8px 10px;margin-bottom:8px"><header><b>${esc(m.user)}</b><span class="sm muted">${new Date(m.t).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span></header><div style="white-space:pre-wrap">${esc(m.text)}</div></div>`).join('')||'<div class="muted sm">No questions or updates yet.</div>';
+ modal(`${r.id}: ${r.what}`,`<div class="grid2e" style="gap:18px"><div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${frChip(r)}${frUrg(r)}</div>
+  <table class="kv fr-kv" style="width:100%"><tbody>
+   <tr><td class="muted">How many</td><td><b>${num(r.qty)} ${esc(r.unit||'pcs')}</b></td></tr>
+   ${r.partNo?`<tr><td class="muted">Part / model</td><td class="mono">${esc(r.partNo)}</td></tr>`:''}
+   <tr><td class="muted">For</td><td>${esc(r.forWhat||'–')}</td></tr>
+   <tr><td class="muted">Needed by</td><td>${frDue(r)}</td></tr>
+   <tr><td class="muted">Asked by</td><td>${esc(r.from)} · ${fd(r.created.slice(0,10))}</td></tr>
+   <tr><td class="muted">Who’s on it</td><td>${esc(r.assignee||'Anyone')}${r.assignee!==USER.name&&FR_OPEN(r.status)?` <button type="button" class="link sm" data-action="fr-take" data-id="${esc(r.id)}">I’ll take it</button>`:''}</td></tr>
+   ${r.budget!=null?`<tr><td class="muted">Budget</td><td>${unitCost(r.budget)} each</td></tr>`:''}
+   ${rq?`<tr><td class="muted">RFQ</td><td><button type="button" class="link" data-action="fr-go-rfq" data-id="${esc(rq.id)}">${esc(rq.no+' '+rq.title)}</button> ${chip(rq.status)}</td></tr>`:''}
+  </tbody></table>
+  ${r.specs?`<div class="sm muted" style="margin:12px 0 4px">Specs and notes</div><div style="white-space:pre-wrap">${linkify(esc(r.specs))}</div>`:''}
+  ${frFiles(r)}
+  <div class="sm muted" style="margin:14px 0 4px">Status</div><div style="display:flex;gap:6px;flex-wrap:wrap">${FR_STATUS.filter(s=>s!==r.status).map(s=>btn(s,'fr-status',{id:r.id,s},'sm ghost')).join('')}</div>
+ </div><div>
+  <div class="sm muted" style="margin-bottom:6px">Questions and updates</div>${thread}
+  <textarea id="fr-say" class="input" style="width:100%;min-height:70px;margin-top:6px" placeholder="${r.from===USER.name?'Answer a question or add details':'Ask '+esc(r.from)+' a question or post an update (price, supplier, ETA)'}"></textarea>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${btn('Post','fr-say',{id:r.id},'sm primary')}${r.from!==USER.name?btn(`Ask ${esc(r.from)} (waits on them)`,'fr-ask',{id:r.id},'sm'):''}</div>
+ </div></div>`,{wide:true,foot:`${!rq?btn(ic('flag',15)+' Start an RFQ from this','fr-rfq',{id:r.id}):''}${btn('Edit','fr-edit',{id:r.id},'ghost')}${isOwner()?btn('Delete','fr-del',{id:r.id},'ghost'):''}`})};
+const linkify=s=>s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
+
+function frPost(r,text,status){const t=new Date().toISOString();if(text)r.thread.push({t,user:USER.name,text});
+ if(status&&status!==r.status){r.thread.push({t,user:USER.name,sys:true,text:`Status: ${r.status} → ${status}`});r.status=status}
+ if(r.status==='Waiting on requester'&&USER.name===r.from&&text){r.thread.push({t,user:USER.name,sys:true,text:'Status: Waiting on requester → Looking'});r.status='Looking'}
+ if(USER.name!==r.from&&text){if(r.status==='New')r.status='Looking';if(!r.assignee||r.assignee==='Anyone')r.assignee=USER.name}}
+A['fr-new']=()=>M.frNew();A['fr-edit']=d=>{closeModal();setTimeout(()=>M.frNew(d.id),0)};A['fr-open']=d=>M.fr(d.id);
+A['fr-say']=d=>{const r=fr(d.id),t=($('#fr-say')||{}).value?.trim();if(!r||!t)return toast('Type something first.');frPost(r,t);log(`${USER.name} posted on part request ${r.id}`);frNotify(r,`${USER.name} posted on the request.`,t);save();M.fr(r.id);rerender()};
+A['fr-ask']=d=>{const r=fr(d.id),t=($('#fr-say')||{}).value?.trim();if(!r||!t)return toast('Type the question first.');frPost(r,t,'Waiting on requester');log(`${USER.name} asked ${r.from} about part request ${r.id}`);frNotify(r,`Question for ${r.from}: please answer in the ERP.`,t);save();M.fr(r.id);rerender()};
+A['fr-status']=d=>{const r=fr(d.id);if(!r)return;const from=r.status;frPost(r,'',d.s);if(d.s==='Looking'&&(!r.assignee||r.assignee==='Anyone'))r.assignee=USER.name;log(`Part request ${r.id}: ${from} → ${d.s}`,[{f:'Status',from,to:d.s}]);frNotify(r,`${USER.name} set the status to ${d.s}.`);save();M.fr(r.id);rerender()};
+A['fr-take']=d=>{const r=fr(d.id);if(!r)return;const from=r.assignee||'Anyone';r.assignee=USER.name;if(r.status==='New')r.status='Looking';r.thread.push({t:new Date().toISOString(),user:USER.name,sys:true,text:`${USER.name} is on it`});log(`${USER.name} took part request ${r.id}`,[{f:'Who’s on it',from,to:USER.name}]);frNotify(r,`${USER.name} is on it.`);save();M.fr(r.id);rerender()};
+A['fr-del']=d=>{const r=fr(d.id);if(!r||!confirmBox2(`Delete ${r.id} (${r.what})?`))return;S.findReqs=frs().filter(x=>x!==r);log(`Deleted part request ${r.id}`);save();closeModal();rerender()};
+A['fr-rfq']=d=>{const r=fr(d.id);if(!r)return;closeModal();const before=new Set((S.srcReqs||[]).map(x=>x.id));
+ M.sreq(null,{title:r.what+(r.partNo?' ('+r.partNo+')':'')});setTimeout(()=>{const f=$('#mform');if(!f)return;const set=(n,v)=>{const el=f.querySelector(`[name="${n}"]`);if(el&&v!=null&&v!=='')el.value=v};
+  set('qty',r.qty);set('needBy',r.needBy);set('specs',[r.specs,r.partNo?'Part / model: '+r.partNo:''].filter(Boolean).join('\n'));set('target',r.budget);set('notes',`From part request ${r.id} (${r.from}, for ${r.forWhat})${(r.files||[]).length?'. Spec files on the request: '+r.files.map(f=>f.name).join(', '):''}`)},30);
+ /* link the RFQ back once it is created */
+ let n=0;const iv=setInterval(()=>{const nw=(S.srcReqs||[]).find(x=>!before.has(x.id));if(nw){clearInterval(iv);r.rfq=nw.id;if(r.status==='New'||r.status==='Looking')r.status='Looking';r.thread.push({t:new Date().toISOString(),user:USER.name,sys:true,text:`Started ${nw.no||nw.id}`});frNotify(r,`${USER.name} started RFQ ${nw.no||nw.id} for this request.`);save()}else if(++n>600)clearInterval(iv)},500)};
+
+
+/* ---------- attachments: spec sheets, drawings, photos, quotes ---------- */
+const FR_BUCKET='request-files',FR_MAX=25*1048576;
+const frCloud=()=>typeof CLOUD!=='undefined'&&CLOUD;
+const frSize=n=>n>1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+const frIcon=f=>/^image\//.test(f.type||'')?'🖼':/pdf/.test(f.type||'')||/\.pdf$/i.test(f.name)?'📄':/sheet|excel|csv/.test(f.type||'')||/\.(xlsx?|csv)$/i.test(f.name)?'📊':'📎';
+const frPicker=id=>`<input type="file" id="${id}" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.dwg,.dxf,.step,.stp,.zip" style="display:none">`;
+async function frUpload(r,files){if(!frCloud())return toast('Attachments work in the online ERP.',true);files=[...files||[]];if(!files.length)return 0;if(!Array.isArray(r.files))r.files=[];let ok=0;
+ for(const f of files){if(f.size>FR_MAX){toast(`${f.name} is over 25 MB. Put it in OneDrive or Google Drive and paste the link instead.`,true);continue}
+  const path=`${r.id}/${Date.now()}-${f.name.replace(/[^\w.\- ]+/g,'_')}`;toast(`Uploading ${f.name}…`);
+  const {error}=await CLOUD.storage.from(FR_BUCKET).upload(path,f,{contentType:f.type||'application/octet-stream',upsert:false});
+  if(error){toast(`Could not upload ${f.name}: ${/bucket|not found/i.test(error.message)?'run mres-request-files.sql in Supabase first':error.message}`,true);continue}
+  r.files.push({name:f.name,path,size:f.size,type:f.type,by:USER.name,t:new Date().toISOString()});ok++}
+ if(ok){r.thread=r.thread||[];r.thread.push({t:new Date().toISOString(),user:USER.name,sys:true,text:`Attached ${ok} file${ok===1?'':'s'}`});log(`${USER.name} attached ${ok} file${ok===1?'':'s'} to part request ${r.id}`);save()}
+ return ok}
+function frFiles(r){const fs=r.files||[];return `<div class="sm muted" style="margin:14px 0 4px">Files${fs.length?' ('+fs.length+')':''}</div>`
+ +(fs.length?fs.map((f,i)=>`<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-top:1px solid var(--line)"><span>${frIcon(f)}</span><button type="button" class="link grow" style="text-align:left" data-action="fr-file" data-id="${esc(r.id)}" data-i="${i}">${esc(f.name)}</button><span class="muted sm nowrap">${frSize(f.size||0)} · ${esc(f.by||'')}</span>${f.by===USER.name||isOwner()?`<button type="button" class="link sm" data-action="fr-file-del" data-id="${esc(r.id)}" data-i="${i}" aria-label="Remove ${esc(f.name)}">✕</button>`:''}</div>`).join(''):'<div class="muted sm">No files yet.</div>')
+ +`<div style="margin-top:6px">${frPicker('fr-pick')}${btn('📎 Attach spec sheet, drawing or photo','fr-attach',{id:r.id},'sm')}</div>`}
+A['fr-attach']=d=>{const el=$('#fr-pick');if(!el)return;el.onchange=async()=>{const r=fr(d.id);const n=await frUpload(r,el.files);if(n){toast(`${n} file${n===1?'':'s'} attached`);frNotify(r,`${USER.name} attached ${n} file${n===1?'':'s'}.`,r.files.slice(-n).map(f=>'• '+f.name).join('\n'));M.fr(r.id);rerender()}};el.click()};
+A['fr-file']=async d=>{const f=(fr(d.id)?.files||[])[+d.i];if(!f||!frCloud())return;const {data,error}=await CLOUD.storage.from(FR_BUCKET).createSignedUrl(f.path,600);if(error)return toast('Could not open the file: '+error.message,true);window.open(data.signedUrl,'_blank','noopener')};
+A['fr-file-del']=async d=>{const r=fr(d.id),f=(r?.files||[])[+d.i];if(!f||!confirmBox2(`Remove ${f.name}?`))return;if(frCloud())await CLOUD.storage.from(FR_BUCKET).remove([f.path]);r.files.splice(+d.i,1);r.thread.push({t:new Date().toISOString(),user:USER.name,sys:true,text:`Removed ${f.name}`});log(`Removed a file from part request ${r.id}`);save();M.fr(r.id);rerender()};
+
+/* ---------- the page ---------- */
+function frTable(id,rows){return table(id,['#','What','How many','For','Needed by','Asked by','On it','Status'],rows.map(r=>`<tr class="click" data-action="fr-open" data-id="${esc(r.id)}" style="cursor:pointer"><td class="mono nowrap">${esc(r.id)}</td><td><b>${esc(r.what)}</b>${r.partNo?`<div class="muted sm mono">${esc(r.partNo)}</div>`:''}</td><td class="n nowrap">${num(r.qty)} ${esc(r.unit||'pcs')}</td><td class="sm">${esc(r.forWhat||'')}</td><td class="nowrap">${frDue(r)}</td><td class="sm">${esc(r.from)}</td><td class="sm">${esc(r.assignee||'Anyone')}</td><td>${frChip(r)} ${frUrg(r)}${(r.files||[]).length?`<div class="muted sm">📎 ${r.files.length} file${r.files.length===1?'':'s'}</div>`:''}${(r.thread||[]).filter(m=>!m.sys).length?`<div class="muted sm">${(r.thread||[]).filter(m=>!m.sys).length} message${(r.thread||[]).filter(m=>!m.sys).length===1?'':'s'}</div>`:''}</td></tr>`),'Nothing here.')}
+const frSort=(a,b)=>(FR_URG.indexOf(b.urgency)-FR_URG.indexOf(a.urgency))||((a.needBy||'9999').localeCompare(b.needBy||'9999'))||b.created.localeCompare(a.created);
+VIEWS.requests=id=>{if(id&&fr(id)&&ui.frShown!==id){ui.frShown=id;setTimeout(()=>M.fr(id),0)}if(!id)ui.frShown=null;const all=frs(),open=all.filter(r=>FR_OPEN(r.status)).sort(frSort);
+ const [tb,cur]=tabs('requests',['Open','Waiting on me','Mine','Done']);
+ const mineWait=open.filter(r=>frMine(r)||(r.status==='New'&&r.assignee===USER.name));
+ const rows=cur==='Open'?open:cur==='Waiting on me'?mineWait:cur==='Mine'?all.filter(r=>r.from===USER.name||r.assignee===USER.name).sort(frSort):all.filter(r=>!FR_OPEN(r.status)).sort((a,b)=>b.created.localeCompare(a.created));
+ return phead('Part requests','Need something found? Ask here instead of by text. How many, what it’s for and when it’s needed are on every request, questions and answers stay with it, and the team gets an email for each update.',btn(ic('plus',16)+' Request a part','fr-new',{},'primary'))
+  +kpis([{l:'New, nobody on it',v:open.filter(r=>r.status==='New').length,c:open.some(r=>r.status==='New')?'dn':'up'},{l:'Being worked on',v:open.filter(r=>!['New','Waiting on requester'].includes(r.status)).length},{l:'Waiting on the requester',v:open.filter(r=>r.status==='Waiting on requester').length,s:open.filter(r=>r.status==='Waiting on requester').slice(0,2).map(r=>r.from).join(', ')},{l:'Late',v:open.filter(r=>r.needBy&&dd(r.needBy)<0).length,c:open.some(r=>r.needBy&&dd(r.needBy)<0)?'dn':'up'}])
+  +tb+`<div class="toolbar">${searchBox('frq','Search requests: part, model, customer, person')}<span class="grow"></span></div><section class="panel">${frTable('frq',rows)}</section>`};
+NAV[0][1].splice(2,0,['requests','Part requests','flag']);
+const _navCountsFR=navCounts;navCounts=function(){const c=_navCountsFR();c.requests=frs().filter(r=>r.status==='New'||frMine(r)).length;return c};
+const _attentionFR=attention;attention=function(){const a=_attentionFR();const nw=frs().filter(r=>r.status==='New'),wait=frs().filter(frMine);
+ if(wait.length)a.unshift({tone:'alert',t:`${wait.length} part request${wait.length===1?' needs':'s need'} your answer`,s:wait.slice(0,3).map(r=>r.what).join(', '),to:'requests',tab:['requests','Waiting on me']});
+ if(nw.length)a.unshift({tone:'warn',t:`${nw.length} new part request${nw.length===1?'':'s'}, nobody on ${nw.length===1?'it':'them'} yet`,s:nw.slice(0,3).map(r=>`${num(r.qty)} × ${r.what} (${r.from})`).join(', '),to:'requests',tab:['requests','Open']});return a};
+const _searchIndexFR=searchIndex;searchIndex=function(){const r=_searchIndexFR();frs().forEach(x=>r.push({g:'Part requests',t:`${x.id}, ${x.what}`,s:`${num(x.qty)} ${x.unit||'pcs'} for ${x.forWhat||'–'} · ${x.status}`,k:[x.id,x.what,x.partNo,x.forWhat,x.from,x.assignee,x.specs].join(' '),go:()=>{location.hash='#/requests/'+x.id}}));return r};
+/* dashboard button */
+const _dashFR=VIEWS.dashboard;VIEWS.dashboard=id=>{const h=_dashFR(id);return h.replace(/(<div class="actions">)/,`$1<button type="button" class="btn" data-action="fr-new">${ic('plus',15)} Request a part</button>`)};
+A['fr-go-rfq']=d=>{closeModal();location.hash='#/sourcing/'+d.id};
+
+document.head.insertAdjacentHTML('beforeend','<style>.fr-kv td{padding:6px 8px;vertical-align:top}.fr-kv td.muted{white-space:nowrap;width:1%}</style>');
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
