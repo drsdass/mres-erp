@@ -2432,6 +2432,54 @@ const _renderSort=render;render=function(k){_renderSort(k);if(parse().r!=='purch
 
 A['sort-tab']=d=>{ui.sortTab=d.g;rerender()};
 
+/* ================= Alibaba: only Mass Renewable business gets into the ERP =================
+   The Alibaba account also carries personal chats (hats, perfume, drinkware, pens…). Everyone at M-RES can see the ERP,
+   so a chat is let in only when it is clearly M-RES: the supplier is already in Sourcing, it is about an open RFQ, or it
+   talks about M-RES parts and nothing personal. Everything else is dropped before it is saved or shown to anyone. */
+const PERSONAL_RX=/perfume|cologne|fragrance|parfum|atomizer|\bhats?\b|\bcaps?\b|baseball|trucker|snapback|beanie|headwear|apparel|garment|textile|t-?shirt|hoodie|jersey|embroider|rhinestone|\bpens?\b|ballpoint|drinkware|tumbler|\bcups?\b|straw lid|\bmugs?\b|\bvials?\b|peptide|ghk|lyophili|cosmetic|skin ?care|serum|jewelry|necklace|lingerie|sports? ?wear|socks|\bwigs?\b|clothing|supplements?|gummies|makeup|lipstick|candle|\btoys?\b|sneaker|handbag|purse|wallet/gi;
+const MRES_RX=/\bfans?\b|axial|heater|heating element|contactor|\babb\b|bushing|turbine|coolant|\bpumps?\b|bearing|gear ?box|flange|copper sheath|\bcnc\b|machin|drawing|\bseals?\b|\bmotors?\b|bracket|fitting|sensor|thermistor|capacitor|resistor|\bbrake|\byaw\b|valve|relay|breaker|transformer|\bcables?\b|mass renewable|m-res/gi;
+/* chats Satish confirmed are M-RES, and ones he confirmed are not */
+const ALI_KEEP=['jun han','nanjing linbao','judy huang','xiaorong zhu','sara song','bill li','zejie guo','lorna xie','astrid sun','anna zhang','johnny wu','sati setyowati','shiye ancheng','joy zhang','lucien chen'];
+const ALI_DROP=['anna he','peng poppy','raycrown','hq-ever','hq ever'];
+function ignoredAli(){if(!Array.isArray(S.aliIgnore))S.aliIgnore=[];return S.aliIgnore}
+const aliHash=t=>{let h=5381;for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))>>>0;return 'h'+h.toString(36)};
+const aliCo=s=>normCo(String(s||'')).replace(/\s+(cn|hk|tw|us|in|vn)$/,'');
+const aliKey=s=>{const k=aliCo(s);return k?aliHash(k):''};
+const aliHas=(list,...names)=>names.some(n=>{const t=String(n||'').toLowerCase();return t&&list.some(k=>t.includes(k))});
+function isIgnoredAli(company,name){const ig=ignoredAli();return [company,name].map(aliKey).some(k=>k&&ig.includes(k))}
+function aliSignal(txt){const p=(String(txt).match(PERSONAL_RX)||[]).length,m=(String(txt).match(MRES_RX)||[]).length;return{p,m,mres:m>0&&p===0}}
+/* is this Alibaba conversation M-RES business? */
+function aliIsMres(c){if(aliHas(ALI_DROP,c.company,c.name))return false;if(isIgnoredAli(c.company,c.name))return false;if(aliHas(ALI_KEEP,c.company,c.name))return true;
+ const sp=(S.suppliers||[]).find(s=>!s.demo&&!s.aliAuto&&((c.cid&&s.aliCid===c.cid)||aliCo(s.name)===aliCo(c.company||c.name)));if(sp)return true;
+ if(typeof aliMatchReq==='function'&&aliMatchReq(c,null))return true;
+ return aliSignal([c.company,c.agent&&c.agent.product,c.agent&&c.agent.requirements,...(c.messages||[]).map(m=>m.text)].join(' ')).mres}
+/* the bookmark hands over every chat on the Alibaba page: drop the personal ones before they are saved or shown */
+let aliSkipped=0;
+const _aliRecv=aliReceive;aliReceive=function(payload,how){if(payload&&Array.isArray(payload.conversations)){const all=payload.conversations;const keep=all.filter(aliIsMres);aliSkipped=all.length-keep.length;payload={...payload,conversations:keep}}
+ const r=_aliRecv(payload,how);if(aliSkipped)setTimeout(()=>toast(`${aliSkipped} Alibaba chat${aliSkipped===1?' was':'s were'} left out as not M-RES.`),400);return r};
+const _aliPlanC=aliPlan;aliPlan=function(convs){return _aliPlanC((convs||[]).filter(aliIsMres))};
+/* clear out what came in before this rule existed. Runs once, quietly; the audit log keeps counts only, no names */
+function aliPurge(){if(!S||S.aliPurged==='v2')return;const sups=(S.suppliers||[]).filter(s=>!s.demo);
+ const fromAli=s=>s.aliCid||/Alibaba/i.test(s.notes||'')||(S.smsgs||[]).some(m=>m.supplier===s.id&&m.channel==='Alibaba');
+ const txt=s=>[s.name,s.notes,...(S.smsgs||[]).filter(m=>m.supplier===s.id).map(m=>m.text),...(S.squotes||[]).filter(q=>q.supplier===s.id).map(q=>(q.part||'')+' '+(q.notes||''))].join(' ');
+ const gone=sups.filter(s=>{if(aliHas(ALI_DROP,s.name,s.contact))return true;if(!fromAli(s)||aliHas(ALI_KEEP,s.name,s.contact))return false;
+  if((S.pos||[]).some(p=>p.vendor===s.vendor&&s.vendor))return false;return !aliSignal(txt(s)).mres});
+ const ids=new Set(gone.map(s=>s.id));
+ const rq=(S.srcReqs||[]).filter(r=>!r.demo&&(r.alibabaUrl||/Alibaba/i.test(r.notes||''))&&aliSignal(r.title+' '+String(r.specs||'').slice(0,400)).p>0&&!aliSignal(r.title).m);
+ const nm=(S.smsgs||[]).filter(m=>ids.has(m.supplier)).length,nq=(S.squotes||[]).filter(q=>ids.has(q.supplier)).length;
+ gone.forEach(s=>{const k=aliKey(s.name);if(k&&!ignoredAli().includes(k))ignoredAli().push(k)});
+ S.smsgs=(S.smsgs||[]).filter(m=>!ids.has(m.supplier));S.squotes=(S.squotes||[]).filter(q=>!ids.has(q.supplier));S.suppliers=(S.suppliers||[]).filter(s=>!ids.has(s.id));
+ if(rq.length){const rid=new Set(rq.map(r=>r.id));S.srcReqs=S.srcReqs.filter(r=>!rid.has(r.id));(S.squotes||[]).forEach(q=>{if(rid.has(q.req))q.req=null});(S.smsgs||[]).forEach(m=>{if(rid.has(m.req))m.req=null})}
+ /* scrub names of removed suppliers out of the audit log too */
+ const nms=gone.flatMap(s=>[s.name,s.contact]).filter(x=>x&&x.length>3);if(nms.length&&Array.isArray(S.audit))S.audit=S.audit.filter(a=>!nms.some(n=>JSON.stringify(a).includes(n)));
+ S.aliPurged='v2';if(gone.length||rq.length)log(`Removed ${gone.length} non-M-RES Alibaba chats (${nm} messages, ${nq} quotes)${rq.length?` and ${rq.length} RFQs`:''}`);save();if(typeof rerender==='function')rerender()}
+setTimeout(function w(){if(!S||!S.suppliers||(typeof CLOUD!=='undefined'&&CLOUD&&!USER))return setTimeout(w,3000);try{aliPurge()}catch(e){console.error(e)}},2500);
+/* owners can still keep a chat out by hand, from the supplier's page */
+A['ali-forget']=d=>{if(!isOwner())return;const s=(S.suppliers||[]).find(x=>x.id===d.id);if(!s||!confirmBox2(`Remove ${s.name} and all its messages and quotes from the ERP? Future Alibaba imports will skip it.`))return;
+ const k=aliKey(s.name);if(k&&!ignoredAli().includes(k))ignoredAli().push(k);S.smsgs=(S.smsgs||[]).filter(m=>m.supplier!==s.id);S.squotes=(S.squotes||[]).filter(q=>q.supplier!==s.id);S.suppliers=S.suppliers.filter(x=>x!==s);
+ log('Removed a non-M-RES Alibaba chat');save();location.hash='#/sourcing';rerender()};
+const _mSupAc=M.sup;M.sup=id=>{_mSupAc(id);if(!isOwner())return;const f=$('.modal footer, .modal .foot, .modal .mfoot');if(f&&!f.querySelector('[data-action="ali-forget"]')){const b=document.createElement('button');b.type='button';b.className='btn ghost';b.dataset.action='ali-forget';b.dataset.id=id;b.textContent='Not M-RES: remove';b.title='Removes this supplier and its chats from the ERP for everyone';f.prepend(b)}};
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
