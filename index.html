@@ -2706,6 +2706,54 @@ document.addEventListener('click',e=>{if(e.defaultPrevented||e.button)return;con
  const k=row.dataset.pk,i=k.indexOf(':');const scope=row.closest('table, ul, section')||document;const list=[...scope.querySelectorAll('[data-pk]')].map(x=>x.dataset.pk);
  PK={kind:k.slice(0,i),id:k.slice(i+1),list};pkShow()},true);
 
+/* ================= one row per supplier in Triage, not one per message ================= */
+const TRI_JUNK=/\s*(Help Center|Blog)\s*\|.*$|\s*Reply to supplier.*$|\s*Pause emails\b.*$|^Satish,?\s+\S+\s+(has\s+)?replied to you\s*/gi;
+function triSuggest(sid,items){const open=(S.srcReqs||[]).filter(r=>r.status==='Open');
+ const used=[...new Set([...(S.smsgs||[]),...(S.squotes||[])].filter(m=>m.supplier===sid&&m.req&&open.some(r=>r.id===m.req)).map(m=>m.req))];if(used.length===1)return{id:used[0],why:'their other messages are on this RFQ'};
+ const txt=' '+items.map(x=>(x.text||'')+' '+(x.part||'')).join(' ').toLowerCase().replace(/[^a-z0-9]+/g,' ')+' ';
+ const sc=open.map(r=>{const w=String(r.title||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(w=>w.length>3&&!['with','from','replacement','pieces','part'].includes(w));return{r,n:w.filter(x=>txt.includes(' '+x+' ')).length}}).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+ if(sc.length&&(sc.length===1||sc[0].n>sc[1].n))return{id:sc[0].r.id,why:'the messages mention “'+sc[0].r.title+'”'};return null}
+triageView=function(){const ms=(S.smsgs||[]).filter(m=>!m.req&&m.dir==='in'),qs=(S.squotes||[]).filter(q=>!q.req&&liveQ(q));const by=new Map();
+ [...ms,...qs].forEach(x=>{if(!by.has(x.supplier))by.set(x.supplier,[]);by.get(x.supplier).push(x)});
+ const groups=[...by.entries()].map(([sid,items])=>{const t=x=>x.t||(x.date?x.date+'T12:00:00Z':'');items.sort((a,b)=>t(a)<t(b)?1:-1);return{sid,items,last:t(items[0])}}).sort((a,b)=>a.last<b.last?1:-1);
+ const openR=(S.srcReqs||[]).filter(r=>r.status==='Open');
+ const rows=groups.map(g=>{const s=sup(g.sid)||{name:'Supplier'};const nm=g.items.filter(x=>x.text!=null).length,nq=g.items.length-nm;const sg=triSuggest(g.sid,g.items);
+  const prev=g.items.filter(x=>x.text!=null).slice(0,2).map(x=>`<div style="overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(String(x.text).replace(TRI_JUNK,'').trim())}</div>`).join('');
+  const qtxt=g.items.filter(x=>x.text==null).map(q=>`${unitCost(q.unitPrice)}${q.incoterm?' '+q.incoterm:''}${q.moq?', MOQ '+q.moq:''}`).join(' · ');
+  const first=g.items[0];const k=(first.text!=null?'sm:':'sq:')+first.id;
+  return `<tr data-tri="${esc(g.sid)}"><td class="nowrap">${fds(g.last.slice(0,10))}</td><td><button class="link" data-action="sup" data-id="${esc(g.sid)}"><b>${esc(s.name)}</b></button><div class="muted sm">${esc(s.contact||'')}</div></td>
+   <td class="sm">${nm?`${nm} message${nm===1?'':'s'}`:''}${nm&&nq?'<br>':''}${nq?`<b>${nq} quote${nq===1?'':'s'}</b>`:''}</td>
+   <td class="sm" style="max-width:420px;cursor:pointer" data-tri-read="${esc(k)}">${prev}${qtxt?`<div><b>${esc(qtxt)}</b></div>`:''}<button type="button" class="link sm" data-tri-read="${esc(k)}">Read the whole conversation</button></td>
+   <td style="min-width:240px"><select data-tri-pick="${esc(g.sid)}" style="width:100%"><option value="">Choose an RFQ</option>${openR.map(r=>opt(r.id,`${r.no||r.id}, ${r.title}`,sg&&sg.id===r.id)).join('')}</select>${sg?`<div class="sm muted" style="margin-top:3px">Suggested: ${esc(sg.why)}</div>`:''}</td>
+   <td class="n nowrap">${btn(`Assign all ${g.items.length}`,'tri-all',{sid:g.sid},'sm primary')}<div style="margin-top:4px">${btn('New RFQ','tri-new',{k:(first.text!=null?'m|':'q|')+first.id},'sm ghost')}${isOwner()?btn('Not M-RES','ali-forget',{id:g.sid},'sm ghost'):''}</div></td></tr>`});
+ return `<p class="muted" style="margin-top:0;max-width:85ch">Supplier conversations not yet on an RFQ, one row per supplier with all their messages and quotes together. Read the conversation if you need to, pick the RFQ (the ERP suggests one when it can), and <b>Assign all</b>.</p>
+ <section class="panel">${table('triage2',['Latest','Supplier','What’s waiting','Latest messages','Assign to RFQ',''],rows,'Everything is matched to an RFQ.')}</section>`};
+A['tri-all']=d=>{const rid=($(`[data-tri-pick="${typeof CSS!=="undefined"&&CSS.escape?CSS.escape(d.sid):d.sid}"]`)||{}).value;if(!rid)return toast('Choose an RFQ first.',true);const r=sreq(rid);
+ const items=[...(S.smsgs||[]).filter(m=>m.supplier===d.sid&&!m.req),...(S.squotes||[]).filter(q=>q.supplier===d.sid&&!q.req&&liveQ(q))];items.forEach(x=>x.req=rid);
+ log(`Assigned ${items.length} messages and quotes from ${sup(d.sid).name} to ${r.no||r.id}`,[{f:'RFQ',from:'Unmatched',to:r.no||r.id}]);save();toast(`${items.length} assigned to ${r.no||r.id}`);rerender()};
+document.addEventListener('click',e=>{const el=e.target.closest&&e.target.closest('[data-tri-read]');if(!el||e.target.closest('select,a')||(e.target.closest('button')&&!e.target.closest('button[data-tri-read]')))return;
+ const list=$$('#view [data-tri] td[data-tri-read]').map(x=>x.dataset.triRead);const k=el.dataset.triRead,i=k.indexOf(':');PK={kind:k.slice(0,i),id:k.slice(i+1),list};pkShow()});
+document.addEventListener('change',e=>{if(e.target.dataset&&e.target.dataset.triPick)e.stopPropagation()},true);
+
+/* ================= tidy what is already stored ================= */
+function triTidyData(){if(!S||!Array.isArray(S.smsgs))return;let n=0;
+ /* "suppliers" made from a sentence ("factory technicians also spent a lot of time…") */
+ (S.suppliers||[]).filter(s=>/^[a-z]|[?!]|\b(Can I|you|we|please)\b/.test(s.name||'')||/^Satish\b/.test(s.name||'')).forEach(j=>{
+  const txt=[j.name,j.contact,...S.smsgs.filter(m=>m.supplier===j.id).map(m=>m.text)].join(' ');
+  const who=((txt.match(/\[New message\]\s*([^:]{2,40}):/)||[])[1]||(txt.match(/Satish,?\s+(\S+)\s+(?:has\s+)?replied/)||[])[1]||j.contact||'').toLowerCase().trim();if(!who)return;
+  const hit=(S.suppliers||[]).filter(x=>x!==j&&String(x.contact||'').toLowerCase().split(/\s+/)[0]===who.split(/\s+/)[0]);if(hit.length!==1)return;const t=hit[0];
+  S.smsgs.forEach(m=>{if(m.supplier===j.id)m.supplier=t.id});(S.squotes||[]).forEach(q=>{if(q.supplier===j.id)q.supplier=t.id});S.suppliers=S.suppliers.filter(x=>x!==j);n++});
+ /* footer junk on message text */
+ S.smsgs.forEach(m=>{const t=String(m.text||'').replace(TRI_JUNK,'').trim();if(t&&t!==m.text){m.text=t;n++}});
+ /* the same message twice (once from the Alibaba button, once from the email) */
+ const seen=new Map();S.smsgs=S.smsgs.filter(m=>{const k=m.supplier+'|'+m.dir+'|'+String(m.text||'').replace(/\s+/g,' ').trim().toLowerCase();const t=Date.parse(m.t)||0;const p=seen.get(k);
+  if(p!=null&&Math.abs(p.t-t)<36*3600e3){if(!p.m.req&&m.req)p.m.req=m.req;n++;return false}seen.set(k,{t,m});return true});
+ if(n){save();if(typeof rerender==='function')rerender()}}
+setTimeout(function w(){if(!S||!S.smsgs||(typeof CLOUD!=='undefined'&&CLOUD&&!USER))return setTimeout(w,3000);try{triTidyData()}catch(e){console.error(e)}},6000);
+
+/* Alibaba notification emails already filed in Sourcing don't need sorting again */
+const _sortQueuePK=sortQueue;sortQueue=function(){const filed=new Set((S.smsgs||[]).map(m=>m.emailId).filter(Boolean));return _sortQueuePK().filter(m=>!filed.has(m.id))};
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
