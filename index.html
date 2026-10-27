@@ -2293,6 +2293,65 @@ const _renderRich=render;render=function(k){_renderRich(k);if(parse().r!=='inbox
 A['rich-toggle']=d=>{ui.richOn[d.k]=d.on!=='1';rerender()};
 (function(){const st=document.createElement('style');st.textContent=`.rich-frame{width:100%;border:0;min-height:160px;background:#fff;border-radius:6px;display:block}.rich-tg{margin-left:auto}.promo-bar{all:unset;cursor:pointer;display:block;width:100%;box-sizing:border-box;padding:8px 12px;font-size:12.5px;color:var(--ink-3);background:var(--surface-2);border-bottom:1px solid var(--line)}.promo-bar:hover{color:var(--ink)}`;document.head.appendChild(st)})();
 
+/* ================= Deal model: every quote turned into a delivered cost for the quantity you need, so the cheapest real deal wins ================= */
+const PAY_METHODS=['Alibaba (card)','Alibaba (wire/TT)','Wire (TT)','PayPal','Net terms'];
+function dealDefaults(r){return{qty:+r.qty||1,duty:+r.duty||0,customs:r.customs!=null?+r.customs:35,inland:r.inland!=null?+r.inland:0,cardFee:r.cardFee!=null?+r.cardFee:2.99,wireFee:r.wireFee!=null?+r.wireFee:35,paypalFee:r.paypalFee!=null?+r.paypalFee:4.4,freight:+r.freight||0}}
+function payOf(q){return q.pay||(q.channel==='Alibaba'?'Alibaba (card)':'Wire (TT)')}
+/* the whole cost of buying what we need from this quote, delivered to us */
+function dealCost(q,r,qtyOverride){const a=dealDefaults(r||{});const need=Math.max(1,+qtyOverride||a.qty);const units=Math.max(need,+q.moq||0);const price=tierPrice(q,units);if(price==null)return null;
+ const goods=price*units,inc=(q.incoterm||'').toUpperCase(),all=inc==='DDP',door=all||inc==='DAP';const flags=[];
+ let ship,shipEst=false;if(q.shipTotal!=null&&q.shipTotal!=='')ship=+q.shipTotal;else if(q.shipPerUnit!=null&&q.shipPerUnit!=='')ship=+q.shipPerUnit*units;else if(door)ship=0;else{ship=a.freight*units;shipEst=true}
+ if(shipEst)flags.push(a.freight?`shipping not quoted, using your estimate of ${unitCost(a.freight)}/unit`:'shipping not quoted');
+ if(inc==='EXW')flags.push('EXW: you arrange pickup at the factory');
+ const dom=/^(US|USA|United States)$/i.test(String(sup(q.supplier).country||''));
+ const duty=all||dom?0:goods*a.duty/100,customs=all||dom?0:a.customs,inland=door?0:a.inland;
+ const pay=payOf(q),feePct=pay==='Alibaba (card)'?a.cardFee:pay==='PayPal'?a.paypalFee:0,feeFlat=/wire|TT/i.test(pay)?a.wireFee:0;const fee=(goods+ship)*feePct/100+feeFlat;
+ const total=goods+ship+duty+customs+inland+fee;if(units>need)flags.push(`MOQ ${num(units)}: buying ${num(units-need)} extra`);
+ const s=sup(q.supplier);if(s.verified===false)flags.push('supplier not verified');const rq=r||{};if(rq.needBy&&q.leadDays!=null&&dd(iso(addDays(T0,+q.leadDays)))>dd(rq.needBy))flags.push('arrives after the needed-by date');
+ return{need,units,price,goods,ship,shipEst,duty,customs,inland,fee,pay,total,perNeed:total/need,perUnit:total/units,inc:inc||'?',flags}}
+/* every screen that shows "landed" now uses the full deal model */
+landed=function(q){const r=sreq(q.req);if(!r){const p=tierPrice(q,q.moq||1);return p==null?null:p+(q.shipPerUnit||0)}const d=dealCost(q,r);return d?d.perNeed:null};
+
+/* the comparison panel on each RFQ */
+function dealPanel(id){const r=sreq(id);if(!r)return'';const a=dealDefaults(r);const qs=reqQuotes(id).filter(liveQ).map(q=>({q,d:dealCost(q,r)})).filter(x=>x.d).sort((x,y)=>x.d.total-y.d.total);
+ const ass=`<div class="deal-ass"><b>Assumptions</b>
+  <label>Need <input type="number" min="1" data-deal="qty" value="${a.qty}"> units</label>
+  <label>Duty / tariff <input type="number" min="0" step="0.1" data-deal="duty" value="${a.duty}">%</label>
+  <label>Customs + broker <input type="number" min="0" step="1" data-deal="customs" value="${a.customs}">$ per shipment</label>
+  <label>Port or airport to us <input type="number" min="0" step="1" data-deal="inland" value="${a.inland}">$ per shipment</label>
+  <label>Shipping estimate if not quoted <input type="number" min="0" step="0.01" data-deal="freight" value="${a.freight}">$ per unit</label>
+  <label>Card fee <input type="number" min="0" step="0.01" data-deal="cardFee" value="${a.cardFee}">%</label>
+  <label>Wire fee <input type="number" min="0" step="1" data-deal="wireFee" value="${a.wireFee}">$</label></div>`;
+ if(!qs.length)return `<section class="panel mb deal"><div class="ph"><h3>Best deal</h3></div><div class="pb">${ass}<p class="muted sm" style="margin:8px 0 0">No quotes yet. As quotes come in, each one is turned into a delivered cost here.</p></div></section>`;
+ const best=qs[0].d.total;const med=x=>x.shipEst?`<span title="Estimate, not quoted" style="color:#9A6210">${$f2(x.ship)}*</span>`:$f2(x.ship);
+ const rows=qs.map(({q,d},i)=>{const s=sup(q.supplier);return `<tr class="${i===0?'deal-best':''}"><td class="n">${i===0?chip('Best','ok'):i+1}</td><td><b>${esc(s.name)}</b><div class="muted sm">${esc([s.country,s.verified?'verified':'',q.channel].filter(Boolean).join(' · '))}</div>${d.flags.map(f=>`<div class="sm deal-flag">⚠ ${esc(f)}</div>`).join('')}</td>
+  <td class="nowrap">${chip(d.inc,d.inc==='DDP'?'ok':'plain')}<div class="muted sm">${esc(d.pay)}</div></td><td class="n">${unitCost(d.price)}<div class="muted sm">× ${num(d.units)}</div></td><td class="n">${$f2(d.goods)}</td><td class="n">${med(d)}</td><td class="n">${d.duty?$f2(d.duty):'–'}</td><td class="n">${d.customs+d.inland?$f2(d.customs+d.inland):'–'}</td><td class="n">${d.fee?$f2(d.fee):'–'}</td>
+  <td class="n"><b>${$f2(d.total)}</b></td><td class="n"><b>${unitCost(d.perNeed)}</b>${i>0?`<div class="sm" style="color:var(--alert)">+${$f2(d.total-best)}</div>`:''}</td><td class="n">${q.leadDays!=null?q.leadDays+' d':'–'}</td>
+  <td class="n nowrap">${btn('Edit terms','deal-edit',{id:q.id},'sm')}${r.status==='Open'&&q.status!=='Awarded'?' '+btn('Award','q-award',{id:q.id},'sm'+(i===0?' primary':'')):''}</td></tr>`});
+ const top=qs[0],second=qs[1];const why=second?`<b>${esc(sup(top.q.supplier).name)}</b> is ${$f2(second.d.total-top.d.total)} cheaper delivered than the next best (${esc(sup(second.q.supplier).name)}) for ${num(a.qty)} units: ${unitCost(top.d.perNeed)} vs ${unitCost(second.d.perNeed)} each, everything included.`:'';
+ return `<section class="panel mb deal"><div class="ph"><h3>Best deal, delivered to us</h3><span class="muted sm">Price × quantity bought + shipping + duty + customs + delivery + payment fees, divided by what you need</span></div><div class="pb">${ass}${why?`<p class="deal-why">${why}${top.d.flags.length?` Check: ${esc(top.d.flags.join('; '))}.`:''}</p>`:''}</div>
+  ${table('deal-'+id,['#','Supplier','Terms','#Price','#Goods','#Shipping','#Duty','#Customs + delivery','#Pay fees','#Total delivered','#Per unit','#Lead',''],rows)}<div class="pb muted sm">* Shipping estimated, not quoted: ask the supplier for a shipping quote to your address, or DDP. DDP and DAP prices include delivery; DDP also includes duty and customs.</div></section>`}
+const $f2=n=>'$'+(Math.round(n*100)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+document.addEventListener('change',e=>{const t=e.target;if(!t.dataset||!t.dataset.deal)return;const id=parse().id,r=id&&sreq(id);if(!r)return;e.stopPropagation();const k=t.dataset.deal,v=t.value===''?null:Math.max(0,+t.value);
+ const was=r[k];r[k]=k==='qty'?Math.max(1,Math.round(v||1)):v;log(`Changed the deal assumptions on ${r.no||r.id}`,[{f:{qty:'Quantity',duty:'Duty %',customs:'Customs + broker $',inland:'Port to us $',freight:'Shipping estimate $/unit',cardFee:'Card fee %',wireFee:'Wire fee $'}[k],from:fmtV(was),to:fmtV(r[k])}]);save();rerender()},true);
+/* edit a quote's deal terms: price, MOQ, incoterm, shipping, payment */
+A['deal-edit']=d=>{const q=byId(S.squotes,d.id);if(!q)return;const s=sup(q.supplier);
+ modal(`Deal terms: ${s.name}`,`<div class="fg">${fld('Unit price (USD)',inp('unitPrice',q.unitPrice,'type="number" min="0" step="0.0001"'))}${fld('MOQ',inp('moq',q.moq??'','type="number" min="0"'))}
+  ${fld('Price breaks (qty:price, comma separated)',inp('tiers',(q.tiers||[]).map(t=>`${t.qty}:${t.price}`).join(', '),'placeholder="e.g. 500:3.10, 1000:2.85"'),true)}
+  ${fld('Terms (Incoterm)',`<select name="incoterm">${['','EXW','FOB','FCA','CFR','CIF','DAP','DDP'].map(x=>opt(x,x||'Not stated',x===(q.incoterm||''))).join('')}</select>`)}${fld('Payment',`<select name="pay">${PAY_METHODS.map(x=>opt(x,x,x===payOf(q))).join('')}</select>`)}
+  ${fld('Shipping quoted, total for the order ($)',inp('shipTotal',q.shipTotal??'','type="number" min="0" step="0.01" placeholder="e.g. 85"'))}${fld('…or per unit ($)',inp('shipPerUnit',q.shipTotal!=null&&q.shipTotal!==''?'':(q.shipPerUnit??''),'type="number" min="0" step="0.01"'))}
+  ${fld('Shipping method',inp('shipVia',q.shipVia||'','placeholder="e.g. DHL express, sea freight"'))}${fld('Lead time incl. shipping (days)',inp('leadDays',q.leadDays??'','type="number" min="0"'))}
+  ${fld('Sample cost ($)',inp('sampleCost',q.sampleCost??'','type="number" min="0" step="0.01"'))}${fld('Notes',inp('notes',q.notes||''),true)}</div>
+  <p class="muted sm">For Alibaba quotes, the shipping cost is on the order or quotation page (it changes by shipping method). DDP means the supplier delivers to your door with duty paid; it is usually the simplest to compare.</p>`,{wide:true,label:'Save terms',submit:v=>{
+   const n=k=>v[k]===''?null:+v[k];const tiers=String(v.tiers||'').split(',').map(x=>x.split(':').map(y=>+y.trim())).filter(p=>p.length===2&&p[0]>0&&p[1]>=0).map(([qty,price])=>({qty,price}));
+   const nv={unitPrice:n('unitPrice'),moq:n('moq'),tiers,incoterm:v.incoterm,pay:v.pay,shipTotal:n('shipTotal'),shipPerUnit:n('shipTotal')!=null?null:n('shipPerUnit'),shipVia:v.shipVia.trim(),leadDays:n('leadDays'),sampleCost:n('sampleCost'),notes:v.notes.trim()};
+   const ch=Object.keys(nv).filter(k=>JSON.stringify(q[k]??null)!==JSON.stringify(nv[k]??null)).map(k=>({f:k,from:fmtV(Array.isArray(q[k])?q[k].map(t=>t.qty+':'+t.price):q[k]),to:fmtV(Array.isArray(nv[k])?nv[k].map(t=>t.qty+':'+t.price):nv[k])}));
+   Object.assign(q,nv);if(ch.length)log(`Updated deal terms from ${s.name} (${q.id})`,ch);toast('Terms saved')}})};
+/* put the panel on the RFQ page, above the quote list; and an Edit terms button on each quote row */
+const _srcDeal=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcDeal(id);if(!id||!S.srcReqs||!sreq(id))return h;const k=h.indexOf('data-key="qsort"');const i=k>0?h.lastIndexOf('<div class="toolbar">',k):-1;const p=dealPanel(id);return i>0?h.slice(0,i)+p+h.slice(i):h+p};
+(function(){const st=document.createElement('style');st.textContent=`.deal-ass{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:12.5px;color:var(--ink-2)}.deal-ass b{color:var(--ink);font-size:13px}.deal-ass label{display:inline-flex;align-items:center;gap:4px}.deal-ass input{width:70px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit}
+.deal-why{margin:10px 0 0;padding:8px 12px;background:var(--ok-soft);border-radius:8px;font-size:13.5px}table[data-tbl^="deal-"] td:nth-child(2){min-width:240px}td .deal-flag{color:#9A6210;max-width:300px;white-space:normal;line-height:1.35;margin-top:2px}tr.deal-best td{background:color-mix(in srgb,var(--ok-soft) 55%,transparent)}`;document.head.appendChild(st)})();
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
