@@ -759,10 +759,10 @@ IC.mail='<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2
 IC.phone='<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>';
 const INBOX='info@massrenewable.com';
 const EM_STATUS=['New','Open','Waiting on customer','Closed'];
-const EM_CATS=['Parts order','Quote request','Order status','Project inquiry','Service request','Billing','Vendor','Other'];
+const EM_CATS=['Parts order','Quote request','Order status','Project inquiry','Service request','Billing','Vendor','Other','Promotions'];
 const owners=()=>TEAM;
 const lastMsg=m=>m.thread[m.thread.length-1];
-const needsReply=m=>m.status!=='Closed'&&lastMsg(m).dir==='in'&&m.cat!=='Vendor';
+const needsReply=m=>m.status!=='Closed'&&lastMsg(m).dir==='in'&&m.cat!=='Vendor'&&m.cat!=='Promotions';
 const hrsSince=t=>(Date.now()-new Date(t))/36e5;
 const hrsTxt=h=>h<1?Math.max(1,Math.round(h*60))+' min':h<48?Math.round(h)+' h':Math.round(h/24)+' days';
 function firstResp(m){const o=m.thread.find(x=>x.dir==='out');return o?(new Date(o.t)-new Date(m.received))/36e5:null}
@@ -801,7 +801,7 @@ VIEWS.inbox=id=>{
  const fr=all.map(firstResp).filter(x=>x!=null).sort((a,b)=>a-b),med=fr.length?fr[Math.floor(fr.length/2)]:0;
  const sold=sum(all.flatMap(m=>m.links).filter(l=>l.t==='order'),l=>{const o=byId(S.orders,l.id);return o?oRev(o):0});
  const f=ui.emF||'All',cat=ui.emCat||'All',box=ui.emBox||'All inboxes';
- const ls=all.filter(m=>(f==='All'||(f==='Needs reply'&&needsReply(m))||(f==='Unassigned'&&!m.owner&&m.status!=='Closed')||(f==='Mine'&&m.owner===USER.name&&m.status!=='Closed')||(f==='Closed'&&m.status==='Closed'))&&(cat==='All'||m.cat===cat)&&(box==='All inboxes'||boxOf(m)===box)).sort((a,b)=>lastMsg(a).t<lastMsg(b).t?1:-1);
+ const ls=all.filter(m=>(cat==='Promotions'||m.cat!=='Promotions')&&(f==='All'||(f==='Needs reply'&&needsReply(m))||(f==='Unassigned'&&!m.owner&&m.status!=='Closed')||(f==='Mine'&&m.owner===USER.name&&m.status!=='Closed')||(f==='Closed'&&m.status==='Closed'))&&(cat==='All'||m.cat===cat)&&(box==='All inboxes'||boxOf(m)===box)).sort((a,b)=>lastMsg(a).t<lastMsg(b).t?1:-1);
  const sel=id?byId(all,id):null;if(sel&&!sel.read){sel.read=true;save()}
  const li=m=>{const h=hrsSince(lastMsg(m).t),late=needsReply(m)&&h>4;return `<a class="im ${sel&&sel.id===m.id?'on':''} ${m.read?'':'unread'}" href="#/inbox/${m.id}" data-fi="${esc((m.fromName+' '+m.company+' '+m.subject+' '+m.id+' '+m.links.map(l=>l.id).join(' ')).toLowerCase())}"><div class="r1"><span class="nm">${m.channel==='Phone'?ic('phone',13)+' ':''}${esc(m.fromName)}${inboxTag(m)}${isVendorMail(m)?supChip():m.acct?'':' <span class="chip plain" style="font-size:11px;padding:0 5px">New contact</span>'}</span><span class="${late?'late':''}">${hrsTxt(h)}</span></div><div class="s">${esc(m.subject)}</div><div class="r1"><span class="p">${esc(m.company)}</span><span>${chip(m.status)}</span></div><div class="r1 sm muted"><span>${m.cat}</span><span>${m.owner?esc(m.owner):'<span style="color:var(--alert)">Unassigned</span>'}</span></div></a>`};
  let det='<div class="empty" style="padding:80px 20px">Select an email to read it, assign it and turn it into a quote or order.</div>';
@@ -2233,8 +2233,8 @@ setTimeout(function w(){if(typeof CLOUD==='undefined'||!CLOUD||!S||!USER||!USER.
 /* ================= inbox: tidy messy email text, delete to Trash (30 days), block a sender ================= */
 const ENT2={nbsp:' ',amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",zwnj:'',zwj:'',shy:'',lrm:'',rlm:'',ndash:'–',mdash:'—',hellip:'…',rsquo:'’',lsquo:'‘',rdquo:'”',ldquo:'“',bull:'•',middot:'·',copy:'©',reg:'®',trade:'™',euro:'€',pound:'£',deg:'°',times:'×'};
 function tidyMail(s){return String(s||'').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,(m,k)=>k[0]==='#'?(()=>{const n=k[1].toLowerCase()==='x'?parseInt(k.slice(2),16):+k.slice(1);try{return String.fromCodePoint(n)}catch(e){return''}})():(k.toLowerCase() in ENT2?ENT2[k.toLowerCase()]:m))
- .replace(/[​-‏⁠﻿͏­؜᠎]/g,'').replace(/\S*BannerStart[\s\S]*?\S*BannerEnd\s*/g,'').replace(/https?:\/\/urldefense\.(?:proofpoint\.)?com\/[^\s<>"\]]+/gi, u => { let m = u.match(/\/v2\/url\?u=([^&]+)/i); if (m) return m[1].replace(/_/g, '/').replace(/-([0-9A-F]{2})/g, (x, h) => String.fromCharCode(parseInt(h, 16))); m = u.match(/\/v3\/__(.+?)__;/i); return m ? m[1] : u; }).replace(/<(?:mailto|tel):[^>\s]*>/gi, '').replace(/(\S)<https?:\/\/[^>\s]+>/g, '$1').replace(/\[(?:cid:[^\]]+|[^\]\n]{1,100}\.(?:png|jpe?g|gif|bmp|webp))\]/gi, '').replace(/[ \t ]+$/gm,'').replace(/\n{3,}/g,'\n\n').trim()}
-const MESSY=/&(zwnj|nbsp|#\d+|#x[0-9a-f]+|amp|zwj);|BannerStart|urldefense\.|<(mailto|tel):|\[cid:|\S<https?:\/\/|\[[^\]\n]{1,100}\.(png|jpe?g|gif)\]|[​-‍﻿͏]/i;
+ .replace(/[​-‏⁠﻿͏­؜᠎]/g,'').replace(/\S*BannerStart[\s\S]*?\S*BannerEnd\s*/g,'').replace(/https?:\/\/urldefense\.(?:proofpoint\.)?com\/[^\s<>"\]]+/gi, u => { let m = u.match(/\/v2\/url\?u=([^&]+)/i); if (m) return m[1].replace(/_/g, '/').replace(/-([0-9A-F]{2})/g, (x, h) => String.fromCharCode(parseInt(h, 16))); m = u.match(/\/v3\/__(.+?)__;/i); return m ? m[1] : u; }).replace(/<(?:mailto|tel):[^>\s]*>/gi, '').replace(/\s*<\[*https?:\/\/[^>\s]+?\]*>/g, '').replace(/\bhttps?:\/\/([^\/\s<>]+)[^\s<>]{60,}/g, (u, host) => '[' + host.replace(/^www\./, '') + ' link]').replace(/\[(?:cid:[^\]]+|[^\]\n]{1,100}\.(?:png|jpe?g|gif|bmp|webp))\]/gi, '').replace(/[ \t ]+$/gm,'').replace(/\n{3,}/g,'\n\n').trim()}
+const MESSY=/&(zwnj|nbsp|#\d+|#x[0-9a-f]+|amp|zwj);|BannerStart|urldefense\.|<(mailto|tel):|\[cid:|<\[*https?:\/\/|https?:\/\/[^\s<>]{70,}|\[[^\]\n]{1,100}\.(png|jpe?g|gif)\]|[​-‍﻿͏]/i;
 function tidyAll(){if(!S||!Array.isArray(S.emails))return 0;let n=0;S.emails.forEach(m=>(m.thread||[]).forEach(x=>{if(x.body&&MESSY.test(x.body)){x.body=tidyMail(x.body);n++}}));if(n)save();return n}
 setTimeout(function w(){try{if(tidyAll())rerender()}catch(e){}setTimeout(w,30000)},4000);
 
@@ -2270,6 +2270,28 @@ const _inboxT2=VIEWS.inbox;VIEWS.inbox=id=>{if(ui.emF==='Trash'&&!id){const tr=e
  return /data-action="em-mine"/.test(h)?h.replace(/(<button[^>]*data-action="em-mine"[^>]*>[^<]*<\/button>)/,'$1 '+del):h.replace(/(<select data-em="status"[\s\S]*?<\/select><\/label>)/,'$1'+del)};
 /* sender blocking in the app as well: anything from a blocked address that still arrives is moved to Trash */
 setTimeout(function w2(){try{const bl=(S&&S.mailRules&&S.mailRules.block)||[];if(bl.length){const hit=S.emails.filter(m=>{const f=senderOf(m);return f&&bl.some(b=>b.startsWith('@')?f.endsWith(b):f===b)&&(m.thread||[]).every(x=>x.dir==='in')});if(hit.length){trashMails(hit.map(m=>m.id),'blocked sender');if(parse().r==='inbox')rerender()}}}catch(e){}setTimeout(w2,60000)},9000);
+
+/* promotions: newsletters and marketing (no-reply senders with an unsubscribe link) are filed under Promotions, closed, out of the main list */
+const PROMO_FROM=/(^|[._-])(no-?reply|donotreply|newsletter|news|marketing|promo|offers?|deals|mailer)[@._-]|@(e|em|email|emails|mail|mailer|news|marketing|info)\./i;
+function looksPromo(m){if(!m||m.acct||(m.links||[]).length||(m.thread||[]).some(x=>x.dir==='out'))return false;const f=String(m.from||'');if(/alibaba/i.test(f)&&/quot|rfq|inquir|replied|message/i.test(m.subject||''))return false;
+ return PROMO_FROM.test(f)&&(m.thread||[]).some(x=>/unsubscribe|email preferences|view in browser/i.test(x.body||''))}
+function sortPromos(){if(!S||!Array.isArray(S.emails))return 0;let n=0;S.emails.forEach(m=>{if(m.promoChecked)return;m.promoChecked=true;if(m.cat!=='Promotions'&&looksPromo(m)){m.cat='Promotions';if(m.status!=='Closed')m.status='Closed';m.read=true;n++}});if(n){log(`Moved ${n} newsletter and marketing email${n===1?'':'s'} to Promotions`)}if(S.emails.some(m=>m.promoChecked))save();return n}
+setTimeout(function wp(){try{if(sortPromos()&&parse().r==='inbox')rerender()}catch(e){}setTimeout(wp,60000)},6000);
+/* the inbox list: say how many promotions are tucked away */
+const _inboxPromo=VIEWS.inbox;VIEWS.inbox=id=>{const h=_inboxPromo(id);if((ui.emCat||'All')==='Promotions'||ui.emF==='Trash')return h;const n=S.emails.filter(m=>m.cat==='Promotions').length;if(!n)return h;
+ return h.replace('<div class="ilist">',`<div class="ilist"><button type="button" class="promo-bar" data-action="set" data-key="emCat" data-val="Promotions">${n} newsletter${n===1?'':'s'} and promotion${n===1?'':'s'} filed under Promotions · View</button>`)};
+/* show the original formatting (like Gmail) for newsletters and formatted emails, safely: no scripts, links open in a new tab */
+ui.richOn=ui.richOn||{};
+function richFrame(html){const doc=`<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'; form-action 'none'"><style>body{margin:0;padding:8px;font:14px Arial,sans-serif;color:#111;background:#fff;overflow-x:auto}img{max-width:100%;height:auto}table{max-width:100%!important}</style></head><body>${html}</body></html>`;
+ return `<iframe class="rich-frame" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" srcdoc="${esc(doc)}" onload="try{this.style.height=Math.min(4000,this.contentDocument.documentElement.scrollHeight+12)+'px'}catch(e){}"></iframe>`}
+const _renderRich=render;render=function(k){_renderRich(k);if(parse().r!=='inbox')return;const {id}=parse();const m=id?byId(S.emails,id):null;if(!m)return;
+ $$('#view .idet article.msg').forEach((el,i)=>{const idx=m.thread.length-1-i,x=m.thread[idx];if(!x||!x.html)return;const key=m.id+':'+idx;const on=ui.richOn[key]??!!x.rich;const b=el.querySelector('.b');if(!b)return;
+  if(on){b.innerHTML=richFrame(x.html);b.style.whiteSpace='normal'}
+  const hd=el.querySelector('header');if(hd&&!hd.querySelector('.rich-tg'))hd.insertAdjacentHTML('beforeend',`<button type="button" class="link sm rich-tg" data-action="rich-toggle" data-k="${esc(key)}" data-on="${on?1:0}">${on?'Show as plain text':'Show original formatting'}</button>`)});
+ /* closed conversations have no reply box: still offer Reply and Forward */
+ if(typeof canCompose==='function'&&typeof CLOUD!=='undefined'&&CLOUD&&!$('#view .em-acts')&&!$('#view form[data-form="reply"]')){const g=$('#view .idgrid');if(g)g.insertAdjacentHTML('beforebegin',`<div class="em-acts">${canCompose(m)?btn(ic('mail',15)+' Reply','em-reply',{id:m.id},'primary'):''}${btn('Forward','em-fwd',{id:m.id},'')}</div>`)}};
+A['rich-toggle']=d=>{ui.richOn[d.k]=d.on!=='1';rerender()};
+(function(){const st=document.createElement('style');st.textContent=`.rich-frame{width:100%;border:0;min-height:160px;background:#fff;border-radius:6px;display:block}.rich-tg{margin-left:auto}.promo-bar{all:unset;cursor:pointer;display:block;width:100%;box-sizing:border-box;padding:8px 12px;font-size:12.5px;color:var(--ink-3);background:var(--surface-2);border-bottom:1px solid var(--line)}.promo-bar:hover{color:var(--ink)}`;document.head.appendChild(st)})();
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
