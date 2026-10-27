@@ -2372,8 +2372,10 @@ function suggestFor(m){const T=sxText(m),U=T.toUpperCase(),have=new Set((m.links
  S.pos.forEach(p=>{if(has(p.id))add('po',p.id,95,`mentions ${p.id}`)});
  (S.srcReqs||[]).forEach(r=>{if(r.no&&has(r.no))add('rfq',r.id,95,`mentions ${r.no}`)});
  (S.quotes||[]).forEach(q=>{if(has(q.id))add('quote',q.id,90,`mentions ${q.id}`)});
+ (S.invoices||[]).forEach(i=>{const n=String(i.id||'').trim();if(!n||i.missing)return;if(new RegExp('(invoice|inv\\.?)\\s*(no\\.?|number|#)?\\s*:?\\s*'+n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![0-9])','i').test(T)){const o=S.orders.find(x=>x.invoice===i.id);if(o)add('order',o.id,92,`mentions invoice ${n}`)}});
  S.orders.forEach(o=>{[o.so,o.cpo,o.endPo].filter(Boolean).forEach(ref=>{if(has(ref))add('order',o.id,90,`mentions ${/^\d+$/.test(String(ref))&&ref===o.so?'SO ':'PO '}${ref}`)})});
- const {sp,vd}=whoIs(m);
+ const {sp,vd}=whoIs(m);const grp=sortGroup(m);
+ const ac=sxCust(m);if(ac){const os=S.orders.filter(o=>o.acct===ac.id&&isOpen(o));os.forEach(o=>add('order',o.id,os.length===1?70:50,`${ac.name} has this open order`))}
  if(sp){const rq=[...new Set([...(S.squotes||[]).filter(q=>q.supplier===sp.id).map(q=>q.req),...(S.smsgs||[]).filter(x=>x.supplier===sp.id).map(x=>x.req)].filter(Boolean))].map(sreq).filter(r=>r&&r.status!=='Closed');
   rq.forEach(r=>add('rfq',r.id,rq.length===1?82:68,`${sp.name} quoted on this RFQ`))}
  if(vd){const ps=S.pos.filter(p=>p.vendor===vd.id&&poOpen(p));ps.forEach(p=>add('po',p.id,ps.length===1?80:62,`${vd.name} has this open PO`))}
@@ -2383,12 +2385,26 @@ function suggestFor(m){const T=sxText(m),U=T.toUpperCase(),have=new Set((m.links
   S.orders.filter(o=>isOpen(o)&&o.lines.some(l=>l.sku===it.sku)&&(!m.acct||o.acct===m.acct)).forEach(o=>add('order',o.id,m.acct?72:55,`mentions part ${sku}`))});
  const ew=new Set(sxWords(m.subject+' '+T.slice(0,3000)));
  (S.srcReqs||[]).filter(r=>r.status!=='Closed').forEach(r=>{const tw=[...new Set(sxWords(r.title+' '+(r.specs||'').slice(0,300)))];const hit=tw.filter(w=>ew.has(w));if(hit.length>=2||(hit.length===1&&tw.length<=2&&hit[0].length>=6))add('rfq',r.id,Math.min(76,44+hit.length*10),`same words: ${hit.slice(0,4).join(', ')}`)});
+ const pref={customers:'order',payments:'order',alibaba:'rfq',vendors:'po'}[grp];Object.values(out).forEach(c=>{if(c.t===pref)c.score=Math.min(99,c.score+4)});
  return Object.values(out).sort((a,b)=>b.score-a.score).slice(0,6)}
+/* the four kinds of email: customers and their POs, payments and invoices, Alibaba and overseas suppliers, US vendors we buy from */
+const SORT_GROUPS=[['customers','Customers and their POs'],['payments','Payments and invoices'],['alibaba','Alibaba and overseas suppliers'],['vendors','US vendors'],['other','Other']];
+function sxCust(m){if(m.acct)return acct(m.acct);const f=String(m.from||'').toLowerCase(),dom=SX_FREE.test(f)?'':f.split('@')[1]||'';
+ const ct=(S.contacts||[]).find(c=>(c.email||'').toLowerCase()===f);if(ct)return acct(ct.acct);return dom?S.accounts.find(a=>(a.email||'').toLowerCase().endsWith('@'+dom)):null}
+function sortGroup(m){if(m._grp)return m._grp;const T=(m.subject||'')+' '+((m.thread||[])[0]||{}).body;const f=String(m.from||'').toLowerCase();const {sp,vd}=whoIs(m);const ac=sxCust(m);
+ const pay=/remittance|payment|paid|invoice|\bach\b|wire transfer|accounts payable|\bA\/P\b|statement|past due|overdue|receipt|credit memo|net ?30/i.test(T);
+ const overseas=/alibaba|aliexpress|1688/.test(f)||(sp&&sp.country&&!/^(US|USA)$/i.test(sp.country))||/\.(cn|hk|tw|in|vn|tr|my|th)$/.test(f.split('@')[1]||'');
+ const usVendor=!!vd||(sp&&/^(US|USA)$/i.test(sp.country||''))||m.cat==='Vendor';
+ return pay&&(ac||usVendor||/accounts payable|\bA\/P\b|remittance/i.test(T+' '+(m.fromName||'')))?'payments':overseas?'alibaba':ac||['Parts order','Quote request','Order status','Project inquiry','Service request'].includes(m.cat)?'customers':usVendor?'vendors':pay?'payments':'other'}
 const linkLabel=l=>{if(l.t==='rfq'){const r=sreq(l.id);return r?`RFQ ${r.no||r.id}: ${r.title}`:l.id}if(l.t==='po'){const p=byId(S.pos,l.id);return p?`${p.id}, ${vend(p.vendor).name} (${p.status})`:l.id}if(l.t==='order'){const o=byId(S.orders,l.id);return o?`${oLabel(o)}, ${aname(o.acct)} (${o.status})`:l.id}if(l.t==='quote'){const q=byId(S.quotes,l.id);return q?`Quote ${q.id}, ${aname(q.acct)}`:l.id}return l.id};
 function sortQueue(){return S.emails.filter(m=>!m.sorted&&m.cat!=='Promotions'&&!(m.links||[]).length&&m.channel==='Email').sort((a,b)=>lastMsg(a).t<lastMsg(b).t?1:-1)}
 function applyLink(m,t,id){if(!m.links)m.links=[];if(!m.links.some(l=>l.t===t&&l.id===id))m.links.push({t,id});if((t==='rfq'||t==='po')&&m.cat!=='Vendor'&&m.cat!=='Billing')m.cat='Vendor';m.sorted=true}
 /* the review page */
-VIEWS.sortmail=()=>{const q=sortQueue();ui.sortSel=ui.sortSel||{};const rows=q.slice(0,150).map(m=>{const sg=suggestFor(m),top=sg[0];const pick=ui.sortSel[m.id]??(top&&top.score>=60?top.t+'|'+top.id:'');const x=lastMsg(m)||{};
+VIEWS.sortmail=()=>{const all=sortQueue();ui.sortSel=ui.sortSel||{};const cnt={};all.forEach(m=>{const g=sortGroup(m);cnt[g]=(cnt[g]||0)+1});
+ const tab=ui.sortTab&&ui.sortTab!=='all'?ui.sortTab:'all';const q=tab==='all'?all:all.filter(m=>sortGroup(m)===tab);
+ const tabsH=`<div class="tabs" role="tablist"><button role="tab" class="${tab==='all'?'on':''}" data-action="sort-tab" data-g="all">All <span class="muted">${all.length}</span></button>${SORT_GROUPS.map(([g,l])=>`<button role="tab" class="${tab===g?'on':''}" data-action="sort-tab" data-g="${g}">${l} <span class="muted">${cnt[g]||0}</span></button>`).join('')}</div>`;
+ const tip={customers:'Link each one to the customer’s sales order (their PO number is usually in the subject). No order yet? Open the email and use Turn this into → Sales order.',payments:'Link it to the order it pays for. A customer payment: open the order and Record payment. A vendor invoice: link it to our PO.',alibaba:'Link it to the RFQ it answers. Quotes go on the RFQ, so the Best deal table compares them.',vendors:'Link it to our PO with that vendor (order confirmations, shipping and invoices).',other:'Anything that doesn’t fit: link it if it belongs somewhere, or click Done.'}[tab]||'';
+ const rows=q.slice(0,150).map(m=>{const sg=suggestFor(m),top=sg[0];const pick=ui.sortSel[m.id]??(top&&top.score>=60?top.t+'|'+top.id:'');const x=lastMsg(m)||{};
   const opts=`<option value="">Nothing to link</option>${sg.length?`<optgroup label="Suggested">${sg.map(s=>`<option value="${esc(s.t+'|'+s.id)}" ${pick===s.t+'|'+s.id?'selected':''}>${esc(linkLabel(s))} (${s.score>=80?'strong':s.score>=60?'likely':'possible'})</option>`).join('')}</optgroup>`:''}
    <optgroup label="RFQs">${(S.srcReqs||[]).filter(r=>r.status!=='Closed').map(r=>`<option value="rfq|${esc(r.id)}" ${pick==='rfq|'+r.id&&!sg.some(s=>s.t==='rfq'&&s.id===r.id)?'selected':''}>${esc((r.no||r.id)+' '+r.title)}</option>`).join('')}</optgroup>
    <optgroup label="Vendor POs">${S.pos.filter(poOpen).map(p=>`<option value="po|${esc(p.id)}">${esc(p.id+', '+vend(p.vendor).name)}</option>`).join('')}</optgroup>
@@ -2396,16 +2412,16 @@ VIEWS.sortmail=()=>{const q=sortQueue();ui.sortSel=ui.sortSel||{};const rows=q.s
   const why=top?(sg.find(s=>s.t+'|'+s.id===pick)||top).why.join('; '):'no match found';
   return `<tr data-sort="${esc(m.id)}"><td class="nowrap sm">${fd(String(x.t||m.received||'').slice(0,10))}</td><td style="max-width:420px"><a href="#/inbox/${esc(m.id)}" target="_blank"><b>${esc(m.fromName||m.from)}</b></a>${m.company&&m.company!==m.fromName?` <span class="muted sm">${esc(m.company)}</span>`:''}${inboxTag?' '+inboxTag(m):''}<div>${esc(m.subject||'(no subject)')}</div><div class="muted sm" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(x.body||'').replace(/\s+/g,' ').slice(0,140))}</div></td>
    <td style="min-width:320px"><select data-sort-pick="${esc(m.id)}" style="width:100%">${opts}</select><div class="sm ${top&&top.score>=60?'':'muted'}" style="margin-top:3px">${esc(why)}</div></td>
-   <td class="n nowrap">${btn('Link','sort-one',{id:m.id},'sm primary')} ${btn('Done, nothing to link','sort-skip',{id:m.id},'sm ghost')}</td></tr>`});
- const strong=q.filter(m=>{const t=suggestFor(m)[0];return t&&t.score>=80}).length;
+   <td class="n nowrap">${btn('Link','sort-one',{id:m.id},'sm primary')} ${btn('Done, nothing to link','sort-skip',{id:m.id},'sm ghost')}${tab==='all'?`<div class="muted sm" style="margin-top:4px">${esc((SORT_GROUPS.find(g=>g[0]===sortGroup(m))||[])[1]||'')}</div>`:''}</td></tr>`});
+ const strong=q.filter(m=>{const t=suggestFor(m)[0];return t&&t.score>=80}).length;const strongIds=q.map(m=>m.id);
  return `<a class="crumb" href="#/inbox">${ic('back',16)} Inbox</a>`+phead('Sort emails',`Every email not yet tied to an RFQ, PO, order or quote, newest first, with the ERP’s best guess. Check each guess, then <b>Link</b>. Use <b>Done</b> for emails that don’t belong to anything. Linked emails show on that RFQ, PO or order from then on.`,`${strong?btn(ic('check',15)+` Link all ${strong} strong matches`,'sort-strong',{},'primary'):''}`)
   +kpis([{l:'Left to sort',v:q.length},{l:'Strong matches',v:strong,s:'mentions a PO, RFQ, order or quote number, or a known supplier on one RFQ'},{l:'Already linked',v:S.emails.filter(m=>(m.links||[]).length).length}])
-  +`<section class="panel">${table('sortmail',['Date','Email','Belongs to','' ],rows,'Nothing left to sort. Every email is linked or marked done.')}${q.length>150?`<div class="pb muted sm">Showing the newest 150 of ${q.length}.</div>`:''}</section>`};
+  +tabsH+(tip?`<p class="note" style="margin:0 0 12px">${tip}</p>`:'')+`<section class="panel">${table('sortmail',['Date','Email','Belongs to','' ],rows,'Nothing left to sort. Every email is linked or marked done.')}${q.length>150?`<div class="pb muted sm">Showing the newest 150 of ${q.length}.</div>`:''}</section>`};
 document.addEventListener('change',e=>{const t=e.target;if(!t.dataset||!t.dataset.sortPick)return;e.stopPropagation();ui.sortSel=ui.sortSel||{};ui.sortSel[t.dataset.sortPick]=t.value},true);
 A['sort-one']=d=>{const m=byId(S.emails,d.id);if(!m)return;const v=$(`[data-sort-pick="${CSS&&CSS.escape?CSS.escape(d.id):d.id}"]`)?.value||'';if(!v)return toast('Pick what it belongs to, or click Done.',true);const i=v.indexOf('|'),t=v.slice(0,i),id=v.slice(i+1);
  applyLink(m,t,id);log(`Linked email ${m.id} (${m.fromName||m.from}) to ${linkLabel({t,id})}`);save();toast(`Linked to ${linkLabel({t,id})}`);rerender()};
 A['sort-skip']=d=>{const m=byId(S.emails,d.id);if(!m)return;m.sorted=true;save();rerender()};
-A['sort-strong']=()=>{let n=0;sortQueue().forEach(m=>{const t=suggestFor(m)[0];if(t&&t.score>=80){applyLink(m,t.t,t.id);n++}});if(!n)return;log(`Linked ${n} emails to their RFQs, POs, orders and quotes (strong matches)`);save();toast(`${n} emails linked`);rerender()};
+A['sort-strong']=()=>{let n=0;const tab=ui.sortTab||'all';sortQueue().filter(m=>tab==='all'||sortGroup(m)===tab).forEach(m=>{const t=suggestFor(m)[0];if(t&&t.score>=80){applyLink(m,t.t,t.id);n++}});if(!n)return;log(`Linked ${n} emails to their RFQs, POs, orders and quotes (strong matches)`);save();toast(`${n} emails linked`);rerender()};
 /* a button in the Inbox, and the emails on each RFQ and PO */
 const _inboxSort=VIEWS.inbox;VIEWS.inbox=id=>{const h=_inboxSort(id);const n=sortQueue().length;if(!n||id)return h;return h.replace('<div class="toolbar">',`<div class="toolbar"><a class="btn" href="#/sortmail">${ic('flag',15)} Sort emails <span class="cnt" style="margin-left:4px">${n}</span></a>`)};
 const mailFor=(t,id)=>S.emails.filter(m=>(m.links||[]).some(l=>l.t===t&&l.id===id)).sort((a,b)=>lastMsg(a).t<lastMsg(b).t?1:-1);
@@ -2413,6 +2429,8 @@ const mailList=ms=>`<ul class="alist">${ms.slice(0,12).map(m=>{const x=lastMsg(m
 const _srcSort=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcSort(id);if(!id||!S.srcReqs||!sreq(id))return h;const ms=mailFor('rfq',id);return h+`<section class="panel mb" style="margin-top:16px"><div class="ph"><h3>Emails about this RFQ</h3><span class="muted sm">${ms.length}</span></div>${ms.length?mailList(ms):'<div class="pb muted sm">None linked yet. Use Sort emails in the Inbox, or Link existing record on an email.</div>'}</section>`};
 A['po-mail']=d=>{const ms=mailFor('po',d.id);modal(`Emails about ${d.id}`,ms.length?mailList(ms):'<p class="muted">No emails linked to this PO yet.</p>',{wide:true})};
 const _renderSort=render;render=function(k){_renderSort(k);if(parse().r!=='purchasing')return;$$('#view table[data-tbl="pos"] tbody tr').forEach(tr=>{const b=tr.querySelector('td b');if(!b)return;const n=mailFor('po',b.textContent.trim()).length;if(!n||tr.querySelector('[data-action="po-mail"]'))return;b.insertAdjacentHTML('afterend',` <button class="link sm" data-action="po-mail" data-id="${esc(b.textContent.trim())}">${ic('mail',13)} ${n}</button>`)})};
+
+A['sort-tab']=d=>{ui.sortTab=d.g;rerender()};
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
