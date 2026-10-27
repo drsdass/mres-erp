@@ -2479,6 +2479,16 @@ A['ali-forget']=d=>{if(!isOwner())return;const s=(S.suppliers||[]).find(x=>x.id=
  const k=aliKey(s.name);if(k&&!ignoredAli().includes(k))ignoredAli().push(k);S.smsgs=(S.smsgs||[]).filter(m=>m.supplier!==s.id);S.squotes=(S.squotes||[]).filter(q=>q.supplier!==s.id);S.suppliers=S.suppliers.filter(x=>x!==s);
  log('Removed a non-M-RES Alibaba chat');save();location.hash='#/sourcing';rerender()};
 const _mSupAc=M.sup;M.sup=id=>{_mSupAc(id);if(!isOwner())return;const f=$('.modal footer, .modal .foot, .modal .mfoot');if(f&&!f.querySelector('[data-action="ali-forget"]')){const b=document.createElement('button');b.type='button';b.className='btn ghost';b.dataset.action='ali-forget';b.dataset.id=id;b.textContent='Not M-RES: remove';b.title='Removes this supplier and its chats from the ERP for everyone';f.prepend(b)}};
+/* Alibaba emails used to file some suppliers as "Name Co., Ltd.Founded in 2024. CN": merge those into the real supplier,
+   and put their loose messages under that supplier's only open RFQ */
+function aliMergeDupes(){if(!S||!Array.isArray(S.suppliers))return;let n=0;const fix=s=>String(s||'').replace(/\s*(Founded|Established|Since)\b.*$/i,'').replace(/\s+(CN|HK|TW|US|IN|VN)$/,'').trim();
+ S.suppliers.filter(s=>/(Founded|Established)\b|\s(CN|HK|TW)$/.test(s.name||'')).forEach(d=>{const nm=fix(d.name);if(!nm)return;const t=S.suppliers.find(x=>x!==d&&aliCo(x.name)===aliCo(nm));
+  if(t){(S.smsgs||[]).forEach(m=>{if(m.supplier===d.id)m.supplier=t.id});(S.squotes||[]).forEach(q=>{if(q.supplier===d.id)q.supplier=t.id});if(!t.contact&&d.contact)t.contact=d.contact;S.suppliers=S.suppliers.filter(x=>x!==d)}else d.name=nm;n++});
+ /* loose Alibaba messages: file under the supplier's one open RFQ */
+ (S.suppliers||[]).forEach(s=>{const loose=(S.smsgs||[]).filter(m=>m.supplier===s.id&&!m.req);if(!loose.length)return;const open=new Set((S.srcReqs||[]).filter(r=>r.status==='Open').map(r=>r.id));
+  const reqs=[...new Set([...(S.smsgs||[]),...(S.squotes||[])].filter(m=>m.supplier===s.id&&m.req&&open.has(m.req)).map(m=>m.req))];if(reqs.length===1){loose.forEach(m=>m.req=reqs[0]);n++}});
+ if(n){save();if(typeof rerender==='function')rerender()}}
+setTimeout(function w(){if(!S||!S.suppliers||(typeof CLOUD!=='undefined'&&CLOUD&&!USER))return setTimeout(w,3000);try{aliMergeDupes()}catch(e){console.error(e)}},4000);
 
 /* ================= Part requests: "can you find me…" in one place instead of texts =================
    Anyone (Denny, JJ…) asks the team to find a product. Quantity, what it's for and when it's needed are required,
@@ -2605,6 +2615,67 @@ const _dashFR=VIEWS.dashboard;VIEWS.dashboard=id=>{const h=_dashFR(id);return h.
 A['fr-go-rfq']=d=>{closeModal();location.hash='#/sourcing/'+d.id};
 
 document.head.insertAdjacentHTML('beforeend','<style>.fr-kv td{padding:6px 8px;vertical-align:top}.fr-kv td.muted{white-space:nowrap;width:1%}</style>');
+
+/* ================= Read before you link: a pop-out reader for emails and supplier messages =================
+   Sort emails and Sourcing → Triage only showed a line of each message. Click any of them to read the whole thing
+   (every message in the conversation, attachments, original formatting), link it right there, and go to the next one. */
+const pkWhen=t=>t?new Date(t).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'';
+const pkAtt=x=>(x.att||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${x.att.map(a=>a.path?`<button type="button" class="btn sm" data-action="att-open" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`:`<span class="chip plain">📎 ${esc(a.name)}</span>`).join('')}</div>`:'';
+function pkBody(x,i){const rich=x.html&&typeof richFrame==='function';
+ return `<article class="msg ${x.dir||'in'}" style="padding:10px 12px;margin-bottom:10px"><header><b>${esc(x.by||x.from||'')}</b><span class="sm muted">${pkWhen(x.t)}</span></header>
+  ${rich?`<div class="sm" style="margin:4px 0"><button type="button" class="link sm" data-action="pk-rich" data-i="${i}">Show original formatting</button></div>`:''}
+  <div class="b" id="pk-b-${i}" style="white-space:pre-wrap;max-height:none">${esc(x.body||'')}</div>${pkAtt(x)}</article>`}
+let PK=null; /* {kind:'email'|'sm'|'sq', id, list:['kind:id',…]} */
+const pkKey=()=>PK.kind+':'+PK.id;const pkSet=k=>{const i=k.indexOf(':');PK.kind=k.slice(0,i);PK.id=k.slice(i+1)};
+function pkEmail(m){const th=m.thread||[];const sg=typeof suggestFor==='function'?suggestFor(m):[];const top=sg[0];
+ const pick=(ui.sortSel||{})[m.id]??(top&&top.score>=60?top.t+'|'+top.id:'');
+ const opts=`<option value="">Nothing to link</option>${sg.length?`<optgroup label="Suggested">${sg.map(s=>`<option value="${esc(s.t+'|'+s.id)}" ${pick===s.t+'|'+s.id?'selected':''}>${esc(linkLabel(s))} (${s.score>=80?'strong':s.score>=60?'likely':'possible'})</option>`).join('')}</optgroup>`:''}
+  <optgroup label="RFQs">${(S.srcReqs||[]).filter(r=>r.status!=='Closed').map(r=>`<option value="rfq|${esc(r.id)}" ${pick==='rfq|'+r.id&&!sg.some(s=>s.t==='rfq'&&s.id===r.id)?'selected':''}>${esc((r.no||r.id)+' '+r.title)}</option>`).join('')}</optgroup>
+  <optgroup label="Vendor POs">${S.pos.filter(poOpen).map(p=>`<option value="po|${esc(p.id)}" ${pick==='po|'+p.id&&!sg.some(s=>s.t==='po'&&s.id===p.id)?'selected':''}>${esc(p.id+', '+vend(p.vendor).name)}</option>`).join('')}</optgroup>
+  <optgroup label="Sales orders">${S.orders.filter(isOpen).map(o=>`<option value="order|${esc(o.id)}" ${pick==='order|'+o.id&&!sg.some(s=>s.t==='order'&&s.id===o.id)?'selected':''}>${esc(oLabel(o)+', '+aname(o.acct))}</option>`).join('')}</optgroup>`;
+ const links=(m.links||[]).map(l=>chip(linkLabel(l),'ok')).join(' ');
+ return {title:m.subject||'(no subject)',body:`<div class="sm" style="margin-bottom:10px"><b>${esc(m.fromName||m.from||'')}</b> <span class="muted">&lt;${esc(m.from||'')}&gt;</span>${m.company&&m.company!==m.fromName?` · ${esc(m.company)}`:''}${typeof inboxTag==='function'?' '+inboxTag(m):''}<div class="muted">${th.length} message${th.length===1?'':'s'} · last ${pkWhen((th[th.length-1]||{}).t||m.received)}</div>${links?`<div style="margin-top:4px">Linked to ${links}</div>`:''}</div>
+  <div style="max-height:52vh;overflow:auto;padding-right:4px">${th.slice().reverse().map((x,i)=>pkBody(x,i)).join('')||'<div class="muted">No message text.</div>'}</div>
+  <div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px"><label class="sm muted" for="pk-pick">Belongs to</label><select id="pk-pick" style="width:100%;margin-top:4px">${opts}</select>${top?`<div class="sm muted" style="margin-top:3px">${esc(top.why.join('; '))}</div>`:''}</div>`,
+  foot:`<a class="btn ghost" href="#/inbox/${esc(m.id)}" data-action="pk-close-go">Open in Inbox</a>${btn('Done, nothing to link','pk-skip',{},'ghost')}${btn('Link','pk-link',{},'')}${btn('Link and next ›','pk-link',{next:1},'primary')}`}}
+function pkSup(kind,x){const s=sup(x.supplier)||{name:'Supplier'};const conv=(S.smsgs||[]).filter(m=>m.supplier===x.supplier).sort((a,b)=>(a.t||'')<(b.t||'')?-1:1);const qs=(S.squotes||[]).filter(q=>q.supplier===x.supplier);
+ const reqOpts=`<option value="">Choose an RFQ</option>${S.srcReqs.filter(r=>r.status==='Open').map(r=>opt(r.id,`${r.no||r.id}, ${r.title}`,r.id===x.req)).join('')}`;
+ const em=x.emailId&&byId(S.emails,x.emailId);
+ const cv=conv.map(m=>`<article class="msg ${m.dir||'in'}" style="padding:8px 10px;margin-bottom:8px;${m.id===x.id?'box-shadow:0 0 0 2px #22b8d6':''}"><header><b>${esc(m.dir==='in'?(m.from||s.contact||s.name):(m.from||'Us'))}</b><span class="sm muted">${chip(m.channel||'')} ${pkWhen(m.t)}${m.req?' · '+esc((sreq(m.req)||{}).no||''):m.dir==='in'?' · <span style="color:var(--alert)">no RFQ</span>':''}</span></header><div style="white-space:pre-wrap">${esc(m.text||'')}</div></article>`).join('')||'<div class="muted">No messages.</div>';
+ const qh=qs.length?`<div class="sm muted" style="margin:10px 0 4px">Quotes from ${esc(s.name)}</div>${qs.map(q=>`<div class="sm" style="padding:4px 0;border-top:1px solid var(--line);${q.id===x.id?'font-weight:700':''}">${fds(q.date)} · ${unitCost(q.unitPrice)}${q.incoterm?' '+q.incoterm:''}, MOQ ${q.moq??'–'}, ${q.leadDays??'–'} days${q.part?' · '+esc(q.part):''} · ${q.req?esc((sreq(q.req)||{}).no||''):'<span style="color:var(--alert)">no RFQ</span>'} ${chip(q.status)}</div>`).join('')}`:'';
+ return {title:`${s.name}${s.contact?' · '+s.contact:''}`,body:`<div class="sm muted" style="margin-bottom:8px">${kind==='sq'?'A quote':'A message'} with no RFQ yet. The whole conversation with this supplier is below, oldest first; the one you clicked is outlined.${em?` It came in by email: <a href="#/inbox/${esc(em.id)}" data-action="pk-close-go">open the email</a>.`:''}</div>
+  <div style="max-height:50vh;overflow:auto;padding-right:4px" id="pk-conv">${cv}${qh}</div>
+  <div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px"><label class="sm muted" for="pk-rfq">Assign to RFQ</label><select id="pk-rfq" style="width:100%;margin-top:4px">${reqOpts}</select>
+  <label class="check-inline sm" style="margin-top:6px"><input type="checkbox" id="pk-all" checked> Also assign this supplier’s other unmatched messages and quotes</label></div>`,
+  foot:`${btn('New RFQ from this','pk-newrfq',{},'ghost')}${btn('Assign','pk-assign',{},'')}${btn('Assign and next ›','pk-assign',{next:1},'primary')}`}}
+function pkShow(){if(!PK)return;let v;
+ if(PK.kind==='email'){const m=byId(S.emails,PK.id);if(!m)return closeModal();v=pkEmail(m)}
+ else{const x=PK.kind==='sq'?byId(S.squotes,PK.id):byId(S.smsgs,PK.id);if(!x)return closeModal();v=pkSup(PK.kind,x)}
+ const pos=PK.list.indexOf(pkKey());const nav=PK.list.length>1?`<span class="muted sm" style="margin-right:auto">${pos+1} of ${PK.list.length} ${btn('‹ Prev','pk-move',{n:-1},'sm ghost')}${btn('Next ›','pk-move',{n:1},'sm ghost')}</span>`:'';
+ modal(v.title,v.body,{wide:true,foot:nav+v.foot});setTimeout(()=>{const c=$('#pk-conv article[style*="box-shadow"]');if(c&&c.scrollIntoView)c.scrollIntoView({block:'center'})},30)}
+function pkOpen(kind,id,list){PK={kind,id,list:list&&list.length?list:[kind+':'+id]};pkShow()}
+function pkNext(){if(!PK)return;const k=pkKey(),i=PK.list.indexOf(k);PK.list=PK.list.filter(x=>x!==k);if(!PK.list.length){PK=null;closeModal();toast('That was the last one.');return}pkSet(PK.list[Math.max(0,Math.min(i,PK.list.length-1))]);pkShow()}
+A['pk-rich']=d=>{if(!PK||PK.kind!=='email')return;const m=byId(S.emails,PK.id);const x=(m.thread||[]).slice().reverse()[+d.i];const b=$('#pk-b-'+d.i);if(!x||!b)return;b.innerHTML=richFrame(x.html);b.style.whiteSpace='normal'};
+A['pk-move']=d=>{if(!PK)return;const i=PK.list.indexOf(pkKey()),n=PK.list.length;pkSet(PK.list[(i+(+d.n)+n)%n]);pkShow()};
+A['pk-close-go']=()=>{PK=null;closeModal()};
+A['pk-link']=d=>{const m=PK&&byId(S.emails,PK.id);if(!m)return;const v=($('#pk-pick')||{}).value||'';if(!v)return toast('Pick what it belongs to, or click Done.',true);const i=v.indexOf('|'),t=v.slice(0,i),id=v.slice(i+1);
+ applyLink(m,t,id);log(`Linked email ${m.id} (${m.fromName||m.from}) to ${linkLabel({t,id})}`);save();toast(`Linked to ${linkLabel({t,id})}`);if(d.next)pkNext();else pkShow();rerender()};
+A['pk-skip']=()=>{const m=PK&&byId(S.emails,PK.id);if(!m)return;m.sorted=true;save();toast('Marked done');pkNext();rerender()};
+A['pk-assign']=d=>{if(!PK)return;const rid=($('#pk-rfq')||{}).value;if(!rid)return toast('Choose an RFQ first.',true);const r=sreq(rid);const x=PK.kind==='sq'?byId(S.squotes,PK.id):byId(S.smsgs,PK.id);if(!x||!r)return;
+ const all=($('#pk-all')||{}).checked;const items=[x,...(all?[...(S.smsgs||[]).filter(m=>m!==x&&m.supplier===x.supplier&&!m.req),...(S.squotes||[]).filter(q=>q!==x&&q.supplier===x.supplier&&!q.req&&liveQ(q))]:[])];
+ items.forEach(y=>y.req=rid);const cur=pkKey(),done=new Set(items.map(y=>((S.squotes||[]).includes(y)?'sq:':'sm:')+y.id));PK.list=PK.list.filter(k=>k===cur||!done.has(k));
+ log(`Assigned ${items.length} message${items.length===1?'':'s'} and quotes from ${sup(x.supplier).name} to ${r.no||r.id}`,[{f:'RFQ',from:'Unmatched',to:r.no||r.id}]);save();toast(`Assigned to ${r.no||r.id}`);if(d.next)pkNext();else pkShow();rerender()};
+A['pk-newrfq']=()=>{if(!PK)return;const k=(PK.kind==='sq'?'q|':'m|')+PK.id;PK=null;closeModal();setTimeout(()=>A['tri-new']({k}),0)};
+
+/* make every row in Sort emails and Triage open the reader */
+const _renderPK=render;render=function(k){_renderPK(k);const {r}=parse();
+ if(r==='sortmail'){const ids=$$('#view tr[data-sort]').map(tr=>'email:'+tr.dataset.sort);
+  $$('#view tr[data-sort]').forEach(tr=>{const a=tr.querySelector('td a[href^="#/inbox/"]');if(a){a.removeAttribute('target');a.addEventListener('click',e=>{e.preventDefault();pkOpen('email',tr.dataset.sort,ids)})}
+   const cell=tr.cells[1];if(cell&&!cell.querySelector('.pk-read')){cell.insertAdjacentHTML('beforeend',`<button type="button" class="link sm pk-read" style="margin-top:2px">Read the whole email</button>`);cell.querySelector('.pk-read').addEventListener('click',()=>pkOpen('email',tr.dataset.sort,ids))}})}
+ if(r==='sourcing'&&$('#view table[data-tbl="triage"]')){const rows=$$('#view table[data-tbl="triage"] tbody tr');const keys=rows.map(tr=>{const s=tr.querySelector('select[data-assign]');return s?s.dataset.assign:''}).filter(Boolean);const list=keys.map(k=>(k[0]==='q'?'sq:':'sm:')+k.split('|')[1]);
+  rows.forEach(tr=>{const s=tr.querySelector('select[data-assign]');if(!s)return;const [k,id]=s.dataset.assign.split('|');const cell=tr.cells[3];if(!cell||cell.querySelector('.pk-read'))return;
+   cell.style.cursor='pointer';cell.title='Read the whole conversation';cell.insertAdjacentHTML('beforeend',`<div><button type="button" class="link sm pk-read">Read the conversation</button></div>`);
+   cell.addEventListener('click',e=>{if(e.target.closest('select'))return;PK={kind:k==='q'?'sq':'sm',id,list};pkShow()})})}};
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
