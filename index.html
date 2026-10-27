@@ -2932,6 +2932,101 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 @media(max-width:700px){.pt-lane{grid-template-columns:100px 1fr 70px}.pt-weeks{grid-template-columns:repeat(5,1fr)}}
 </style>`);
 
+/* ================= Update from the Google Sheet (SALES ORDERS) =================
+   Until the team stops using the sheet, bring its changes in without losing anything that lives only in the ERP:
+   download the sheet as CSV (or .xlsx), upload it here, check the preview, apply. New orders are added, existing ones
+   updated (status, quantities delivered, dates, tracking, invoice numbers, payments), and nothing else is touched. */
+function csvRows(text){const rows=[];let row=[],f='',q=false;text=String(text).replace(/^﻿/,'');
+ for(let i=0;i<text.length;i++){const c=text[i];if(q){if(c==='"'){if(text[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+  else if(c==='"')q=true;else if(c===','){row.push(f);f=''}else if(c==='\n'||c==='\r'){if(c==='\r'&&text[i+1]==='\n')i++;row.push(f);rows.push(row);row=[];f=''}else f+=c}
+ if(f!==''||row.length){row.push(f);rows.push(row)}return rows}
+const ssSerial=s=>{const m=String(s||'').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);if(!m)return s;const y=+m[3]<100?2000+ +m[3]:+m[3];return Math.round((Date.UTC(y,+m[1]-1,+m[2])-Date.UTC(1899,11,30))/864e5)};
+/* "10,121,022" is Google Sheets turning "1012, 1022" into a number; "1014, 1017, 1010" is three invoices */
+function ssInvNos(v){let s=String(v||'').trim();if(!s)return[];if(/^\d{1,3}(,\d{3})+$/.test(s)){const d=s.replace(/,/g,'');if(d.length%4===0)return d.match(/.{4}/g)}return s.split(/[,;&\/]|\band\b/i).map(x=>x.trim()).filter(Boolean)}
+function ssPrep(rows){const hi=rows.findIndex(r=>String(r[0]||'').trim().toUpperCase()==='STATUS');if(hi<0)throw new Error('This is not the SALES ORDERS sheet: no STATUS header row found.');
+ const H=rows[hi].map(h=>String(h||'').trim().toUpperCase());const ix=k=>H.indexOf(k);
+ const out=rows.map((r,i)=>{if(i<=hi)return r;const c=r.slice();['DATE','EXPECTED DATE'].forEach(k=>{const j=ix(k);if(j>=0)c[j]=ssSerial(c[j])});
+  ['QTY ORDERED','QTY DELIVERED','QTY PENDING'].forEach(k=>{const j=ix(k);if(j>=0&&c[j]!==''&&c[j]!=null){const n=numv(c[j]);c[j]=n==null?c[j]:n}});
+  const j=ix('INVOICE #');if(j>=0){const n=ssInvNos(c[j]);c[j]=n.length?n[0]:'';c._invs=n}return c});
+ return{rows:out,hi,H}}
+/* payments written in notes: "1014-$8400 PAID 10/06/26" */
+function ssPayments(txt){const out=[];String(txt||'').replace(/(\d{3,6})\s*-\s*\$?([\d,]+(?:\.\d+)?)\s*PAID\s*(\d{1,2}\/\d{1,2}\/\d{2,4})?/gi,(m,inv,amt,d)=>{out.push({inv,amt:numv(amt),date:d?txtDate(d):null})});return out}
+function ssPlan(rows){const P=ssPrep(rows);const raw={items:[['SKU','PART NAME','DESCRIPTION','CATEGORY','TYPE','VENDOR','COST','PRICE','LEAD','MIN','MAX','CURRENT QOH','LOCATION','NOTES','MOQ','MORE NOTES','# NEED'],...S.items.map(i=>[i.sku,i.name,i.desc,i.cat,i.type,i.vendor?vend(i.vendor).name:'',i.cost,i.price,i.lead,i.min,i.max,i.onhand,i.loc,'',i.moq,i.url,''])],orders:P.rows,form:[]};
+ const W=importWorkbook(raw,'SALES ORDERS sheet');
+ W.items.forEach(i=>{const m=String(i.sku).match(/^([A-Z0-9][\w.\-\/]{4,}),\s*(.+)$/i);if(!m||S.items.some(x=>x.sku.toUpperCase()===i.sku.toUpperCase()))return;const old=i.sku,nw=m[1].toUpperCase();
+  const have=S.items.find(x=>x.sku.toUpperCase()===nw);W.orders.forEach(o=>o.lines.forEach(l=>{if(l.sku===old)l.sku=have?have.sku:nw}));if(!have){i.sku=nw;i.id=nw;i.name=m[2].trim();i.desc=m[1]+', '+m[2].trim()}else i._drop=true});
+ W.items=W.items.filter(i=>!i._drop);
+ const custName=id=>(W.accounts.find(a=>a.id===id)||{}).name,vendName=id=>(W.vendors.find(v=>v.id===id)||{}).name;
+ const acctFor=n=>S.accounts.find(a=>a.name.toLowerCase()===String(n||'').toLowerCase());const vendFor=n=>S.vendors.find(v=>v.name.toLowerCase()===String(n||'').toLowerCase());
+ /* which sheet row each parsed order came from (for extra invoice numbers and paid-notes) */
+ const H=P.H,ix=k=>H.indexOf(k);const rowOf=o=>P.rows[(o.row||0)-1]||P.rows.find(r=>String(r[ix('SO #')]||'')===String(o.so||''))||[];
+ const plan={add:[],upd:[],inv:[],pay:[],newAcct:[],newItems:[],pos:[],same:0};
+ const used=new Set();
+ W.orders.slice().sort((a,b)=>(b.so?1:0)-(a.so?1:0)).forEach(n=>{const sku=n.lines[0].sku;
+  const ex=(n.so&&S.orders.find(o=>o.so&&String(o.so)===String(n.so)&&!used.has(o.id)))||S.orders.find(o=>!used.has(o.id)&&o.cpo&&n.cpo&&o.cpo===n.cpo&&o.lines[0]&&o.lines[0].sku===sku&&(+o.lines[0].qty===+n.lines[0].qty||!o.so||!n.so));
+  const cn=custName(n.acct);const r=rowOf(n);const invs=(r._invs&&r._invs.length?r._invs:n.invoice&&!/^No #/.test(n.invoice)?[n.invoice]:[]);const pays=ssPayments(r[ix('NOTES')])  .concat(ssPayments(r[ix('VENDOR')]));
+  const item={n,cn,invs,pays,sku,ex};
+  if(!ex){plan.add.push(item);return}used.add(ex.id);
+  const ch=[];const cmp=(f,a,b,lab)=>{if(String(a??'')!==String(b??'')&&b!=null&&b!=='')ch.push({f:lab,from:a??'blank',to:b,k:f})};
+  const RANK=['New','Waiting on parts','Partially shipped','Shipped','Invoiced','Completed'];if(RANK.indexOf(n.status)>RANK.indexOf(ex.status))cmp('status',ex.status,n.status,'Status');cmp('so',ex.so,n.so,'SO #');cmp('endPo',ex.endPo,n.endPo,'End customer PO');cmp('expected',ex.expected,n.expected,'Expected');cmp('tracking',ex.tracking,n.tracking,'Tracking');cmp('shipMethod',ex.shipMethod,n.shipMethod,'Ship method');cmp('shipTo',ex.shipTo,n.shipTo,'Deliver to');cmp('lead',ex.lead,n.lead,'Lead time');
+  if(invs.length)cmp('invoice',ex.invoice,invs.join(', '),'Invoice #');
+  const l0=ex.lines[0]||{},nl=n.lines[0];if(+l0.shipped!==+nl.shipped)ch.push({f:'Delivered',from:l0.shipped??0,to:nl.shipped,k:'shipped'});if(+l0.qty!==+nl.qty&&nl.qty)ch.push({f:'Quantity',from:l0.qty,to:nl.qty,k:'qty'});if(+l0.price!==+nl.price&&nl.price)ch.push({f:'Price',from:l0.price,to:nl.price,k:'price'});
+  const newNotes=(n.notes||[]).filter(t=>!(ex.notes||[]).some(x=>String(x.text||x).trim()===t));if(newNotes.length)ch.push({f:'Notes',from:'',to:newNotes.join(' / '),k:'notes'});
+  if(ch.length)plan.upd.push({...item,ch});else plan.same++});
+ plan.dupes=[];plan.add=plan.add.filter(x=>{if(x.n.so)return true;const twin=[...plan.add,...plan.upd].find(y=>y!==x&&y.n.so&&y.n.cpo===x.n.cpo&&y.sku===x.sku&&+y.n.lines[0].qty===+x.n.lines[0].qty);const inErp=S.orders.find(o=>o.so&&o.cpo===x.n.cpo&&o.lines[0]&&o.lines[0].sku===x.sku&&+o.lines[0].qty===+x.n.lines[0].qty);if(twin||inErp){plan.dupes.push(x);return false}return true});
+ /* invoices: each invoice number on the sheet, with amount and paid status */
+ [...plan.add,...plan.upd,...W.orders.map(n=>({n})).filter(x=>!plan.add.some(a=>a.n===x.n)&&!plan.upd.some(a=>a.n===x.n))].forEach(x=>{const n=x.n;const r=rowOf(n);const invs=x.invs||(r._invs||[]);const pays=x.pays||ssPayments(r[ix('NOTES')]).concat(ssPayments(r[ix('VENDOR')]));
+  const wi=W.invoices.find(i=>i.ref===n.id);if(!invs.length&&!wi)return;const nl=n.lines[0]||{};const part=+nl.shipped>0&&+nl.shipped<+nl.qty;const total=part?(+nl.shipped)*(+nl.price||0):wi?wi.amount:sum(n.lines,l=>l.qty*l.price);const fullyPaid=!!(wi&&wi.paid>=wi.amount&&wi.amount>0);
+  const known=pays.filter(p=>invs.includes(p.inv));const left=Math.max(0,total-sum(known,p=>p.amt));const rest=invs.filter(i=>!known.some(p=>p.inv===i));
+  (invs.length?invs:[wi.id]).forEach(no=>{const p=known.find(k=>k.inv===no);const amt=p?p.amt:rest.length?Math.round(left/rest.length*100)/100:total;
+   const ex=S.invoices.find(i=>String(i.id)===String(no));const paid=fullyPaid?amt:p?amt:0;const paidOn=paid?(p&&p.date)||(wi&&wi.paidOn)||TODAY:null;
+   const rec={id:String(no),acct:n.acct,ref:n.id,issued:(wi&&wi.issued)||n.expected||n.date,due:(wi&&wi.due)||iso(addDays(pd(n.expected||n.date),30)),amount:amt,paid,paidOn,fromSheet:true,split:invs.length>1&&!p};
+   if(!ex)plan.inv.push({rec,cn:x.cn||custName(n.acct),so:n.so||n.cpo});
+   else if(paid>(+ex.paid||0))plan.pay.push({ex,amt:paid,date:paidOn,cn:x.cn||custName(n.acct)})})});
+ /* customers and parts the ERP doesn't have yet */
+ W.accounts.forEach(a=>{if(!acctFor(a.name)&&[...plan.add].some(x=>x.n.acct===a.id))plan.newAcct.push(a)});
+ W.items.forEach(i=>{if(!S.items.some(x=>x.sku.toUpperCase()===i.sku.toUpperCase())&&plan.add.some(x=>x.sku===i.sku))plan.newItems.push(i)});
+ /* vendor POs written in the sheet's notes that the ERP hasn't seen */
+ W.pos.forEach(p=>{if(!S.pos.some(x=>x.note&&p.note&&x.note.trim()===p.note.trim()))plan.pos.push({p,vn:vendName(p.vendor)})});
+ plan.W=W;plan.acctFor=acctFor;plan.vendFor=vendFor;plan.custName=custName;plan.vendName=vendName;return plan}
+function ssApply(plan){const W=plan.W;const acctId=id=>{const nm=plan.custName(id);let a=plan.acctFor(nm);if(!a){a={...W.accounts.find(x=>x.id===id),id:nextId(S.accounts,'C-')};S.accounts.push(a)}return a.id};
+ const vendId=id=>{if(!id)return null;const nm=plan.vendName(id);let v=plan.vendFor(nm);if(!v){v={...W.vendors.find(x=>x.id===id),id:nextId(S.vendors,'V-')};S.vendors.push(v)}return v.id};
+ plan.newItems.forEach(i=>{if(!S.items.some(x=>x.sku.toUpperCase()===i.sku.toUpperCase()))S.items.push({...i,vendor:vendId(i.vendor)})});
+ const today=TODAY;let nA=0,nU=0,nI=0,nP=0,nPO=0;
+ plan.add.forEach(({n})=>{const o=JSON.parse(JSON.stringify(n));o.acct=acctId(n.acct);o.lines.forEach(l=>l.vendor=vendId(l.vendor));let id=o.id;if(S.orders.some(x=>x.id===id))id=id+' ('+(o.lines[0].sku||'')+')';while(S.orders.some(x=>x.id===id))id+='+';o.id=id;
+  o.notes=(o.notes||[]).map(t=>typeof t==='string'?{t:today,user:'Google Sheet',text:t}:t);o.fromSheet=true;S.orders.push(o);nA++});
+ plan.upd.forEach(({n,ex,ch})=>{const b=JSON.parse(JSON.stringify(ex));ch.forEach(c=>{if(c.k==='shipped')ex.lines[0].shipped=c.to;else if(c.k==='qty')ex.lines[0].qty=c.to;else if(c.k==='price')ex.lines[0].price=c.to;
+   else if(c.k==='notes'){ex.notes=ex.notes||[];String(c.to).split(' / ').forEach(t=>ex.notes.push(typeof (ex.notes[0])==='string'?t:{t:today,user:'Google Sheet',text:t}))}
+   else if(c.k==='status'){ex.status=c.to;ex.dates=ex.dates||{};if(!ex.dates[c.to])ex.dates[c.to]=today}else ex[c.k]=c.to});nU++;
+  S.audit.unshift({t:new Date().toISOString(),user:'Google Sheet',msg:`Updated order ${ex.so||ex.id} from the Google Sheet`,ch:ch.map(c=>({f:c.f,from:String(c.from),to:String(c.to)}))})});
+ plan.inv.forEach(({rec})=>{const o=S.orders.find(x=>x.id===rec.ref)||S.orders.find(x=>String(x.so)===String(rec.ref));const r={...rec,acct:o?o.acct:acctId(rec.acct),ref:o?o.id:rec.ref};S.invoices=S.invoices.filter(i=>!(i.missing&&i.ref===r.ref));S.invoices.push(r);nI++});
+ plan.pay.forEach(({ex,amt,date})=>{ex.paid=amt;ex.paidOn=date||today;nP++});
+ plan.pos.forEach(({p})=>{const o={...JSON.parse(JSON.stringify(p)),id:nextId(S.pos,'PO-'),vendor:vendId(p.vendor),fromSheet:true};S.pos.push(o);nPO++});
+ S.sheetSync={at:new Date().toISOString(),by:USER.name,added:nA,updated:nU,invoices:nI,payments:nP,pos:nPO};
+ log(`Updated from the Google Sheet: ${nA} new orders, ${nU} updated, ${nI} invoices added, ${nP} payments recorded${nPO?`, ${nPO} vendor POs from notes`:''}`);save();return S.sheetSync}
+function ssPreview(plan,fileName){const L=(x)=>`${esc(x.cn||'')} · ${esc(x.n.cpo||'')}${x.n.so?' · SO '+esc(x.n.so):''} · ${num(x.n.lines[0].qty)} × ${esc(x.n.lines[0].sku)}`;
+ const sec=(t,n,body)=>n?`<details ${n<=12?'open':''} style="margin:0 0 10px"><summary style="cursor:pointer;font-weight:700">${t} <span class="chip info">${n}</span></summary><div style="padding:6px 0 0 4px">${body}</div></details>`:'';
+ const body=`<p class="muted" style="margin-top:0">From <b>${esc(fileName)}</b>. Orders are matched by SO #, then by customer PO and part. Anything that exists only in the ERP (emails, notes, shipments, payments) stays as it is.</p>
+  ${kpis([{l:'New orders',v:plan.add.length},{l:'Orders updated',v:plan.upd.length},{l:'Unchanged',v:plan.same},{l:'Invoices added',v:plan.inv.length},{l:'Payments recorded',v:plan.pay.length}])}
+  ${sec('New orders',plan.add.length,`<ul class="sm">${plan.add.map(x=>`<li>${L(x)}${x.n.expected?` · due ${fd(x.n.expected)}`:''}</li>`).join('')}</ul>`)}
+  ${sec('Orders that changed',plan.upd.length,`<ul class="sm">${plan.upd.map(x=>`<li><b>${L(x)}</b><div class="muted">${x.ch.map(c=>`${esc(c.f)}: ${esc(String(c.from))} → <b>${esc(String(c.to))}</b>`).join(' · ')}</div></li>`).join('')}</ul>`)}
+  ${sec('Invoices added',plan.inv.length,`<ul class="sm">${plan.inv.map(x=>`<li>Invoice ${esc(x.rec.id)} · ${esc(x.cn||'')} · ${$f(x.rec.amount)}${x.rec.split?' <span class="muted">(amount split evenly between this order’s invoices — check it)</span>':''} · ${x.rec.paid?`<b style="color:var(--ok)">paid ${$f(x.rec.paid)}</b>`:'unpaid'}</li>`).join('')}</ul>`)}
+  ${sec('Payments recorded',plan.pay.length,`<ul class="sm">${plan.pay.map(x=>`<li>Invoice ${esc(x.ex.id)} · ${esc(x.cn||'')} · paid ${$f(x.amt)}${x.date?' on '+fd(x.date):''}</li>`).join('')}</ul>`)}
+  ${sec('Listed twice on the sheet (skipped)',plan.dupes.length,`<ul class="sm">${plan.dupes.map(x=>`<li>${L(x)} <span class="muted">same PO, part and quantity as a row that has an SO #</span></li>`).join('')}</ul>`)}
+  ${sec('New customers',plan.newAcct.length,esc(plan.newAcct.map(a=>a.name).join(', ')))}${sec('New parts',plan.newItems.length,esc(plan.newItems.map(i=>i.sku).join(', ')))}
+  ${sec('Vendor POs found in the notes',plan.pos.length,`<ul class="sm">${plan.pos.map(x=>`<li>${esc(x.vn||'')}: ${x.p.lines.map(l=>`${num(l.qty)} × ${esc(l.sku)}`).join(', ')} <span class="muted">“${esc(x.p.note||'')}”</span></li>`).join('')}</ul>`)}
+  ${!plan.add.length&&!plan.upd.length&&!plan.inv.length&&!plan.pay.length&&!plan.pos.length?'<div class="note">The ERP already matches the sheet. Nothing to change.</div>':''}`;
+ modal('Update from the Google Sheet',body,{wide:true,label:'Apply these changes',submit:()=>{const r=ssApply(plan);toast(`Done: ${r.added} new, ${r.updated} updated, ${r.invoices} invoices, ${r.payments} payments`);rerender()}})}
+async function ssFile(file){if(!file)return;try{let rows;
+  if(/\.csv$/i.test(file.name)||file.type==='text/csv')rows=csvRows(await file.text());
+  else{if(typeof XLSX==='undefined'&&typeof loadXLSX==='function')await loadXLSX();if(typeof XLSX==='undefined')throw new Error('Save the sheet as CSV (File → Download → .csv) and upload that.');
+   const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});const nm=wb.SheetNames.find(n=>/sales\s*orders/i.test(n))||wb.SheetNames[0];rows=XLSX.utils.sheet_to_json(wb.Sheets[nm],{header:1,raw:false,defval:''})}
+  ssPreview(ssPlan(rows),file.name)}catch(e){console.error(e);toast('Could not read that file: '+e.message,true)}}
+A['sheet-sync']=()=>{let el=$('#ssfile');if(!el){document.body.insertAdjacentHTML('beforeend','<input type="file" id="ssfile" accept=".csv,.xlsx,.xls" hidden>');el=$('#ssfile')}el.value='';el.onchange=()=>ssFile(el.files[0]);el.click()};
+/* the button: on Sales orders, the PO tracker and Workbook and data */
+['sales','potrack','data'].forEach(r=>{const v=VIEWS[r];VIEWS[r]=id=>{const h=v(id);if(id)return h;const last=S.sheetSync?`<span class="muted sm" style="align-self:center">Last sheet update ${new Date(S.sheetSync.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:'';
+ return h.replace(/(<div class="actions">)/,`$1${last}<button type="button" class="btn" data-action="sheet-sync" title="Download the SALES ORDERS sheet as CSV, then pick it here">${ic('refresh',15)} Update from Google Sheet</button>`)}});
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
