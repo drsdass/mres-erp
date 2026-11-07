@@ -3449,6 +3449,86 @@ a.im.picked .ln-ck{background:#22b8d6;border-color:#22b8d6}a.im.picked .ln-ck::a
 .ln-auto{padding:8px 12px;border-radius:10px;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);margin-bottom:10px}
 </style>`);
 
+/* ================= Alibaba, organised by RFQ =================
+   Supplier answers file themselves onto the RFQ they belong to:
+     1. the supplier is only talking to us about one open RFQ → that one
+     2. the message names the RFQ's part (title words, part numbers, Alibaba's product line) → that one
+     3. the supplier has talked about several RFQs → the one they wrote about last
+   Whatever still can't be placed waits at the top under "Needs an RFQ", with a picker right on the row.
+   Security codes and sign-in notices from Alibaba are removed from the ERP altogether. */
+const RL_SEC=/verification (code|process)|(enter|use) the following code|your (verification |security )?code is|verify (your|the)\b|security code|one[- ]time (code|password|passcode)|login code|sign[- ]in (code|attempt|alert)|reset (your )?password|password (reset|change)/i;
+function rlPurge(){if(!Array.isArray(S.emails))return 0;const bad=new Set(S.emails.filter(m=>lnIsAli(m)&&RL_SEC.test(String(m.subject||'')+' '+((m.thread||[]).map(x=>x.body||'').join(' ')).slice(0,2000))).map(m=>m.id));(S.smsgs||[]).forEach(x=>{if(x.emailId&&RL_SEC.test(String(x.text||'')))bad.add(x.emailId)});
+ const before=(S.smsgs||[]).length;if(Array.isArray(S.smsgs))S.smsgs=S.smsgs.filter(x=>!(bad.has(x.emailId)||RL_SEC.test(String(x.text||''))));
+ const n=bad.size+(before-(S.smsgs||[]).length);if(bad.size)S.emails=S.emails.filter(m=>!bad.has(m.id));if(n){log('Removed Alibaba security/sign-in notices from the ERP');save()}return n}
+const RL_STOP=new Set(['with','from','replacement','pieces','part','parts','version','type','size','new','for','and','the','pcs','unit','units']);
+function rlWords(open,text){const txt=' '+String(text||'').toLowerCase().replace(/[^a-z0-9]+/g,' ')+' ';
+ const sc=open.map(r=>{const w=[...new Set(String((r.title||'')+' '+(r.part||'')+' '+(r.partNo||'')).toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(x=>x.length>3&&!RL_STOP.has(x)))];
+  return{r,n:w.reduce((t,x)=>t+(txt.includes(' '+x+' ')?(/\d/.test(x)?3:1):0),0)}}).filter(x=>x.n>=2).sort((a,b)=>b.n-a.n);
+ return sc.length&&(sc.length===1||sc[0].n>sc[1].n)?sc[0].r:null}
+const rlOpen=()=>(S.srcReqs||[]).filter(r=>r.status==='Open');
+const rlT=x=>x.t||(x.date?x.date+'T12:00:00Z':'');
+function rlLoose(sid){return[...(S.smsgs||[]).filter(m=>m.supplier===sid&&!m.req&&m.dir==='in'),...(S.squotes||[]).filter(q=>q.supplier===sid&&!q.req&&liveQ(q))]}
+function rlSuggest(sid,items){const open=rlOpen();if(!open.length)return null;const ids=new Set(open.map(r=>r.id));
+ const placed=[...(S.smsgs||[]),...(S.squotes||[])].filter(m=>m.supplier===sid&&m.req&&ids.has(m.req));const used=[...new Set(placed.map(m=>m.req))];
+ if(used.length===1)return{id:used[0],why:'their other messages are on it'};
+ const em=new Set(items.map(x=>x.emailId).filter(Boolean));const subj=(S.emails||[]).filter(m=>em.has(m.id)).map(m=>m.subject).join(' ');
+ const w=rlWords(open,items.map(x=>(x.text||'')+' '+(x.part||'')).join(' ')+' '+subj);if(w)return{id:w.id,why:'the message mentions its part'};
+ if(used.length>1){const last=placed.sort((a,b)=>rlT(a)<rlT(b)?1:-1)[0];return{id:last.req,why:'the RFQ they wrote about last'}}return null}
+function rlAutoFile(){if(!Array.isArray(S.smsgs))return 0;let n=0;const sids=new Set([...S.smsgs.filter(m=>!m.req&&m.dir==='in').map(m=>m.supplier),...(S.squotes||[]).filter(q=>!q.req&&liveQ(q)).map(q=>q.supplier)]);
+ sids.forEach(sid=>{const items=rlLoose(sid);if(!items.length)return;const sg=rlSuggest(sid,items);if(!sg)return;const r=sreq(sg.id);if(!r)return;
+  items.forEach(x=>{x.req=sg.id;x.autoReq=true});n+=items.length;log(`Filed ${items.length} Alibaba message${items.length===1?'':'s'} from ${sup(sid).name} under ${r.no||r.id} automatically (${sg.why})`,[{f:'RFQ',from:'Unmatched',to:r.no||r.id}])});
+ if(n)save();return n}
+const rlRfqOpts=(sel)=>'<option value="">Choose the RFQ…</option>'+rlOpen().map(r=>opt(r.id,`${r.no||r.id} · ${String(r.title||'').slice(0,60)}`,r.id===sel)).join('');
+lnAliView=function(){const {rows,notices}=lnGroups();
+ const need=[],cards=new Map(),other=[];
+ rows.filter(r=>r.fresh).forEach(r=>{const loose=rlLoose(r.sid);if(loose.length){need.push({r,loose});return}
+  const openEm=new Set(r.ems.filter(lnOpen).map(m=>m.id));const hits=r.msgs.filter(m=>m.req&&(openEm.has(m.emailId)||!m.emailId&&m.dir==='in'));
+  const byReq=new Map();hits.forEach(m=>{if(!byReq.has(m.req))byReq.set(m.req,[]);byReq.get(m.req).push(m)});
+  if(!byReq.size){const lastReq=(r.msgs.find(m=>m.req)||{}).req;if(lastReq)byReq.set(lastReq,r.msgs.filter(m=>m.req===lastReq).slice(0,1))}
+  if(!byReq.size){other.push(r);return}
+  byReq.forEach((ms,rid)=>{if(!cards.has(rid))cards.set(rid,[]);cards.get(rid).push({r,ms})})});
+ const snip=t=>esc(String(t||'').replace(typeof TRI_JUNK!=='undefined'?TRI_JUNK:/$^/,'').replace(/\s+/g,' ').trim().slice(0,140));
+ const av=s=>`<div class="ln-av" aria-hidden="true">${esc((s.name||'?').trim()[0]||'?').toUpperCase()}</div>`;
+ const needRow=({r,loose})=>{const sg=rlSuggest(r.sid,loose);const first=loose.find(x=>x.text!=null)||loose[0];const k=(first.text!=null?'sm:':'sq:')+first.id;
+  return `<div class="ln-row fresh" data-pk="${esc(k)}">${av(r.s)}<div class="grow" style="min-width:0"><div class="r1"><b>${esc(r.s.name)}</b>${r.s.contact?` <span class="muted sm">${esc(r.s.contact)}</span>`:''}<span class="sm muted" style="margin-left:auto">${r.t?ago(r.t):''}</span></div>
+   <div class="sm ln-snip">${snip(first.text!=null?first.text:`Quote ${unitCost(first.unitPrice)}${first.moq?', MOQ '+first.moq:''}`)}</div>
+   <div class="rl-pick"><select data-tri-pick="${esc(r.sid)}" aria-label="RFQ for ${esc(r.s.name)}">${rlRfqOpts(sg&&sg.id)}</select>${btn(`Put on RFQ`,'tri-all',{sid:r.sid},'sm primary')}${btn('New RFQ','tri-new',{k:(first.text!=null?'m|':'q|')+first.id},'sm ghost')}${btn('Not needed','ln-done',{sid:r.sid},'sm ghost')}</div>
+   ${sg?`<div class="sm muted" style="margin-top:4px">Suggested because ${esc(sg.why)}.</div>`:''}</div>
+   <div class="ln-act"><button type="button" class="btn sm ln-read" data-k="${esc(k)}">Read</button></div></div>`};
+ const card=([rid,list])=>{const q=sreq(rid)||{};const quotes=(S.squotes||[]).filter(x=>x.req===rid&&liveQ(x));const nNew=list.reduce((t,x)=>t+x.ms.length,0);
+  return `<section class="rl-card"><div class="rl-head"><div class="grow" style="min-width:0"><a href="#/sourcing/${esc(rid)}" class="rl-no">${esc(q.no||rid)}</a> <b>${esc(q.title||'')}</b><div class="sm muted">${list.length} supplier${list.length===1?'':'s'} wrote · ${quotes.length} quote${quotes.length===1?'':'s'} on file${q.qty?` · need ${num(q.qty)}`:''}</div></div>
+   <a class="btn sm primary" href="#/sourcing/${esc(rid)}">Open RFQ</a>${btn('Done','rl-done',{rid},'sm ghost')}</div>
+   ${list.map(({r,ms})=>{const m=ms.slice().sort((a,b)=>rlT(a)<rlT(b)?1:-1)[0];const auto=ms.some(x=>x.autoReq);
+    return `<div class="ln-row rl-sub" data-pk="sm:${esc(m.id)}">${av(r.s)}<div class="grow" style="min-width:0"><div class="r1"><b>${esc(r.s.name)}</b>${r.s.contact?` <span class="muted sm">${esc(r.s.contact)}</span>`:''}<span class="sm muted" style="margin-left:auto">${ago(rlT(m))}</span></div>
+     <div class="sm ln-snip">${snip(m.text)}</div><div class="sm" style="margin-top:3px"><span class="ln-new">${ms.length} new</span>${auto?' <span class="muted">· filed here automatically, Read to move it</span>':''}</div></div>
+     <div class="ln-act"><button type="button" class="btn sm ln-read" data-k="sm:${esc(m.id)}">Read</button></div></div>`}).join('')}
+   <!--${nNew}--></section>`};
+ const cardList=[...cards].sort((a,b)=>{const t=l=>l.reduce((x,y)=>{const v=rlT(y.ms[0]||{});return v>x?v:x},'');return t(b[1])<t(a[1])?-1:1});
+ const quiet=rows.filter(r=>!r.fresh);
+ return `<div class="ln-wrap">
+  <div class="rl-sum">${[[need.length,'need an RFQ','#ef4444'],[cardList.length,'RFQ'+(cardList.length===1?' has':'s have')+' new answers','#f59e0b'],[quiet.length,'quiet suppliers','#94a3b8']].map(([n,l,c])=>`<div><b style="color:${n?c:'#94a3b8'}">${n}</b><span>${l}</span></div>`).join('')}</div>
+  <p class="ln-help sm muted">Supplier answers file themselves under their RFQ. Open the RFQ to compare everyone’s answers and quotes side by side. Reply on Alibaba as usual.</p>
+  ${need.length?`<div class="ln-head"><h3>Needs an RFQ <span class="muted">${need.length}</span></h3></div>${need.map(needRow).join('')}`:''}
+  <div class="ln-head"><h3>New answers by RFQ <span class="muted">${cardList.length}</span></h3>${cardList.length||other.length?btn('Mark all done','ln-done-all',{},'sm'):''}</div>
+  ${cardList.map(card).join('')||'<div class="empty" style="padding:24px">No new supplier answers.</div>'}
+  ${other.length?`<div class="ln-head"><h3>Other new messages <span class="muted">${other.length}</span></h3></div>${other.map(r=>`<div class="ln-row fresh" ${r.last?`data-pk="sm:${esc(r.last.id)}"`:''}>${av(r.s)}<div class="grow" style="min-width:0"><div class="r1"><b>${esc(r.s.name)}</b><span class="sm muted" style="margin-left:auto">${r.t?ago(r.t):''}</span></div><div class="sm ln-snip">${snip(r.last&&r.last.text)}</div></div><div class="ln-act">${r.last?`<button type="button" class="btn sm ln-read" data-k="sm:${esc(r.last.id)}">Read</button>`:''}${btn('Done','ln-done',{sid:r.sid},'sm ghost')}</div></div>`).join('')}`:''}
+  ${quiet.length?`<details class="ln-more"><summary>Quiet suppliers <span class="muted">${quiet.length}</span></summary>${quiet.map(r=>`<div class="ln-row" ${r.last?`data-pk="sm:${esc(r.last.id)}"`:''}>${av(r.s)}<div class="grow" style="min-width:0"><div class="r1"><b>${esc(r.s.name)}</b><span class="sm muted" style="margin-left:auto">${r.t?ago(r.t):''}</span></div><div class="sm ln-snip">${snip(r.last&&r.last.text)}</div></div></div>`).join('')}</details>`:''}
+  ${notices.length?`<details class="ln-more"><summary>Alibaba notices (orders, payments, promotions) <span class="muted">${notices.length}</span></summary><div class="sm muted" style="margin:6px 0">These didn’t contain a supplier message. ${btn('Move all to Trash','ln-trash-notices',{},'sm ghost')}</div>${notices.slice(0,60).map(m=>`<div class="ln-row" data-pk="email:${esc(m.id)}"><div class="grow" style="min-width:0"><div class="r1"><b>${esc(m.subject||'(no subject)')}</b><span class="sm muted" style="margin-left:auto">${ago((lastMsg(m)||{}).t||m.received)}</span></div></div></div>`).join('')}</details>`:''}
+ </div>`};
+A['rl-done']=d=>{const sids=new Set((S.smsgs||[]).filter(m=>m.req===d.rid).map(m=>m.supplier));const rows=lnGroups().rows.filter(r=>r.fresh&&sids.has(r.sid));const n=rows.reduce((t,r)=>t+lnClear(r.ems),0);
+ const q=sreq(d.rid)||{};log(`Cleared ${n} Alibaba email${n===1?'':'s'} for ${q.no||d.rid}`);save();toast(`${q.no||'RFQ'}: done`);rerender()};
+/* file what can be filed whenever the inbox or Sourcing is opened, and every few minutes */
+const _inboxRl=VIEWS.inbox;VIEWS.inbox=id=>{try{if((ui.emLane||'people')==='ali'){rlPurge();rlAutoFile()}}catch(e){}return _inboxRl(id)};
+const _srcRl=VIEWS.sourcing;VIEWS.sourcing=id=>{try{rlAutoFile()}catch(e){}return _srcRl(id)};
+setTimeout(function rlTick(){try{const n=rlPurge()+rlAutoFile();if(n&&['inbox','sourcing','mywork'].includes(parse().r))rerender()}catch(e){}setTimeout(rlTick,18e4)},9000);
+document.head.insertAdjacentHTML('beforeend',`<style>
+.rl-sum{display:flex;gap:10px;margin:0 0 8px;flex-wrap:wrap}.rl-sum>div{display:flex;align-items:baseline;gap:6px;padding:8px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card,#fff)}.rl-sum b{font-size:22px}.rl-sum span{color:var(--muted,#64748b);font-size:13px}
+.rl-card{border:1px solid var(--line);border-left:4px solid #f59e0b;border-radius:12px;background:var(--card,#fff);padding:10px 12px;margin-bottom:12px}
+.rl-head{display:flex;gap:8px;align-items:center;margin-bottom:8px}.rl-no{font-weight:700;color:#b45309;text-decoration:none;margin-right:4px}.rl-no:hover{text-decoration:underline}
+.rl-card .rl-sub{margin:0 0 6px;border-color:transparent;background:rgba(245,158,11,.06)}.rl-card .rl-sub:hover{border-color:#f59e0b}
+.rl-pick{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}.rl-pick select{max-width:420px;min-width:220px}
+</style>`);
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
