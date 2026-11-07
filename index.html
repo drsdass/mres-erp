@@ -3319,6 +3319,136 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 </style>`);
 if(typeof TIP_NAV!=='undefined'){TIP_NAV.crm='Customer accounts: contacts, calls, follow-ups and the sales pipeline.'}
 
+/* ================= Inbox lanes: people in one place, Alibaba in another =================
+   Every Alibaba notification used to land in the inbox as its own email, burying customers and real vendors.
+   Now the inbox has two lanes:
+     People   – customers, vendors and anyone who writes to us directly (the default)
+     Alibaba  – one row per supplier, newest first, with the whole conversation one click away
+   Alibaba emails that are just notices (orders, payments, promotions) are tucked into a section you can clear in one go. */
+const lnIsAli=m=>!!m&&/alibaba/i.test(String(m.from||'')+' '+String(m.fromName||''));
+const lnOpen=m=>!m.read||m.status!=='Closed';
+function lnGroups(){const ali=(S.emails||[]).filter(lnIsAli);const byEm=new Map();
+ (S.smsgs||[]).forEach(x=>{if(x.emailId&&x.supplier)byEm.set(x.emailId,x.supplier)});
+ (S.squotes||[]).forEach(x=>{if(x.emailId&&x.supplier&&!byEm.has(x.emailId))byEm.set(x.emailId,x.supplier)});
+ const g=new Map(),notices=[];
+ /* older emails (from before messages were tied to their email): match the supplier's contact or name in the subject */
+ const sups=(S.suppliers||[]).filter(s=>(S.smsgs||[]).some(x=>x.supplier===s.id&&x.channel==='Alibaba'));
+ const guess=m=>{const t=String(m.subject||'').toLowerCase();const hit=sups.find(s=>{const c=String(s.contact||'').toLowerCase().trim();const n=String(s.name||'').toLowerCase().split(/[ ,.(]/)[0];return (c.length>=4&&t.includes(c))||(n.length>=5&&t.includes(n))});return hit&&hit.id};
+ ali.forEach(m=>{const sid=byEm.get(m.id)||guess(m);if(!sid||!byId(S.suppliers,sid)){notices.push(m);return}if(!g.has(sid))g.set(sid,[]);g.get(sid).push(m)});
+ const rows=[...g].map(([sid,ems])=>{const s=sup(sid);const msgs=(S.smsgs||[]).filter(x=>x.supplier===sid).sort((a,b)=>(a.t||'')<(b.t||'')?1:-1);
+  const last=msgs[0];const t=[last&&last.t,...ems.map(m=>(lastMsg(m)||{}).t||m.received)].filter(Boolean).sort().pop()||'';
+  const fresh=ems.filter(lnOpen).length;const reqs=[...new Set(msgs.map(x=>x.req).filter(Boolean))].map(sreq).filter(Boolean);
+  const loose=msgs.filter(x=>x.dir==='in'&&!x.req).length;
+  return {sid,s,ems,msgs,last,t,fresh,reqs,loose}}).sort((a,b)=>(b.fresh>0)-(a.fresh>0)||(a.t<b.t?1:-1));
+ return {rows,notices:notices.sort((a,b)=>((lastMsg(a)||{}).t||'')<((lastMsg(b)||{}).t||'')?1:-1)}}
+function lnBar(lane){const ali=(S.emails||[]).filter(lnIsAli);const nAli=lnGroups().rows.filter(r=>r.fresh).length;
+ const nPpl=(S.emails||[]).filter(m=>!lnIsAli(m)&&m.cat!=='Promotions'&&needsReply(m)).length;
+ const tab=(k,label,n,c)=>`<button type="button" class="ln-tab ${lane===k?'on':''}" data-action="set" data-key="emLane" data-val="${k}" style="--lc:${c}">${label}${n?` <span class="ln-n">${n}</span>`:''}</button>`;
+ return `<div class="ln-bar" role="tablist" aria-label="Inbox lanes">${tab('people',ic('users',15)+' People',nPpl,'#22b8d6')}${tab('ali',ic('globe',15)+' Alibaba',nAli,'#f59e0b')}<span class="muted sm" style="margin-left:auto">${ali.length?`${ali.length} Alibaba email${ali.length===1?'':'s'} kept out of the People lane`:''}</span></div>`}
+function lnAliView(){const {rows,notices}=lnGroups();const keys=rows.filter(r=>r.last).map(r=>'sm:'+r.last.id);
+ const row=r=>{const snip=String((r.last&&r.last.text)||((lastMsg(r.ems[0])||{}).body)||'').replace(/\s+/g,' ').slice(0,150);
+  const rfq=r.reqs.length?r.reqs.map(q=>chip(q.no||q.id,'ok')).join(' '):'<span class="chip warn">No RFQ yet</span>';
+  return `<div class="ln-row ${r.fresh?'fresh':''}" ${r.last?`data-pk="sm:${esc(r.last.id)}"`:''}>
+   <div class="ln-av" aria-hidden="true">${esc((r.s.name||'?').trim()[0]||'?').toUpperCase()}</div>
+   <div class="grow" style="min-width:0"><div class="r1"><b>${esc(r.s.name)}</b>${r.s.contact?` <span class="muted sm">${esc(r.s.contact)}</span>`:''}<span class="sm muted" style="margin-left:auto">${r.t?ago(r.t):''}</span></div>
+    <div class="sm ln-snip">${esc(snip)||'<span class="muted">No message text</span>'}</div>
+    <div class="sm" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px">${rfq}<span class="muted">${r.msgs.length} message${r.msgs.length===1?'':'s'}</span>${r.loose&&r.reqs.length?`<span class="muted">· ${r.loose} not on an RFQ</span>`:''}${r.fresh?`<span class="ln-new">${r.fresh} new</span>`:''}</div></div>
+   <div class="ln-act">${r.last?`<button type="button" class="btn sm primary ln-read" data-k="sm:${esc(r.last.id)}">Read</button>`:''}${r.fresh?btn('Done','ln-done',{sid:r.sid},'sm ghost'):''}</div></div>`};
+ const fresh=rows.filter(r=>r.fresh),seen=rows.filter(r=>!r.fresh);
+ return `<div class="ln-wrap" data-keys="${esc(keys.join(','))}">
+  <div class="ln-help sm muted">Each supplier is one row, however many Alibaba emails they send. <b>Read</b> opens the whole conversation and lets you put it on an RFQ. <b>Done</b> clears it from the new list. Reply on Alibaba as usual.</div>
+  <div class="ln-head"><h3>New from suppliers <span class="muted">${fresh.length}</span></h3>${fresh.length?btn('Mark all done','ln-done-all',{},'sm'):''}</div>
+  ${fresh.map(row).join('')||'<div class="empty" style="padding:24px">All caught up. Nothing new from Alibaba suppliers.</div>'}
+  ${seen.length?`<details class="ln-more"><summary>Earlier conversations <span class="muted">${seen.length}</span></summary>${seen.map(row).join('')}</details>`:''}
+  ${notices.length?`<details class="ln-more"><summary>Alibaba notices (orders, payments, promotions) <span class="muted">${notices.length}</span></summary>
+   <div class="sm muted" style="margin:6px 0">These didn’t contain a supplier message. ${btn('Move all to Trash','ln-trash-notices',{},'sm ghost')}</div>
+   ${notices.slice(0,60).map(m=>`<div class="ln-row" data-pk="email:${esc(m.id)}"><div class="grow" style="min-width:0"><div class="r1"><b>${esc(m.subject||'(no subject)')}</b><span class="sm muted" style="margin-left:auto">${ago((lastMsg(m)||{}).t||m.received)}</span></div><div class="sm ln-snip">${esc(String((lastMsg(m)||{}).body||'').replace(/\s+/g,' ').slice(0,140))}</div></div></div>`).join('')}</details>`:''}
+ </div>`}
+/* the "Unassigned" count at the top shouldn't count Alibaba notifications either */
+function lnKpi(h){if(typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ const n=(S.emails||[]).filter(m=>!lnIsAli(m)&&m.cat!=='Promotions'&&!m.owner&&m.status!=='Closed').length;
+ [...t.content.querySelectorAll('*')].filter(e=>!e.children.length&&e.textContent.trim()==='Unassigned').forEach(l=>{const v=l.nextElementSibling;if(v&&/^\d+$/.test(v.textContent.trim()))v.textContent=n});return t.innerHTML}
+const _inboxLane=VIEWS.inbox;VIEWS.inbox=id=>{const lane=ui.emLane||'people';const sel=id?byId(S.emails,id):null;
+ if(ui.emF==='Trash'&&!id)return _inboxLane(id);
+ if(lane==='ali'&&!id){const h=lnKpi(_inboxLane(null));const cut=h.indexOf('<div class="toolbar">');return (cut>0?h.slice(0,cut):'')+lnBar(lane)+lnAliView()}
+ let h=lnKpi(_inboxLane(id));
+ /* People lane: take Alibaba emails out of the list (but keep the one being read, if you opened it from elsewhere) */
+ if(typeof document!=='undefined'){const t=document.createElement('template');t.innerHTML=h;
+  t.content.querySelectorAll('.ilist a.im').forEach(a=>{const mid=(a.getAttribute('href')||'').split('/').pop();const m=byId(S.emails,mid);if(lnIsAli(m)&&!(sel&&sel.id===mid))a.remove()});
+  const list=t.content.querySelector('.ilist');if(list&&!list.querySelector('a.im')&&!list.querySelector('.empty'))list.insertAdjacentHTML('beforeend','<div class="empty">Nothing here. Alibaba emails are in the Alibaba lane.</div>');
+  const tb=t.content.querySelector('.toolbar');if(tb)tb.insertAdjacentHTML('beforebegin',lnBar(lane));h=t.innerHTML}
+ return h};
+function lnClear(ems){let n=0;ems.forEach(m=>{if(lnOpen(m)){m.read=true;if(m.status!=='Closed')m.status='Closed';m.sorted=true;n++}});return n}
+A['ln-done']=d=>{const g=lnGroups().rows.find(r=>r.sid===d.sid);if(!g)return;const n=lnClear(g.ems);log(`Cleared ${n} Alibaba email${n===1?'':'s'} from ${g.s.name}`);save();toast(`${g.s.name}: done`);rerender()};
+A['ln-done-all']=()=>{const rows=lnGroups().rows.filter(r=>r.fresh);const n=rows.reduce((t,r)=>t+lnClear(r.ems),0);log(`Cleared ${n} Alibaba emails from ${rows.length} suppliers`);save();toast(`Cleared ${rows.length} supplier${rows.length===1?'':'s'}`);rerender()};
+A['ln-trash-notices']=()=>{const ids=lnGroups().notices.map(m=>m.id);if(!ids.length)return;const n=trashMails(ids,'Alibaba notice');toast(`${n} notice${n===1?'':'s'} moved to Trash (kept 30 days)`);rerender()};
+/* the Read button opens the reader for that supplier, with Next/Prev running through the rest of the list */
+document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('.ln-read');if(!b)return;e.preventDefault();const w=b.closest('.ln-wrap');
+ const list=[...(w?w.querySelectorAll('.ln-row[data-pk^="sm:"]'):[])].map(x=>x.dataset.pk);const k=b.dataset.k,i=k.indexOf(':');pkOpen(k.slice(0,i),k.slice(i+1),[...new Set(list)])});
+/* reading a supplier's conversation counts as seeing their Alibaba emails */
+const _pkShowLn=pkShow;pkShow=function(){_pkShowLn();try{if(PK&&PK.kind==='sm'){const x=byId(S.smsgs,PK.id);if(x){let ch=false;(S.emails||[]).filter(m=>lnIsAli(m)&&!m.read&&(S.smsgs||[]).some(y=>y.emailId===m.id&&y.supplier===x.supplier)).forEach(m=>{m.read=true;ch=true});if(ch)save()}}}catch(err){}};
+if(typeof TIP_TEXT!=='undefined'){TIP_TEXT['People']='Emails from customers, vendors and anyone who writes to us directly.';TIP_TEXT['Alibaba']='Alibaba messages, one row per supplier. Read the whole conversation and put it on an RFQ.'}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.ln-bar{display:flex;gap:6px;align-items:center;margin:4px 0 10px;flex-wrap:wrap}
+.ln-tab{border:1px solid var(--line);background:var(--card,#fff);color:inherit;border-radius:999px;padding:6px 14px;font:inherit;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.ln-tab.on{background:var(--lc);border-color:var(--lc);color:#fff}.ln-tab:not(.on):hover{border-color:var(--lc)}
+.ln-n{background:#ef4444;color:#fff;border-radius:9px;padding:0 6px;font-size:11px}.ln-tab.on .ln-n{background:rgba(255,255,255,.25)}
+.ln-wrap{max-width:980px}.ln-help{margin-bottom:10px}.ln-head{display:flex;align-items:center;justify-content:space-between;margin:6px 0}.ln-head h3{margin:0;font-size:15px}
+.ln-row{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--card,#fff);cursor:pointer}
+.ln-row:hover{border-color:#f59e0b}.ln-row.fresh{border-left:4px solid #f59e0b}
+.ln-row .r1{display:flex;gap:6px;align-items:baseline}.ln-snip{color:var(--muted,#64748b);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ln-av{width:34px;height:34px;border-radius:50%;background:#fef3c7;color:#b45309;display:grid;place-items:center;font-weight:700;flex:none}
+.ln-new{background:#f59e0b;color:#fff;border-radius:9px;padding:0 7px;font-weight:700}.ln-act{display:flex;flex-direction:column;gap:6px;flex:none}
+.ln-more{margin-top:14px}.ln-more summary{cursor:pointer;font-weight:600;margin-bottom:8px}
+</style>`);
+
+/* ================= Select several emails at once: mark done, assign or trash them together ================= */
+const lnPick=()=>Array.isArray(ui.lnPick)?ui.lnPick:(ui.lnPick=[]);
+function lnBulkBar(){const n=lnPick().length;return `<div class="ln-bulk"><b><span id="ln-bulk-n">${n}</span> selected</b>
+ <button type="button" class="btn sm ghost" data-action="ln-pick-all">Select all shown</button>
+ <button type="button" class="btn sm" data-action="ln-bulk" data-op="done">${ic('check',14)} Mark done</button>
+ <span style="display:inline-flex;gap:4px;align-items:center"><select id="ln-bulk-who" aria-label="Assign to">${owners().map(o=>opt(o,o,o===USER.name)).join('')}</select><button type="button" class="btn sm" data-action="ln-bulk" data-op="assign">Assign</button></span>
+ <button type="button" class="btn sm ghost" data-action="ln-bulk" data-op="trash">Move to Trash</button>
+ <button type="button" class="btn sm ghost" data-action="ln-sel" style="margin-left:auto">Cancel</button></div>`}
+const _inboxBulk=VIEWS.inbox;VIEWS.inbox=id=>{let h=_inboxBulk(id);const lane=ui.emLane||'people';if(lane==='ali'&&!id||ui.emF==='Trash'||typeof document==='undefined')return h;
+ const t=document.createElement('template');t.innerHTML=h;const tb=t.content.querySelector('.toolbar');
+ if(tb&&!ui.lnSel)tb.insertAdjacentHTML('afterbegin',`<button type="button" class="btn" data-action="ln-sel" title="Pick several emails, then mark them done, assign them or trash them together">${ic('check',15)} Select</button>`);
+ if(tb&&ui.lnSel){tb.insertAdjacentHTML('afterend',lnBulkBar());const list=t.content.querySelector('.ilist');if(list){list.classList.add('ln-pickable');const p=new Set(lnPick());
+  list.querySelectorAll('a.im').forEach(a=>{const mid=(a.getAttribute('href')||'').split('/').pop();a.dataset.lnid=mid;if(p.has(mid))a.classList.add('picked');a.insertAdjacentHTML('afterbegin','<span class="ln-ck" aria-hidden="true"></span>')})}}
+ /* conversations closed automatically today: say so, with an undo */
+ const auto=(S.emails||[]).filter(m=>m.autoClosed===TODAY&&m.status==='Closed'&&!lnIsAli(m));
+ if(tb&&auto.length&&!id)tb.insertAdjacentHTML('beforebegin',`<div class="ln-auto sm">${ic('check',14)} ${auto.length} conversation${auto.length===1?' was':'s were'} closed today because we answered last and nobody wrote back in 14 days. They reopen by themselves if the customer replies. <button type="button" class="link sm" data-action="set" data-key="emF" data-val="Closed">See them</button> · <button type="button" class="link sm" data-action="ln-auto-undo">Undo</button></div>`);
+ return t.innerHTML};
+A['ln-sel']=()=>{ui.lnSel=!ui.lnSel;ui.lnPick=[];if(ui.lnSel&&parse().id)location.hash='#/inbox';rerender()};
+const lnBulkCount=()=>{const n=$('#ln-bulk-n');if(n)n.textContent=lnPick().length};
+document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('.ilist.ln-pickable a.im');if(!a)return;e.preventDefault();e.stopPropagation();
+ const id=a.dataset.lnid,p=lnPick(),i=p.indexOf(id);if(i<0)p.push(id);else p.splice(i,1);a.classList.toggle('picked',i<0);lnBulkCount()},true);
+A['ln-pick-all']=()=>{const p=lnPick();$$('.ilist.ln-pickable a.im').forEach(a=>{if(a.hidden)return;if(!p.includes(a.dataset.lnid))p.push(a.dataset.lnid);a.classList.add('picked')});lnBulkCount()};
+A['ln-bulk']=d=>{const ms=lnPick().map(id=>byId(S.emails,id)).filter(Boolean);if(!ms.length)return toast('Click the emails you want first.',true);const n=ms.length,s=n===1?'':'s';
+ if(d.op==='done'){ms.forEach(m=>{m.status='Closed';m.read=true;m.sorted=true});log(`Marked ${n} email${s} done`);toast(`${n} email${s} marked done`)}
+ else if(d.op==='assign'){const who=($('#ln-bulk-who')||{}).value;if(!who)return;ms.forEach(m=>{m.owner=who;if(m.status==='New')m.status='Open'});log(`Assigned ${n} email${s} to ${who}`);toast(`${n} email${s} assigned to ${who}`)}
+ else if(d.op==='trash'){if(!confirmBox(`Move ${n} email${s} to Trash? You can restore them for 30 days.`))return;trashMails(ms.map(m=>m.id),'bulk');toast(`${n} email${s} moved to Trash`)}
+ ui.lnPick=[];ui.lnSel=false;save();rerender()};
+
+/* ================= Close dead conversations automatically =================
+   We answered last and nobody wrote back in 14 days → Closed (a new reply from them reopens it).
+   Alibaba emails older than 14 days are cleared from the new list the same way. */
+const LN_DAYS=14;
+function lnAutoClose(){if(!S||!Array.isArray(S.emails))return 0;const cut=Date.now()-LN_DAYS*864e5;let n=0,a=0;
+ S.emails.forEach(m=>{if(m.demo||m.keepOpen)return;const last=lastMsg(m)||{};const t=Date.parse(last.t||m.received||'');if(!(t<cut))return;
+  if(lnIsAli(m)){if(lnOpen(m)){m.read=true;m.status='Closed';m.sorted=true;a++}return}
+  if(m.status!=='Closed'&&m.cat!=='Promotions'&&last.dir==='out'){m.status='Closed';m.autoClosed=TODAY;n++}});
+ if(n||a){log(`Closed ${n} quiet conversation${n===1?'':'s'} and ${a} old Alibaba email${a===1?'':'s'} automatically (no reply in ${LN_DAYS} days)`);save()}return n+a}
+A['ln-auto-undo']=()=>{const ms=(S.emails||[]).filter(m=>m.autoClosed===TODAY&&m.status==='Closed');ms.forEach(m=>{m.status='Waiting on customer';m.keepOpen=true;delete m.autoClosed});log(`Reopened ${ms.length} automatically closed conversation${ms.length===1?'':'s'}`);save();toast(`${ms.length} reopened. They won’t be closed automatically again.`);rerender()};
+setTimeout(function lnTick(){try{if(lnAutoClose()&&parse().r==='inbox')rerender()}catch(e){}setTimeout(lnTick,36e5)},12000);
+document.head.insertAdjacentHTML('beforeend',`<style>
+.ln-bulk{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;margin:-2px 0 10px;border-radius:10px;background:rgba(34,184,214,.1);border:1px solid rgba(34,184,214,.35)}
+.ilist.ln-pickable a.im{position:relative;padding-left:40px;cursor:pointer}.ilist.ln-pickable a.im.picked{background:rgba(34,184,214,.12)}
+.ln-ck{position:absolute;left:12px;top:14px;width:18px;height:18px;border:2px solid #94a3b8;border-radius:5px;background:var(--card,#fff)}
+a.im.picked .ln-ck{background:#22b8d6;border-color:#22b8d6}a.im.picked .ln-ck::after{content:"";position:absolute;left:4px;top:0;width:5px;height:10px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.ln-auto{padding:8px 12px;border-radius:10px;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);margin-bottom:10px}
+</style>`);
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
