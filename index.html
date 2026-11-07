@@ -2828,8 +2828,8 @@ function trailFor(o){let fr=o.fr||null,r=o.rfq?sreq(o.rfq):null,po=o.po?byId(S.p
  const qty=po?sum(po.lines,l=>+l.qty||0):0,rec=po?sum(po.lines,l=>+l.received||0):0;const sku=(po&&po.lines[0]&&po.lines[0].sku)||(r&&r.sku)||'';const it=sku?item(sku):null;
  const S_=[
   {l:'Request',on:!!fr,v:fr?fr.id:'—',a:fr?`data-action="fr-open" data-id="${esc(fr.id)}"`:'',s:fr?`${num(fr.qty)} for ${esc(fr.from)}`:''},
-  {l:'RFQ',on:!!r,v:r?(r.no||r.id):'—',a:r?`data-action="go" data-to="sourcing/${esc(r.id)}"`:'',s:r?esc(r.status):''},
-  {l:'Quotes',on:qs.length>0,v:qs.length?`${qs.length}`:'none yet',s:best?`best ${unitCost(landed(best))}`:'',a:r?`data-action="go" data-to="sourcing/${esc(r.id)}"`:''},
+  {l:'RFQ',on:!!r,v:r?(r.no||r.id):'—',a:r?`data-action="go" data-to="sourcing/${esc(r.id)}"`:'',s:r?(r.status==='Open'?(r.posted?'Posted '+fds(r.posted):(r.emailedTo||[]).length?'Emailed to '+r.emailedTo.length:'Not posted yet'):esc(r.status)):''},
+  {l:'Quotes',on:qs.length>0,v:qs.length?`${qs.length}`:'none yet',s:best?`best ${unitCost(landed(best))}`:(r&&r.status==='Open'&&(r.posted||(r.emailedTo||[]).length)?'waiting on suppliers':''),a:r?`data-action="go" data-to="sourcing/${esc(r.id)}"`:''},
   {l:'Awarded',on:!!aw,v:aw?esc(sup(aw.supplier).name.split(' ').slice(0,2).join(' ')):'—',s:aw?unitCost(aw.unitPrice):'',a:aw?`data-action="sup" data-id="${esc(aw.supplier)}"`:''},
   {l:'PO',on:!!po,v:po?po.id:'—',s:po?esc(po.status):'',a:po?`data-action="go" data-to="purchasing" data-tk="purchasing" data-tv="Purchase orders"`:''},
   {l:'Shipped',on:trk.length>0,v:trk.length?esc(trk[0].carrier||'Tracking'):'—',s:trk.length?(trk[0].delivered?'delivered':trk[0].eta?'due '+fd(trk[0].eta):''):'',a:trk.length?`data-action="go" data-to="shipments"`:''},
@@ -3660,8 +3660,8 @@ const aqDays=s=>{const t=Date.parse(String(s||'').length===10?s+'T12:00:00':s);r
 const aqD=n=>n===0?'today':n===1?'1 day':n+' days';
 function aqAge(q){if(!q||q.status!=='Open')return null;const qs=(S.squotes||[]).filter(x=>x.req===q.id&&liveQ(x));const em=q.emailedTo||[];
  const sent=q.posted||(em.length?em.map(x=>x.on).sort()[0]:null);let a;
- if(!sent){const n=aqDays(q.created);a={l:`Not posted · ${n?aqD(n):'new today'}`,t:n>=2?'alert':n>=1?'warn':'info'}}
- else if(!qs.length){const n=aqDays(sent);a={l:`${q.posted?'Posted':'Emailed'} ${n?aqD(n)+' ago':'today'} · no quotes yet`,t:n>=3?'alert':n>=2?'warn':'info'}}
+ if(!sent){const n=aqDays(q.created);a={l:`RFQ not posted yet · ${n?aqD(n):'made today'}`,t:n>=2?'alert':n>=1?'warn':'info'}}
+ else if(!qs.length){const n=aqDays(sent);a={l:`${q.posted?'Posted':'Emailed'} ${n?aqD(n)+' ago':'today'} · waiting on suppliers`,t:n>=3?'alert':n>=2?'warn':'info'}}
  else{const first=qs.map(x=>x.date||'').filter(Boolean).sort()[0];const n=aqDays(first);a={l:`${qs.length} quote${qs.length===1?'':'s'} · ${n>=2?'waiting '+aqD(n)+' for a pick':'pick one'}`,step:`Pick a supplier · ${n>=1?'waiting '+aqD(n):'quotes ready'}`,t:n>=3?'alert':n>=2?'warn':'ok'}}
  if(q.needBy){const d=dd(q.needBy);a.due=d<0?{l:`${aqD(-d)} late`,t:'alert'}:{l:d===0?'needed today':`needed in ${aqD(d)}`,t:d<=7?'warn':'plain'}}return a}
 const aqTag=a=>a?`<span class="aq-age ${a.t}">${esc(a.l)}</span>${a.due?` <span class="aq-age ${a.due.t}">${esc(a.due.l)}</span>`:''}`:'';
@@ -3698,6 +3698,11 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 #mform.aq-dock .mbody{overflow:auto;flex:1}.aq-hint{background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 10px;margin-bottom:10px}
 .aq-alibtn{background:#f59e0b;border-color:#f59e0b;color:#fff}.aq-alibtn:hover{background:#d97706}
 </style>`);
+
+/* one status line (the "Where this stands" strip shows the stages, so no second strip) */
+aqSteps=function(q){const a=aqAge(q);if(!a)return `<div class="aq-steps"><b>${esc(q.no)}</b> <span class="sm muted">${esc(q.status)}</span></div>`;
+ return `<div class="aq-steps"><b>${esc(q.no)}</b> <span class="aq-age ${a.t}">${esc(a.step||a.l)}</span>${a.due?` <span class="aq-age ${a.due.t}">${esc(a.due.l)}</span>`:''}</div>`};
+document.head.insertAdjacentHTML('beforeend','<style>td .aq-age{white-space:normal}.aq-steps{gap:8px}</style>');
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
