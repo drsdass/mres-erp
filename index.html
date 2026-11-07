@@ -3649,6 +3649,37 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .aq-mini{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:12px}.aq-list{max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:6px}
 </style>`);
 
+/* ================= How long has it been? An age tag on every RFQ and part request =================
+   Not posted · 2 days  →  Posted 4 days ago · no quotes  →  3 quotes · pick one  , plus a need-by countdown. */
+const aqDays=s=>{const t=Date.parse(String(s||'').length===10?s+'T12:00:00':s);return isNaN(t)?0:Math.max(0,Math.floor((Date.now()-t)/864e5))};
+const aqD=n=>n===0?'today':n===1?'1 day':n+' days';
+function aqAge(q){if(!q||q.status!=='Open')return null;const qs=(S.squotes||[]).filter(x=>x.req===q.id&&liveQ(x));const em=q.emailedTo||[];
+ const sent=q.posted||(em.length?em.map(x=>x.on).sort()[0]:null);let a;
+ if(!sent){const n=aqDays(q.created);a={l:`Not posted · ${n?aqD(n):'new today'}`,t:n>=2?'alert':n>=1?'warn':'info'}}
+ else if(!qs.length){const n=aqDays(sent);a={l:`${q.posted?'Posted':'Emailed'} ${n?aqD(n)+' ago':'today'} · no quotes yet`,t:n>=3?'alert':n>=2?'warn':'info'}}
+ else{const first=qs.map(x=>x.date||'').filter(Boolean).sort()[0];const n=aqDays(first);a={l:`${qs.length} quote${qs.length===1?'':'s'} · ${n>=2?'waiting '+aqD(n)+' for a pick':'pick one'}`,step:`Pick a supplier · ${n>=1?'waiting '+aqD(n):'quotes ready'}`,t:n>=3?'alert':n>=2?'warn':'ok'}}
+ if(q.needBy){const d=dd(q.needBy);a.due=d<0?{l:`${aqD(-d)} late`,t:'alert'}:{l:d===0?'needed today':`needed in ${aqD(d)}`,t:d<=7?'warn':'plain'}}return a}
+const aqTag=a=>a?`<span class="aq-age ${a.t}">${esc(a.l)}</span>${a.due?` <span class="aq-age ${a.due.t}">${esc(a.due.l)}</span>`:''}`:'';
+/* the progress line names the wait, not just the step */
+const _aqStepsAge=aqSteps;aqSteps=function(q){let h=_aqStepsAge(q);const a=aqAge(q);if(!a)return h;
+ const t=document.createElement('template');t.innerHTML=h;const cur=t.content.querySelector('.aq-st.next');if(cur)cur.textContent=a.step||a.l;
+ const box=t.content.querySelector('.aq-steps');if(box&&a.due)box.insertAdjacentHTML('beforeend',` <span class="aq-age ${a.due.t}" style="margin-left:8px">${esc(a.due.l)}</span>`);return t.innerHTML};
+/* RFQ list and part request list */
+const _srcAge=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcAge(id);if(id||typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ t.content.querySelectorAll('tr[data-href^="#/sourcing/"]').forEach(tr=>{const q=sreq(tr.getAttribute('data-href').split('/').pop());const a=aqAge(q);if(a&&tr.cells[0])tr.cells[0].insertAdjacentHTML('beforeend',`<div style="margin-top:3px">${aqTag(a)}</div>`)});return t.innerHTML};
+const _reqAge=VIEWS.requests;VIEWS.requests=id=>{const h=_reqAge(id);if(typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ t.content.querySelectorAll('tr[data-action="fr-open"]').forEach(tr=>{const r=fr(tr.dataset.id);if(!r||!FR_OPEN(r.status))return;const q=r.rfq&&sreq(r.rfq);const a=q?aqAge(q):null;const cell=tr.cells[tr.cells.length-1];if(!cell)return;
+  if(a)cell.insertAdjacentHTML('beforeend',`<div style="margin-top:3px"><span class="sm muted">${esc(q.no)}</span> ${aqTag({...a,due:null})}</div>`);
+  else if(!q){const n=aqDays(r.created);cell.insertAdjacentHTML('beforeend',`<div style="margin-top:3px">${aqTag({l:`No RFQ · ${n?aqD(n):'today'}`,t:n>=1?'warn':'info'})}</div>`)}});return t.innerHTML};
+/* RFQ cards in the Suppliers lane */
+const _rlAge=lnAliView;lnAliView=function(){const h=_rlAge();const t=document.createElement('template');t.innerHTML=h;
+ t.content.querySelectorAll('.rl-card .rl-no').forEach(a=>{const q=sreq(a.getAttribute('href').split('/').pop());const g=aqAge(q);const sub=a.parentElement.querySelector('.sm.muted');if(g&&sub)sub.insertAdjacentHTML('beforeend',` · ${aqTag(g)}`)});return t.innerHTML};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.aq-age{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.aq-age.info,.aq-age.plain{background:var(--line,#e5e7eb);color:var(--muted,#475569)}.aq-age.ok{background:rgba(16,185,129,.15);color:#047857}
+.aq-age.warn{background:#fef3c7;color:#b45309}.aq-age.alert{background:rgba(239,68,68,.14);color:#b91c1c}
+</style>`);
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
