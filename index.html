@@ -3553,6 +3553,102 @@ const _inboxRs=VIEWS.inbox;VIEWS.inbox=id=>{rsRun();return _inboxRs(id)};
 const _srcRs=VIEWS.sourcing;VIEWS.sourcing=id=>{rsRun();return _srcRs(id)};
 setTimeout(function rsTick(){if(rsRun()&&['inbox','sourcing','mywork'].includes(parse().r))rerender();setTimeout(rsTick,12e4)},7000);
 
+/* ================= Part request → RFQ → Alibaba post, with as little typing as possible =================
+   1. A new part request becomes an RFQ by itself (marked "Not posted yet").
+   2. The Alibaba post is written from the request. "Post on Alibaba" copies it and opens Alibaba's RFQ page in a new
+      tab of the same browser, so whoever is signed in to Alibaba there is already signed in. Paste, attach, submit.
+      The ERP never signs in to Alibaba and never sees the password.
+   3. "Email suppliers" sends the RFQ from sourcing@ to suppliers we already know; replies file under the RFQ.
+   4. Everyone sees where it stands: Request → RFQ → Posted / Emailed → Quotes → Ordered. */
+const AQ_URL=()=>S.aliRfqUrl||'https://rfq.alibaba.com/';
+const AQ_FROM=typeof SOURCING_INBOX!=='undefined'?SOURCING_INBOX:'sourcing@massrenewable.com';
+function aqText(v){const L=[];
+ L.push(`Product: ${v.title}`);L.push(`Quantity: ${num(v.qty)} ${v.unit||'pcs'}`);if(v.partNo)L.push(`Part / model number: ${v.partNo}`);
+ if(v.specs)L.push(`Specifications: ${String(v.specs).trim()}`);L.push(`Delivery: ${v.incoterm||'DDP'} to ${v.dest||'USA'}`);if(v.needBy)L.push(`Needed by: ${longDate(v.needBy)}`);
+ L.push('','Please quote: unit price, MOQ, lead time, shipping cost to the USA, and payment terms. Photos or a spec sheet of your part help.');
+ if(v.no)L.push(`Reference: ${v.no} (please put this number in your reply)`);return L.join('\n')}
+const aqOf=q=>aqText({title:q.title,qty:q.qty,unit:q.unit,partNo:'',specs:q.specs,incoterm:q.incoterm,dest:q.dest,needBy:q.needBy,no:q.no});
+async function aqCopy(t){try{await navigator.clipboard.writeText(t);return true}catch(e){try{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();const ok=document.execCommand('copy');a.remove();return ok}catch(x){return false}}}
+function aqOpen(t){const w=window.open(AQ_URL(),'_blank','noopener');aqCopy(t).then(ok=>toast(ok?'Post copied. Paste it into Alibaba’s form, attach the spec sheet, and submit.':'Alibaba opened. Copy the post from the ERP and paste it in.',!ok));return w}
+const aqReqOf=q=>(typeof frs==='function'?frs():[]).find(r=>r.rfq===q.id);
+
+/* ---------- 1. every new part request gets its RFQ ---------- */
+function aqMake(r){const id=nextId(S.srcReqs,'SR-'),no=nextRfqNo(TODAY);const team=typeof TEAM!=='undefined'?TEAM:[];
+ const owner=r.assignee&&r.assignee!=='Anyone'?r.assignee:(r.from||USER.name);
+ const q={id,no,title:r.what+(r.partNo?` (${r.partNo})`:''),sku:'',qty:+r.qty||1,unit:r.unit||'pcs',owner,watchers:[...new Set([r.from,'Satish'].filter(x=>x&&x!==owner))],needBy:r.needBy||null,
+  specs:[r.specs,r.partNo?'Part / model: '+r.partNo:''].filter(Boolean).join('\n'),certs:'',drawings:'',incoterm:'DDP',dest:'',target:r.budget??null,freight:0,duty:0,
+  notes:`From part request ${r.id} (${r.from}, for ${r.forWhat})${(r.files||[]).length?'. Spec files on the request: '+r.files.map(f=>f.name).join(', '):''}`,status:'Open',created:TODAY,alibabaUrl:'',fromReq:r.id,posted:null,emailedTo:[]};
+ S.srcReqs.push(q);r.rfq=id;if(r.status==='New')r.status='Looking';(r.thread=r.thread||[]).push({t:new Date().toISOString(),user:'ERP',sys:true,text:`Created ${no} automatically. Next: post it on Alibaba or email suppliers.`});
+ log(`Created ${no} automatically from part request ${r.id}`,[{f:'RFQ',from:'blank',to:no}]);return q}
+function aqAuto(){if(typeof frs!=='function'||typeof nextRfqNo!=='function')return 0;if(!S.aqSince){S.aqSince=new Date().toISOString();save();return 0}
+ if(typeof ensureSourcing==='function')ensureSourcing();let n=0;
+ frs().forEach(r=>{if(r.rfq||r.demo||!['New','Looking'].includes(r.status)||!(+r.qty>0)||!String(r.what||'').trim()||(r.created||'')<S.aqSince)return;aqMake(r);n++});
+ /* tell the requester (via info@ and the request's thread) when the first quote arrives */
+ frs().forEach(r=>{const q=r.rfq&&sreq(r.rfq);if(!q||r.aqQuoted)return;const qs=(S.squotes||[]).filter(x=>x.req===q.id&&liveQ(x));if(!qs.length)return;r.aqQuoted=TODAY;
+  (r.thread=r.thread||[]).push({t:new Date().toISOString(),user:'ERP',sys:true,text:`First quote is in on ${q.no}${qs[0].unitPrice!=null?': '+unitCost(qs[0].unitPrice)+' each from '+sup(qs[0].supplier).name:''}.`});
+  if(r.status==='Looking')r.status='Quoted';if(typeof frNotify==='function')frNotify(r,`First supplier quote is in on ${q.no}.`);n++});
+ if(n)save();return n}
+
+/* ---------- 2 + 3. the post panel on the RFQ ---------- */
+function aqSteps(q){const r=aqReqOf(q)||(q.fromReq&&typeof fr==='function'?fr(q.fromReq):null);const qs=(S.squotes||[]).filter(x=>x.req===q.id&&liveQ(x));
+ const ordered=(S.pos||[]).some(p=>p.rfq===q.id)||q.status==='Awarded'||q.po;const em=(q.emailedTo||[]).length;
+ const st=[[r?'Request '+r.id:'Request',!!r||true],[q.no,true],[q.posted?'Posted on Alibaba':em?`Emailed to ${em}`:'Not posted yet',!!(q.posted||em)],[qs.length?`${qs.length} quote${qs.length===1?'':'s'}`:'Quotes',qs.length>0],['Ordered',!!ordered]];
+ return `<div class="aq-steps">${st.map(([l,on],i)=>`<span class="aq-st ${on?'on':''} ${!on&&st.slice(0,i).every(x=>x[1])?'next':''}">${esc(l)}</span>`).join('<span class="aq-ar">›</span>')}</div>`}
+function aqPanel(q){if(!q||q.status!=='Open')return'';const t=aqOf(q);const em=q.emailedTo||[];
+ return `<section class="panel aq-panel"><div class="ph"><h3>${ic('globe',16)} Get quotes for ${esc(q.no)}</h3></div>${aqSteps(q)}
+  <div class="aq-row"><button type="button" class="btn primary" data-action="aq-post" data-id="${esc(q.id)}">${ic('globe',15)} Post on Alibaba</button>
+   ${q.posted?`<span class="sm">Posted ${fd(q.posted)}${q.alibabaUrl?` · <a class="link" href="${esc(q.alibabaUrl)}" target="_blank" rel="noopener">see it on Alibaba</a>`:''}</span>`:btn('Mark posted','aq-posted',{id:q.id},'')}
+   ${btn(ic('mail',15)+' Email suppliers','aq-email',{id:q.id},'')}${em.length?`<span class="sm muted">Emailed ${em.length}: ${esc(em.map(x=>x.name).slice(0,4).join(', '))}${em.length>4?'…':''}</span>`:''}</div>
+  <p class="sm muted" style="margin:8px 16px 4px">Post on Alibaba copies the text below and opens Alibaba in a new tab. If you’re signed in to Alibaba in this browser you’ll already be signed in there: paste, attach the spec sheet, submit, then click Mark posted.</p>
+  <details><summary class="sm">See the post</summary><pre class="aq-pre">${esc(t)}</pre></details></section>`}
+A['aq-post']=d=>{const q=sreq(d.id);if(!q)return;aqOpen(aqOf(q))};
+A['aq-posted']=d=>{const q=sreq(d.id);if(!q)return;modal(`${q.no} posted on Alibaba`,`<div class="fg">${fld('Link to the RFQ on Alibaba (optional)',inp('url',q.alibabaUrl||'','placeholder="Paste the address of your posted RFQ"'),true)}</div>`,{label:'Mark posted',submit:v=>{
+ q.posted=TODAY;q.alibabaUrl=(v.url||'').trim();log(`Posted ${q.no} on Alibaba`,[{f:'Posted',from:'Not yet',to:fd(TODAY)}]);const r=aqReqOf(q);
+ if(r){(r.thread=r.thread||[]).push({t:new Date().toISOString(),user:USER.name,sys:true,text:`${q.no} posted on Alibaba${q.alibabaUrl?': '+q.alibabaUrl:''}`});if(typeof frNotify==='function')frNotify(r,`${USER.name} posted ${q.no} on Alibaba. Supplier answers will show up on the RFQ.`)}
+ save();toast(`${q.no} marked posted`);rerender()}})};
+function aqCandidates(q){const words=new Set(String(q.title+' '+(q.specs||'')).toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(w=>w.length>2&&!(typeof RL_STOP!=='undefined'&&RL_STOP.has(w))));
+ return(S.suppliers||[]).filter(s=>s.email&&/@/.test(s.email)).map(s=>{const past=(S.srcReqs||[]).filter(r=>r.id!==q.id&&[...(S.smsgs||[]),...(S.squotes||[])].some(x=>x.supplier===s.id&&x.req===r.id));
+  const score=past.reduce((t,r)=>t+String(r.title).toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(w=>words.has(w)).length,0);return{s,score,past}}).sort((a,b)=>b.score-a.score||a.s.name.localeCompare(b.s.name))}
+A['aq-email']=d=>{const q=sreq(d.id);if(!q)return;const c=aqCandidates(q);const sent=new Set((q.emailedTo||[]).map(x=>x.id));
+ if(!c.length)return toast('No suppliers with an email address yet. Add their email on the supplier, or use Post on Alibaba.',true);
+ const body=`Hello,\n\nWe are looking for the part below. Could you send us your best quote?\n\n${aqOf(q)}\n\nThank you,`;
+ modal(`Email ${q.no} to suppliers`,`<p class="muted sm" style="margin-top:0">Each supplier gets their own email from ${esc(AQ_FROM)} with ${esc(q.no)} in the subject, so their answers file under this RFQ. Ticked: suppliers who have quoted similar parts.</p>
+  <div class="aq-list">${c.map(x=>`<label class="check-inline aq-sup"><input type="checkbox" name="sup" value="${esc(x.s.id)}" ${x.score>0&&!sent.has(x.s.id)?'checked':''}> <b>${esc(x.s.name)}</b> <span class="muted sm">${esc(x.s.email)}${x.past.length?` · quoted on ${esc(x.past.slice(0,2).map(r=>r.no).join(', '))}`:''}${sent.has(x.s.id)?' · already emailed':''}</span></label>`).join('')}</div>
+  <div class="fg" style="margin-top:10px">${fld('Subject',inp('subject',`${q.no}: request for quote, ${q.title}`),true)}${fld('Message',`<textarea name="text" rows="12">${esc(body)}</textarea>`,true)}</div>`,{wide:true,label:'Send',submit:(v,f)=>{
+  const ids=$$('#mform [name=sup]:checked').map(x=>x.value);if(!ids.length)return fail('Tick at least one supplier.');if(typeof CLOUD==='undefined'||!CLOUD)return fail('Sending email needs the online ERP.');
+  const btns=$$('#modal-root button');btns.forEach(x=>x.disabled=true);
+  (async()=>{const ok=[],bad=[];for(const id of ids){const s=sup(id);try{const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{to:s.email,subject:v.subject,text:v.text,wait:true,from:AQ_FROM,newConversation:{fromName:s.contact||s.name,company:s.name,cat:'Vendor',links:[]}}});
+    let err=data&&data.error;if(error&&!err){try{err=(await error.context.json()).error}catch(x){err=error.message}}if(err)throw new Error(err);ok.push(s);
+    if(data&&data.conversationId){const m=byId(S.emails,data.conversationId);if(m)m.supplier=s.id}}catch(e){bad.push(s.name+': '+e.message)}}
+   q.emailedTo=[...(q.emailedTo||[]).filter(x=>!ok.some(s=>s.id===x.id)),...ok.map(s=>({id:s.id,name:s.name,on:TODAY}))];
+   ok.forEach(s=>S.smsgs.push({id:nextId(S.smsgs,'SM-'),supplier:s.id,req:q.id,channel:'Email',dir:'out',t:new Date().toISOString(),from:USER.name,text:v.subject+'\n\n'+v.text}));
+   if(ok.length){log(`Emailed ${q.no} to ${ok.length} supplier${ok.length===1?'':'s'}`,[{f:'Emailed',from:'blank',to:ok.map(s=>s.name).join(', ')}]);const r=aqReqOf(q);if(r){(r.thread=r.thread||[]).push({t:new Date().toISOString(),user:USER.name,sys:true,text:`${q.no} emailed to ${ok.map(s=>s.name).join(', ')}`});if(typeof frNotify==='function')frNotify(r,`${USER.name} emailed ${q.no} to ${ok.length} supplier${ok.length===1?'':'s'}.`)}}
+   save();closeModal();toast(bad.length?`Sent ${ok.length}. Not sent: ${bad.join('; ')}`:`Sent to ${ok.length} supplier${ok.length===1?'':'s'}`,!!bad.length);rerender()})()}})};
+
+/* the panel goes at the top of the RFQ page; the steps line goes on the part request too */
+const _srcAq=VIEWS.sourcing;VIEWS.sourcing=id=>{try{aqAuto()}catch(e){}let h=_srcAq(id);const q=id?sreq(id):null;if(!q||typeof document==='undefined')return h;
+ const t=document.createElement('template');t.innerHTML=h;const at=t.content.querySelector('.grid2e, section.panel, .grid2');if(at)at.insertAdjacentHTML('beforebegin',aqPanel(q));else t.content.append(document.createRange().createContextualFragment(aqPanel(q)));return t.innerHTML};
+const _reqAq=VIEWS.requests;if(_reqAq)VIEWS.requests=id=>{try{aqAuto()}catch(e){}return _reqAq(id)};
+const _mwAq=VIEWS.mywork;if(_mwAq)VIEWS.mywork=id=>{try{aqAuto()}catch(e){}return _mwAq(id)};
+const _frAq=M.fr;M.fr=id=>{_frAq(id);const r=typeof fr==='function'&&fr(id);const q=r&&r.rfq&&sreq(r.rfq);if(!q)return;const box=$('#modal-root .mbody')||$('#modal-root form')||$('#modal-root .modal');if(!box)return;
+ box.insertAdjacentHTML('afterbegin',`<div class="aq-mini">${aqSteps(q)}<div class="aq-row">${q.status==='Open'&&!q.posted?`<button type="button" class="btn sm primary" data-action="aq-post" data-id="${esc(q.id)}">${ic('globe',14)} Post on Alibaba</button>`:''}<a class="btn sm" href="#/sourcing/${esc(q.id)}" data-action="pk-close-go">Open ${esc(q.no)}</a></div></div>`)};
+/* "Send & post on Alibaba" right next to Send request: sends the request, copies the post and opens Alibaba */
+const _frNewAq=M.frNew;M.frNew=id=>{_frNewAq(id);if(id)return;const f=$('#mform');const sb=f&&f.querySelector('footer button.primary[type=submit]');if(!sb)return;
+ sb.insertAdjacentHTML('beforebegin',`<button type="button" class="btn" id="aq-sendpost" title="Sends the request (its RFQ is created automatically), copies a ready-made Alibaba post and opens Alibaba in a new tab">${ic('globe',15)} Send &amp; post on Alibaba</button>`);
+ $('#aq-sendpost').addEventListener('click',()=>{const g=n=>((f.querySelector(`[name="${n}"]`)||{}).value||'').trim();if(!g('what')||!(+g('qty')>0)||!g('forWhat')){sb.click();return}
+  const no=nextRfqNo(TODAY);aqOpen(aqText({title:g('what')+(g('partNo')?` (${g('partNo')})`:''),qty:+g('qty'),unit:g('unit'),partNo:g('partNo'),specs:g('specs'),incoterm:'DDP',needBy:g('needBy')||null,no}));
+  ui.aqPostNext=true;sb.click()})};
+/* after "Send & post": once the RFQ exists, remember it was opened for posting so Mark posted is one click away */
+setTimeout(function aqTick(){try{if(aqAuto()&&['requests','sourcing','mywork'].includes(parse().r))rerender()}catch(e){}setTimeout(aqTick,6e4)},5000);
+if(typeof TIP_TEXT!=='undefined'){TIP_TEXT['Post on Alibaba']='Copies a ready-made RFQ post and opens Alibaba in a new tab. Paste, attach the spec sheet, submit.';TIP_TEXT['Email suppliers']='Emails this RFQ from sourcing@ to suppliers we already know. Their replies file under the RFQ.';TIP_TEXT['Mark posted']='Click after you submit the RFQ on Alibaba, so the team knows it’s out.'}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.aq-panel{border-left:4px solid #f59e0b;padding-bottom:14px}.aq-panel>:not(.ph){margin-left:16px;margin-right:16px}.aq-panel .aq-steps{margin-top:12px}.aq-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.aq-steps{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:13px}.aq-st{padding:3px 10px;border-radius:999px;background:var(--line,#e5e7eb);color:var(--muted,#64748b)}
+.aq-st.on{background:#10b981;color:#fff}.aq-st.next{background:#fef3c7;color:#b45309;font-weight:700;outline:2px solid #f59e0b}.aq-ar{color:var(--muted,#94a3b8)}
+.aq-pre{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.5;background:var(--bg,#f8fafc);border:1px solid var(--line);border-radius:8px;padding:10px;margin:6px 0 0}
+.aq-mini{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:12px}.aq-list{max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+</style>`);
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
