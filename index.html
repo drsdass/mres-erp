@@ -3704,6 +3704,30 @@ aqSteps=function(q){const a=aqAge(q);if(!a)return `<div class="aq-steps"><b>${es
  return `<div class="aq-steps"><b>${esc(q.no)}</b> <span class="aq-age ${a.t}">${esc(a.step||a.l)}</span>${a.due?` <span class="aq-age ${a.due.t}">${esc(a.due.l)}</span>`:''}</div>`};
 document.head.insertAdjacentHTML('beforeend','<style>td .aq-age{white-space:normal}.aq-steps{gap:8px}</style>');
 
+/* ================= Invitations from info@ (no Supabase step) =================
+   Owners see "Send invite" next to each person in Team and roles, and adding someone sends their invitation right away.
+   The email comes from info@; its button opens the ERP, which then asks them to choose a password. */
+const TI_ARRIVAL=(typeof location!=='undefined'&&(String(location.hash).match(/type=(invite|recovery)/)||[])[1])||null;
+async function tiSend(email,quiet){if(typeof CLOUD==='undefined'||!CLOUD)return toast('Invitations need the online ERP.',true);
+ try{const {data,error}=await CLOUD.functions.invoke('invite',{body:{email}});let err=data&&data.error;if(error&&!err){try{err=(await error.context.json()).error}catch(x){err=error.message}}
+  if(err)throw new Error(/not found|404|Failed to send a request/i.test(err)?'the invite function isn’t deployed in Supabase yet':err);
+  log(`Sent ${data.existing?'a set-password link':'an invitation'} to ${email}`);toast(data.existing?`${email} already has an account, so they got a link to set a new password.`:`Invitation sent to ${email}. Ask them to check spam if it doesn’t show up in a few minutes.`);return true}
+ catch(e){toast('Invitation not sent: '+e.message,true);return false}}
+A['ti-send']=d=>{const b=document.querySelector(`[data-action="ti-send"][data-email="${CSS&&CSS.escape?CSS.escape(d.email):d.email}"]`);if(b){b.disabled=true;b.textContent='Sending…'}tiSend(d.email).then(ok=>{if(b){b.disabled=false;b.textContent=ok?'Sent ✓':'Send invite'}})};
+setTimeout(()=>{if(typeof A.team!=='function')return;const _teamTi=A.team;A.team=async(...a)=>{await _teamTi(...a);const f=$('#mform');if(!f||typeof isOwner!=='function'||!isOwner())return;
+ /* a Send invite button on every row except your own */
+ f.querySelectorAll('table tr').forEach(tr=>{const c=tr.cells&&tr.cells[1];if(!c||tr.closest('thead'))return;const em=c.textContent.trim().toLowerCase();if(!/@/.test(em)||em===String(USER.email||'').toLowerCase())return;
+  const last=tr.cells[tr.cells.length-1];last.insertAdjacentHTML('beforeend',` <button type="button" class="btn sm" data-action="ti-send" data-email="${esc(em)}" title="Email ${esc(em)} a sign-in link from info@">Send invite</button>`)});
+ f.querySelectorAll('p.muted.sm').forEach(p=>{if(/invite them from Supabase/.test(p.textContent))p.textContent='They get an invitation email from info@ as soon as you add them. Use Send invite to send it again.'});
+ /* adding someone sends their invitation once they're on the list */
+ f.addEventListener('submit',()=>{const em=String((f.querySelector('[name=email]')||{}).value||'').trim().toLowerCase();if(!/@/.test(em))return;
+  let n=0;const t=setInterval(async()=>{n++;try{const list=await loadTeam();if(list.some(m=>m.email.toLowerCase()===em)){clearInterval(t);tiSend(em)}else if(n>8)clearInterval(t)}catch(e){if(n>8)clearInterval(t)}},1000)},true)}},0);
+/* arriving from an invitation or set-password link: choose a password right away */
+if(TI_ARRIVAL){let n=0;const t=setInterval(()=>{n++;if(n>60)return clearInterval(t);if(typeof ME==='undefined'||!ME||typeof CLOUD==='undefined'||!CLOUD||$('#gate'))return;clearInterval(t);
+ modal(TI_ARRIVAL==='invite'?'Welcome! Choose your password':'Choose a new password',`<p class="muted" style="margin-top:0">You’ll sign in with <b>${esc(ME.email||'')}</b> and this password from now on.</p><div class="fg">${fld('Password',inp('pw','','type="password" minlength="8" autocomplete="new-password" required'))}${fld('Type it again',inp('pw2','','type="password" autocomplete="new-password" required'))}</div>`,
+ {label:'Save password',submit:d=>{if((d.pw||'').length<8)return fail('Use at least 8 characters.');if(d.pw!==d.pw2)return fail('The two passwords don’t match.');
+  CLOUD.auth.updateUser({password:d.pw}).then(({error})=>{if(error)return toast('Could not save the password: '+error.message,true);toast('Password saved. You’re all set.')});}})},500)}
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
