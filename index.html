@@ -3466,7 +3466,8 @@ function rlPurge(){if(!Array.isArray(S.emails))return 0;const isA=m=>/alibaba/i.
 const RL_STOP=new Set(['with','from','replacement','pieces','part','parts','version','type','size','new','for','and','the','pcs','unit','units']);
 function rlWords(open,text){const txt=' '+String(text||'').toLowerCase().replace(/[^a-z0-9]+/g,' ')+' ';
  const sc=open.map(r=>{const w=[...new Set(String((r.title||'')+' '+(r.part||'')+' '+(r.partNo||'')).toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(x=>x.length>3&&!RL_STOP.has(x)))];
-  return{r,n:w.reduce((t,x)=>t+(txt.includes(' '+x+' ')?(/\d/.test(x)?3:1):0),0)}}).filter(x=>x.n>=2).sort((a,b)=>b.n-a.n);
+  const raw=String((r.title||'')+' '+(r.part||'')+' '+(r.partNo||'')).toLowerCase().split(/[\s,()/;]+/).map(x=>x.replace(/[^a-z0-9]/g,'')).filter(x=>x.length>=5&&/\d/.test(x)&&/[a-z]/.test(x));const ctx=txt.replace(/ /g,'');
+  return{r,n:w.reduce((t,x)=>t+(txt.includes(' '+x+' ')?(/\d/.test(x)?3:1):0),0)+[...new Set(raw)].filter(x=>ctx.includes(x)).length*4}}).filter(x=>x.n>=2).sort((a,b)=>b.n-a.n);
  return sc.length&&(sc.length===1||sc[0].n>sc[1].n)?sc[0].r:null}
 const rlOpen=()=>(S.srcReqs||[]).filter(r=>r.status==='Open');
 const rlT=x=>x.t||(x.date?x.date+'T12:00:00Z':'');
