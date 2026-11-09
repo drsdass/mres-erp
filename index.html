@@ -3555,6 +3555,10 @@ function rsRun(){let n=0;try{n+=rsEmailFile();if(typeof rlAutoFile==='function')
 const _inboxRs=VIEWS.inbox;VIEWS.inbox=id=>{rsRun();return _inboxRs(id)};
 const _srcRs=VIEWS.sourcing;VIEWS.sourcing=id=>{rsRun();return _srcRs(id)};
 setTimeout(function rsTick(){if(rsRun()&&['inbox','sourcing','mywork'].includes(parse().r))rerender();setTimeout(rsTick,12e4)},7000);
+/* email that belongs to another project on the same email service (Iridium OS) is removed from the ERP */
+function rsForeign(){if(!Array.isArray(S.emails))return 0;const bad=m=>{const t=[m.from,m.to,m.cc,m.ours,m.replyTo,...(m.thread||[]).flatMap(x=>[x.from,x.to,x.cc])].flat().filter(Boolean).join(' ').toLowerCase();return /iridiumsponsor\.com/.test(t)&&!/massrenewable\.com/.test(t)};
+ const ids=new Set(S.emails.filter(bad).map(m=>m.id));if(!ids.size)return 0;S.emails=S.emails.filter(m=>!ids.has(m.id));if(Array.isArray(S.smsgs))S.smsgs=S.smsgs.filter(x=>!ids.has(x.emailId));log(`Removed ${ids.size} email${ids.size===1?'':'s'} that belonged to Iridium OS, not M-RES`);save();return ids.size}
+setTimeout(()=>{try{if(rsForeign())rerender()}catch(e){}},8000);
 
 /* ================= Part request → RFQ → Alibaba post, with as little typing as possible =================
    1. A new part request becomes an RFQ by itself (marked "Not posted yet").
@@ -4150,7 +4154,9 @@ function gate(inner){let g=$('#gate');if(!g){document.body.insertAdjacentHTML('b
 const ungate=()=>{const g=$('#gate');if(g)g.remove()};
 function loginScreen(msg){gate(`<h1 style="font:800 22px var(--fh);margin:0 0 4px">Sign in</h1><p class="muted sm" style="margin:0 0 14px">The M-RES ERP. Everyone on the team sees the same orders, RFQs and books.</p>${msg?`<p class="note" style="background:var(--alert-soft)">${esc(msg)}</p>`:''}
  <form id="loginf" style="display:flex;flex-direction:column;gap:10px"><label class="f">Email<input class="input" name="email" type="email" autocomplete="username" required></label><label class="f">Password<input class="input" name="pw" type="password" autocomplete="current-password" required></label><button class="btn primary" style="justify-content:center;padding:9px">Sign in</button></form>
- <p class="muted sm" style="margin:14px 0 0">No account yet, or forgot your password? Ask Satish to set one up.</p>`);
+ <p class="muted sm" style="margin:14px 0 0"><button type="button" class="link" id="forgotpw">Forgot your password, or setting it up for the first time?</button> We’ll email you a link to choose one. No account yet? Ask Satish to add you.</p>`);
+ setTimeout(()=>{const b=$('#forgotpw');if(b)b.onclick=async()=>{const em=String(($('#loginf [name=email]')||{}).value||'').trim();if(!/@/.test(em)){loginScreen('Type your email above first, then click the link again.');return}b.disabled=true;b.textContent='Sending…';
+  try{const {error}=await CLOUD.auth.resetPasswordForEmail(em,{redirectTo:location.origin+'/'});if(error)throw error;loginScreen(`If ${em} is on the team, a link to choose your password is on its way. Check spam too. The link works for about an hour.`)}catch(e){loginScreen('Could not send the link: '+(e.message||e))}}},0);
  const f=$('#loginf');f.querySelector('input').focus();f.addEventListener('submit',async e=>{e.preventDefault();e.stopPropagation();const d=Object.fromEntries(new FormData(f));const b=f.querySelector('button');b.disabled=true;b.textContent='Signing in…';
   const {data,error}=await CLOUD.auth.signInWithPassword({email:d.email.trim(),password:d.pw});if(error)return loginScreen(error.message==='Invalid login credentials'?'That email and password don’t match.':/fetch|network/i.test(error.message)?`Can’t reach Supabase at ${CFG.supabaseUrl}. Check the URL in config.js, and that the project isn’t paused.`:/not confirmed/i.test(error.message)?'This email isn’t confirmed yet. In Supabase, confirm the user or re-create it with Auto Confirm ticked.':error.message);startWithSession(data.session)})}
 
