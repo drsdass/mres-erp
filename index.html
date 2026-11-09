@@ -3289,15 +3289,15 @@ IC.history='<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>
 IC.layers='<path d="M12 3 2 8l10 5 10-5-10-5z"/><path d="M2 13l10 5 10-5"/>';
 IC.road='<path d="M5 21 9 3M19 21 15 3M12 6v2M12 11v2M12 16v2"/>';
 const NAV_PLAN=[
- ['Today','#22b8d6',[['mywork','My work','check'],['inbox','Inbox','mail'],['requests','Part requests','ask']]],
+ ['Today','#22b8d6',[['mywork','My work','check'],['inbox','Inbox','mail'],['sourcing','Sourcing','globe']]],
  ['Selling','#10b981',[['prospects','Prospects','target'],['crm','Customers','users'],['sales','Sales orders','tag']]],
- ['Buying','#f59e0b',[['sourcing','Sourcing (RFQs)','globe'],['purchasing','Purchasing','cart']]],
+ ['Buying','#f59e0b',[['purchasing','Purchasing','cart']]],
  ['Warehouse','#8b5cf6',[['warehouse','Pick, ship and receive','box'],['shipments','Shipments','pin'],['items','Item master','list'],['builds','Builds','wrench']]],
  ['Reports','#ec4899',[['potrack','PO tracker','road'],['insights','Charts','chart'],['dashboard','Dashboard','grid']]],
  ['Money','#64748b',[['finance','Finance','dollar'],['accounting','Accounting','book'],['quickbooks','QuickBooks','qb']]]];
 /* pages that live in the account menu (top right) instead of the sidebar */
-const NAV_ELSEWHERE=new Set(['data','activity','timeclock']);
-const NAV_HINT={Selling:'Money in: prospects, customers and their orders',Buying:'Money out: RFQs to suppliers and our purchase orders',Reports:'Charts and trackers',Money:'Invoices, bills and the books'};
+const NAV_ELSEWHERE=new Set(['data','activity','timeclock','requests']);
+const NAV_HINT={Selling:'Money in: prospects, customers and their orders',Buying:'Money out: our purchase orders to suppliers',Reports:'Charts and trackers',Money:'Invoices, bills and the books'};
 (function(){const have=new Map(NAV.flatMap(([g,items])=>items).map(x=>[x[0],x]));const placed=new Set();
  const next=NAV_PLAN.map(([g,c,items])=>[g,items.filter(([k])=>have.has(k)).map(x=>{placed.add(x[0]);return x})]);
  /* anything added later that the plan doesn't know about goes to the end of "Tracking" rather than vanishing */
@@ -4085,6 +4085,29 @@ A['dp-merge']=d=>{const box=$(`.dp-g[data-kind="${d.kind}"][data-g="${d.g}"]`);i
  const n=dpMerge(d.kind,keep,drop);box.innerHTML=`<div class="sm" style="color:#047857">${ic('check',14)} Merged into <b>${esc(k.name)}</b>. ${n} linked record${n===1?'':'s'} moved.</div>`;rerender()};
 const _umDp=A.usermenu;A.usermenu=d=>{_umDp(d);const dd=$('#dd');if(!dd||(typeof isOwner==='function'&&!isOwner()))return;const sep=dd.querySelector('.tc-sep');const html=`<button class="item" data-action="dp-find">${ic('users',15)} Find duplicates</button>`;if(sep)sep.insertAdjacentHTML('beforebegin',html);else dd.insertAdjacentHTML('beforeend',html)};
 document.head.insertAdjacentHTML('beforeend',`<style>.dp-h{margin:14px 0 8px;font-size:14px}.dp-g{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}.dp-r{display:flex;gap:14px;align-items:center;margin-bottom:6px}.dp-r label{display:flex;gap:6px;align-items:center}</style>`);
+
+/* ================= One Sourcing page: Part requests + RFQs =================
+   Part requests (what the team needs) and RFQs (what's out to suppliers) are one job, so they share one page
+   with two tabs. Each request row already shows its RFQ and where it stands. */
+function s1Bar(on){const fo=(typeof frs==='function'?frs():[]).filter(r=>FR_OPEN(r.status));const nNew=fo.filter(r=>r.status==='New').length;
+ const ro=(S.srcReqs||[]).filter(r=>r.status==='Open');const notPosted=ro.filter(r=>!r.posted&&!(r.emailedTo||[]).length).length;
+ const t=(k,href,label,sub,n)=>`<a href="${href}" class="s1-tab ${on===k?'on':''}"><b>${label}</b>${n?` <span class="s1-n">${n}</span>`:''}<small>${sub}</small></a>`;
+ return `<div class="s1-bar" role="tablist" aria-label="Sourcing">${t('requests','#/requests','Part requests',`${fo.length} open · what the team needs`,nNew)}<span class="s1-arrow" aria-hidden="true">→</span>${t('rfqs','#/sourcing','RFQs to suppliers',`${ro.length} open · ${notPosted} not posted yet`,notPosted)}</div>`}
+function s1Insert(h,on){const t=document.createElement('template');t.innerHTML=h;const ph=t.content.querySelector('.phead');if(ph)ph.insertAdjacentHTML('afterend',s1Bar(on));else t.content.prepend(document.createRange().createContextualFragment(s1Bar(on)));return t.innerHTML}
+const _reqS1=VIEWS.requests;VIEWS.requests=id=>{const h=_reqS1(id);return typeof document==='undefined'?h:s1Insert(h,'requests')};
+const _srcS1=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcS1(id);return id||typeof document==='undefined'?h:s1Insert(h,'rfqs')};
+/* the sidebar's Sourcing stays highlighted on Part requests, and its count includes new requests */
+const _shellS1=renderShell;renderShell=function(){_shellS1();if(parse().r==='requests'){const a=$('#side a[href="#/sourcing"]');if(a)a.classList.add('on')}};
+const _ncS1=navCounts;navCounts=function(){const c=_ncS1()||{};c.sourcing=(c.sourcing||0)+(c.requests||0);return c};
+if(typeof TIP_NAV!=='undefined')TIP_NAV.sourcing='Part requests (what the team needs) and RFQs to suppliers (prices), in one place.';
+if(typeof TOUR!=='undefined'){const i=TOUR.findIndex(x=>/Part requests/.test(x[1]));if(i>=0)TOUR.splice(i,1);const j=TOUR.findIndex(x=>/Sourcing/.test(x[1]));if(j>=0)TOUR[j]=['#side a[href="#/sourcing"], #mbar a[href="#/requests"]','Sourcing','Two tabs. Part requests: when someone needs a part found, it goes here, never in a text. Each request becomes an RFQ by itself. RFQs to suppliers: supplier answers and quotes side by side, with the real cost of each part. Post on Alibaba from here.']}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.s1-bar{display:flex;align-items:stretch;gap:8px;margin:0 0 14px;flex-wrap:wrap}.s1-arrow{align-self:center;color:var(--muted,#94a3b8);font-size:18px}
+.s1-tab{display:flex;flex-direction:column;gap:2px;padding:10px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface,#fff);color:inherit;text-decoration:none;min-width:220px;position:relative}
+.s1-tab small{color:var(--muted,#64748b);font-size:12.5px}.s1-tab.on{border-color:#f59e0b;box-shadow:inset 0 -3px 0 #f59e0b;background:rgba(245,158,11,.06)}.s1-tab:hover{border-color:#f59e0b}
+.s1-n{position:absolute;top:8px;right:10px;background:#ef4444;color:#fff;border-radius:9px;padding:0 7px;font-size:11px;font-weight:700}
+@media(max-width:760px){.s1-tab{min-width:0;flex:1}.s1-arrow{display:none}}
+</style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
