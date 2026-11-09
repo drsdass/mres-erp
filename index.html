@@ -3290,20 +3290,23 @@ IC.layers='<path d="M12 3 2 8l10 5 10-5-10-5z"/><path d="M2 13l10 5 10-5"/>';
 IC.road='<path d="M5 21 9 3M19 21 15 3M12 6v2M12 11v2M12 16v2"/>';
 const NAV_PLAN=[
  ['Today','#22b8d6',[['mywork','My work','check'],['inbox','Inbox','mail'],['requests','Part requests','ask']]],
- ['Selling · money in','#10b981',[['prospects','Prospects','target'],['crm','Customers','users'],['sales','Sales orders','tag']]],
- ['Buying · money out','#f59e0b',[['sourcing','Sourcing (RFQs)','globe'],['purchasing','Purchasing','cart']]],
+ ['Selling','#10b981',[['prospects','Prospects','target'],['crm','Customers','users'],['sales','Sales orders','tag']]],
+ ['Buying','#f59e0b',[['sourcing','Sourcing (RFQs)','globe'],['purchasing','Purchasing','cart']]],
  ['Warehouse','#8b5cf6',[['warehouse','Pick, ship and receive','box'],['shipments','Shipments','pin'],['items','Item master','list'],['builds','Builds','wrench']]],
- ['Tracking','#ec4899',[['potrack','PO tracker','road'],['insights','Charts','chart'],['dashboard','Dashboard','grid']]],
- ['Money and admin','#64748b',[['finance','Finance','dollar'],['accounting','Accounting','book'],['quickbooks','QuickBooks','qb'],['data','Workbook and data','refresh'],['activity','Activity log','history']]]];
+ ['Reports','#ec4899',[['potrack','PO tracker','road'],['insights','Charts','chart'],['dashboard','Dashboard','grid']]],
+ ['Money','#64748b',[['finance','Finance','dollar'],['accounting','Accounting','book'],['quickbooks','QuickBooks','qb']]]];
+/* pages that live in the account menu (top right) instead of the sidebar */
+const NAV_ELSEWHERE=new Set(['data','activity','timeclock']);
+const NAV_HINT={Selling:'Money in: prospects, customers and their orders',Buying:'Money out: RFQs to suppliers and our purchase orders',Reports:'Charts and trackers',Money:'Invoices, bills and the books'};
 (function(){const have=new Map(NAV.flatMap(([g,items])=>items).map(x=>[x[0],x]));const placed=new Set();
  const next=NAV_PLAN.map(([g,c,items])=>[g,items.filter(([k])=>have.has(k)).map(x=>{placed.add(x[0]);return x})]);
  /* anything added later that the plan doesn't know about goes to the end of "Tracking" rather than vanishing */
- have.forEach((x,k)=>{if(!placed.has(k))next[4][1].push(x)});
+ have.forEach((x,k)=>{if(!placed.has(k)&&!NAV_ELSEWHERE.has(k))next[4][1].push(x)});
  NAV.length=0;next.filter(([g,i])=>i.length).forEach(x=>NAV.push(x))})();
 const NAV_COLOR=Object.fromEntries(NAV_PLAN.map(([g,c])=>[g,c]));
 const navFold=()=>{try{return JSON.parse(localStorage.getItem('mres-navfold')||'[]')}catch(e){return[]}};
 const _renderShellNav=renderShell;renderShell=function(){_renderShellNav();const nav=$('#side .nav');if(!nav)return;const fold=navFold();
- $$('#side .nav h6').forEach(h=>{const g=h.textContent.trim();const c=NAV_COLOR[g]||'#94a3b8';if(!h.dataset.g){h.dataset.g=g;h.innerHTML=`<span class="nv-dot" style="background:${c}"></span><span class="grow">${esc(g)}</span><span class="nv-car" aria-hidden="true">▾</span>`;h.setAttribute('role','button');h.tabIndex=0;h.setAttribute('aria-label',g+', show or hide')}
+ $$('#side .nav h6').forEach(h=>{const g=h.textContent.trim();const c=NAV_COLOR[g]||'#94a3b8';if(!h.dataset.g){h.dataset.g=g;h.innerHTML=`<span class="nv-dot" style="background:${c}"></span><span class="grow">${esc(g)}</span><span class="nv-car" aria-hidden="true">▾</span>`;h.setAttribute('role','button');h.tabIndex=0;h.setAttribute('aria-label',g+', show or hide');if(NAV_HINT[g])h.title=NAV_HINT[g]}
   let n=h.nextElementSibling;const links=[];while(n&&n.tagName!=='H6'){if(n.tagName==='A')links.push(n);n=n.nextElementSibling}
   const shut=fold.includes(g)&&!links.some(a=>a.classList.contains('on'));h.classList.toggle('shut',shut);h.setAttribute('aria-expanded',String(!shut));
   const sum=links.reduce((t,a)=>t+(+((a.querySelector('.cnt')||{}).textContent||0)||0),0);let badge=h.querySelector('.nv-sum');if(shut&&sum){if(!badge){h.insertAdjacentHTML('beforeend','<span class="nv-sum"></span>');badge=h.querySelector('.nv-sum')}badge.textContent=sum}else if(badge)badge.remove();
@@ -3727,6 +3730,94 @@ if(TI_ARRIVAL){let n=0;const t=setInterval(()=>{n++;if(n>60)return clearInterval
  modal(TI_ARRIVAL==='invite'?'Welcome! Choose your password':'Choose a new password',`<p class="muted" style="margin-top:0">You’ll sign in with <b>${esc(ME.email||'')}</b> and this password from now on.</p><div class="fg">${fld('Password',inp('pw','','type="password" minlength="8" autocomplete="new-password" required'))}${fld('Type it again',inp('pw2','','type="password" autocomplete="new-password" required'))}</div>`,
  {label:'Save password',submit:d=>{if((d.pw||'').length<8)return fail('Use at least 8 characters.');if(d.pw!==d.pw2)return fail('The two passwords don’t match.');
   CLOUD.auth.updateUser({password:d.pw}).then(({error})=>{if(error)return toast('Could not save the password: '+error.message,true);toast('Password saved. You’re all set.')});}})},500)}
+
+/* ================= Time clock: clock in / clock out, and hours per person =================
+   Everyone gets a Clock in / Clock out button at the top. Staff see their own hours; owners see everyone's,
+   fix missed punches, and export a week for payroll. Every change is in the Activity log. */
+IC.clock='<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>';
+const TC=()=>Array.isArray(S.timeclock)?S.timeclock:(S.timeclock=[]);
+const tcMembers=()=>new Set((typeof MEMBERS!=='undefined'&&Array.isArray(MEMBERS)?MEMBERS:[]).map(m=>m.name));
+const tcOwner=()=>typeof isOwner==='function'&&isOwner();
+const tcOpen=(who=USER.name)=>TC().find(e=>e.who===who&&!e.out);
+const tcMs=e=>Math.max(0,(Date.parse(e.out||new Date().toISOString())-Date.parse(e.in)));
+const tcH=ms=>ms/36e5;
+const tcHM=ms=>{const m=Math.round(ms/6e4);return `${Math.floor(m/60)}h ${String(m%60).padStart(2,'0')}m`};
+const tcTime=s=>new Date(s).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+const tcDay=s=>{const d=new Date(s);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const tcMon=d=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()-((x.getDay()+6)%7));return tcDay(x)};
+const tcAdd=(d,n)=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);return tcDay(x)};
+const tcId=()=>'TC-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const tcLocal=s=>{const d=new Date(s);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`};
+/* time worked on each day of a week; a shift that runs past midnight is split across the days */
+function tcWeek(mon,who){const days=[...Array(7)].map((_,i)=>tcAdd(mon,i));const out=Object.fromEntries(days.map(d=>[d,0]));
+ TC().filter(e=>!who||e.who===who).forEach(e=>{let a=Date.parse(e.in);const b=Date.parse(e.out||new Date().toISOString());while(a<b){const d=tcDay(a);const end=Math.min(b,new Date(d+'T00:00:00').getTime()+864e5);if(d in out)out[d]+=end-a;a=end}});return out}
+
+/* ---------- the button at the top ---------- */
+function tcBtn(){const o=tcOpen();return o?`<button class="tc-btn on" data-action="tc-out" title="Clocked in at ${esc(tcTime(o.in))}. Click to clock out.">${ic('clock',16)}<span class="tc-l">${tcHM(tcMs(o))} · Clock out</span></button>`
+ :`<button class="tc-btn" data-action="tc-in" title="Start your work time">${ic('clock',16)}<span class="tc-l">Clock in</span></button>`}
+const _shellTc=renderShell;renderShell=function(){_shellTc();if(!USER||!USER.name)return;const old=$('#top .tc-btn');if(old)old.remove();const me=$('#top [data-action="usermenu"]')||$('#top [data-action="bell"]');if(me)me.insertAdjacentHTML('beforebegin',tcBtn())};
+setInterval(()=>{const b=$('#top .tc-btn');if(b){const n=document.createElement('div');n.innerHTML=tcBtn();b.replaceWith(n.firstChild)}},3e4);
+A['tc-in']=()=>{if(tcOpen())return toast('You’re already clocked in.');const e={id:tcId(),who:USER.name,in:new Date().toISOString(),out:null,note:''};TC().push(e);log(`${USER.name} clocked in`);save();toast(`Clocked in at ${tcTime(e.in)}`);rerender()};
+A['tc-out']=()=>{const o=tcOpen();if(!o)return;const long=tcMs(o)>12*36e5;
+ modal('Clock out',`<p style="margin-top:0">In since <b>${esc(tcTime(o.in))}</b>${tcDay(o.in)!==TODAY?` on ${esc(fd(tcDay(o.in)))}`:''} · <b>${tcHM(tcMs(o))}</b></p>
+  ${long?`<p class="note" style="background:var(--alert-soft)">That’s over 12 hours. If you forgot to clock out earlier, set the time you actually finished.</p>`:''}
+  <div class="fg">${fld('Finished at',inp('out',tcLocal(new Date()),'type="datetime-local"'))}${fld('What did you work on? (optional)',inp('note',o.note||'','placeholder="e.g. part requests, RFQ quotes"'),true)}</div>`,{label:'Clock out',submit:v=>{
+  const out=v.out?new Date(v.out).toISOString():new Date().toISOString();if(Date.parse(out)<=Date.parse(o.in))return fail('The finish time has to be after you clocked in.');if(Date.parse(out)>Date.now()+6e4)return fail('The finish time can’t be in the future.');
+  o.out=out;o.note=(v.note||'').trim();if(Math.abs(Date.parse(out)-Date.now())>5*6e4)o.edited=`${USER.name} set the clock-out time`;log(`${USER.name} clocked out (${tcHM(tcMs(o))})`);save();toast(`Clocked out · ${tcHM(tcMs(o))}`);rerender()}})};
+
+/* ---------- the Time clock page ---------- */
+VIEWS.timeclock=()=>{const own=tcOwner();ui.tcWeek=ui.tcWeek||tcMon(TODAY);const mon=ui.tcWeek,days=[...Array(7)].map((_,i)=>tcAdd(mon,i)),sun=days[6];
+ const people=own?[...new Set([...tcMembers(),...TC().map(e=>e.who)])].filter(Boolean):[USER.name];
+ const rows=people.map(p=>{const w=tcWeek(mon,p);const tot=Object.values(w).reduce((a,b)=>a+b,0);return{p,w,tot,on:tcOpen(p)}}).filter(r=>r.tot>0||r.on||!own||tcMembers().has(r.p)).sort((a,b)=>b.tot-a.tot);
+ const maxDay=Math.max(1,...rows.flatMap(r=>Object.values(r.w)));const maxTot=Math.max(1,...rows.map(r=>r.tot));const all=rows.reduce((a,r)=>a+r.tot,0);
+ const ents=TC().filter(e=>(own||e.who===USER.name)&&tcDay(e.in)>=mon&&tcDay(e.in)<=sun).sort((a,b)=>a.in<b.in?1:-1);
+ const now=TC().filter(e=>!e.out&&(own||e.who===USER.name));const dn=d=>new Date(d+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
+ const cell=ms=>{const h=tcH(ms);if(!h)return '<td class="tc-c"><span class="muted">–</span></td>';const a=Math.min(1,ms/maxDay);return `<td class="tc-c"><span class="tc-heat" style="background:rgba(34,184,214,${(0.15+0.65*a).toFixed(2)})">${h.toFixed(1)}</span></td>`};
+ return `<div class="phead"><div><h1>${ic('clock',22)} Time clock</h1><p class="muted">${own?'Hours for everyone, Monday to Sunday.':'Your hours, Monday to Sunday.'} ${own?'Fix a missed punch with Edit.':'Ask an owner to fix a missed punch.'}</p></div>
+  <div class="row" style="gap:8px">${tcOpen()?`<button class="btn danger" data-action="tc-out">${ic('clock',15)} Clock out</button>`:`<button class="btn primary" data-action="tc-in">${ic('clock',15)} Clock in</button>`}${own?btn('Add time','tc-edit',{id:''},'')+btn('Download week (CSV)','tc-csv',{},''):''}</div></div>
+ <div class="tc-wk"><button class="btn sm ghost" data-action="tc-wk" data-n="-7">‹ Previous week</button><b>${esc(fd(mon))} – ${esc(fd(sun))}</b><button class="btn sm ghost" data-action="tc-wk" data-n="7" ${sun>=TODAY?'disabled':''}>Next week ›</button>${mon!==tcMon(TODAY)?`<button class="btn sm ghost" data-action="tc-wk" data-n="0">This week</button>`:''}</div>
+ <div class="kpis">${[[tcHM(all*1),own?'Team hours this week':'Your hours this week'],[String(now.length),own?'On the clock now':'Clocked in'],[String(rows.filter(r=>r.tot>0).length),own?'People who worked':'']].filter(x=>x[1]).map(([v,l])=>`<div class="kpi"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join('')}</div>
+ ${now.length?`<div class="tc-now">${now.map(e=>`<span class="tc-pill">${esc(e.who)} · in since ${esc(tcTime(e.in))} · ${tcHM(tcMs(e))}</span>`).join('')}</div>`:''}
+ <section class="panel"><div class="ph"><h3>Hours by day</h3></div><div class="tw"><table class="tc-grid"><thead><tr><th>Person</th>${days.map(d=>`<th class="tc-c ${d===TODAY?'tc-today':''}">${dn(d)}<div class="sm muted">${Number(d.slice(8))}</div></th>`).join('')}<th>Week</th><th style="width:28%"></th></tr></thead>
+  <tbody>${rows.map(r=>`<tr><td><b>${esc(r.p)}</b>${r.on?' <span class="tc-dot" title="On the clock now"></span>':''}</td>${days.map(d=>cell(r.w[d])).join('')}<td><b>${tcH(r.tot).toFixed(1)} h</b></td><td><div class="tc-bar"><span style="width:${(r.tot/maxTot*100).toFixed(1)}%"></span>${tcH(r.tot)>40?`<i title="Over 40 hours" style="left:${(40*36e5/maxTot*100).toFixed(1)}%"></i>`:''}</div></td></tr>`).join('')||`<tr><td colspan="10" class="empty">No time this week yet.</td></tr>`}</tbody></table></div>
+  <p class="sm muted" style="margin:8px 14px">Hours shown in decimals (7.5 = 7 h 30 m). A shift past midnight counts on both days.</p></section>
+ <section class="panel"><div class="ph"><h3>Punches this week</h3></div>${table('tc',['Person','Day','In','Out','Hours','Note',''],ents.map(e=>`<tr><td>${esc(e.who)}</td><td>${esc(fd(tcDay(e.in)))}</td><td>${esc(tcTime(e.in))}</td><td>${e.out?esc(tcTime(e.out))+(tcDay(e.out)!==tcDay(e.in)?` <span class="sm muted">(${esc(fd(tcDay(e.out)))})</span>`:''):'<span class="chip warn">on the clock</span>'}</td><td>${tcHM(tcMs(e))}${tcMs(e)>12*36e5?' <span class="chip alert">check</span>':''}</td><td class="sm">${esc(e.note||'')}${e.edited?`<div class="muted sm">${esc(e.edited)}</div>`:''}</td><td>${own?btn('Edit','tc-edit',{id:e.id},'sm ghost'):''}</td></tr>`).concat(ents.length?[]:['<tr><td colspan="7" class="empty">No punches this week.</td></tr>']))}</section>`};
+A['tc-wk']=d=>{const n=+d.n;ui.tcWeek=n?tcAdd(ui.tcWeek||tcMon(TODAY),n):tcMon(TODAY);rerender()};
+A['tc-edit']=d=>{if(!tcOwner())return toast('Only owners can change time entries.',true);const e=d.id?TC().find(x=>x.id===d.id):null;const people=[...new Set([...tcMembers(),...TC().map(x=>x.who),USER.name])].filter(Boolean);
+ modal(e?`Edit ${e.who}’s time`:'Add time',`<div class="fg">${fld('Person',`<select name="who">${people.map(p=>opt(p,p,e?e.who===p:p===USER.name)).join('')}</select>`)}${fld('Clock in',inp('in',e?tcLocal(e.in):tcLocal(new Date(TODAY+'T09:00:00')),'type="datetime-local" required'))}${fld('Clock out (blank = still on the clock)',inp('out',e&&e.out?tcLocal(e.out):'','type="datetime-local"'))}${fld('Note',inp('note',e?e.note||'':''),true)}${fld('Why the change? (kept in the Activity log)',inp('why','','placeholder="e.g. forgot to clock out"'),true)}</div>`,
+ {label:e?'Save':'Add',foot:e?btn('Delete entry','tc-del',{id:e.id},'ghost danger'):'',submit:v=>{const i=new Date(v.in).toISOString(),o=v.out?new Date(v.out).toISOString():null;if(o&&Date.parse(o)<=Date.parse(i))return fail('Clock out has to be after clock in.');
+  if(!o&&TC().some(x=>x.who===v.who&&!x.out&&(!e||x.id!==e.id)))return fail(`${v.who} is already on the clock. Give this entry a clock-out time.`);
+  const tag=`${USER.name} ${e?'edited':'added'} this${v.why?': '+v.why.trim():''}`;
+  if(e){const before=`${tcTime(e.in)}–${e.out?tcTime(e.out):'open'}`;Object.assign(e,{who:v.who,in:i,out:o,note:(v.note||'').trim(),edited:tag});log(`Changed ${e.who}’s time on ${fd(tcDay(i))}${v.why?' ('+v.why.trim()+')':''}`,[{f:'Time',from:before,to:`${tcTime(i)}–${o?tcTime(o):'open'}`}])}
+  else{TC().push({id:tcId(),who:v.who,in:i,out:o,note:(v.note||'').trim(),edited:tag});log(`Added time for ${v.who} on ${fd(tcDay(i))}${v.why?' ('+v.why.trim()+')':''}`)}save();toast('Saved');rerender()}})};
+A['tc-del']=d=>{const e=TC().find(x=>x.id===d.id);if(!e||!confirmBox(`Delete ${e.who}’s entry from ${fd(tcDay(e.in))}?`))return;S.timeclock=TC().filter(x=>x.id!==e.id);log(`Deleted ${e.who}’s time entry from ${fd(tcDay(e.in))} (${tcHM(tcMs(e))})`);save();closeModal();toast('Deleted');rerender()};
+A['tc-csv']=()=>{const mon=ui.tcWeek||tcMon(TODAY),sun=tcAdd(mon,6);const q=s=>`"${String(s??'').replace(/"/g,'""')}"`;
+ const lines=[['Person','Date','Clock in','Clock out','Hours','Note','Changed'].join(',')];TC().filter(e=>tcDay(e.in)>=mon&&tcDay(e.in)<=sun).sort((a,b)=>a.who.localeCompare(b.who)||a.in.localeCompare(b.in)).forEach(e=>lines.push([q(e.who),tcDay(e.in),q(tcTime(e.in)),q(e.out?tcTime(e.out):'still on the clock'),tcH(tcMs(e)).toFixed(2),q(e.note),q(e.edited||'')].join(',')));
+ lines.push('');lines.push('Totals');const tot={};TC().filter(e=>tcDay(e.in)>=mon&&tcDay(e.in)<=sun).forEach(e=>tot[e.who]=(tot[e.who]||0)+tcMs(e));Object.entries(tot).forEach(([p,ms])=>lines.push([q(p),'','','',tcH(ms).toFixed(2)].join(',')));
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));a.download=`M-RES-hours-${mon}.csv`;document.body.appendChild(a);a.click();a.remove();log(`Downloaded hours for the week of ${fd(mon)}`)};
+/* in the menu, under Today, so staff can find their hours */
+/* the account menu (top right) holds the operations pages: time clock, workbook and data, activity log */
+const _umTc=A.usermenu;A.usermenu=d=>{_umTc(d);const dd=$('#dd');if(!dd)return;const o=tcOpen();const hd=dd.querySelector('header');
+ const html=`<div class="tc-dd"><div class="tc-dd-row">${o?`<span><span class="tc-dot"></span> On the clock · <b>${tcHM(tcMs(o))}</b></span><button class="btn sm danger" data-action="tc-out">Clock out</button>`:`<span class="muted">Not clocked in</span><button class="btn sm primary" data-action="tc-in">Clock in</button>`}</div></div>
+  <button class="item" data-action="go" data-to="timeclock">${ic('clock',15)} ${tcOwner()?'Time clock and hours':'My hours'}</button>
+  <button class="item" data-action="go" data-to="data">${ic('refresh',15)} Workbook and data</button>
+  <button class="item" data-action="go" data-to="activity">${ic('history',15)} Activity log</button><div class="tc-sep"></div>`;
+ if(hd)hd.insertAdjacentHTML('afterend',html);else dd.insertAdjacentHTML('afterbegin',html)};
+if(!A.go)A.go=d=>{closeDD();location.hash='#/'+d.to};
+if(typeof TIP_NAV!=='undefined')TIP_NAV.timeclock='Clock in and out, and see hours worked by day and week.';
+/* a punch left open overnight shows on My work so it gets fixed */
+if(VIEWS.mywork){const _mwTc=VIEWS.mywork;VIEWS.mywork=id=>{let h=_mwTc(id);const o=tcOpen();if(o&&tcMs(o)>12*36e5)h=`<div class="note" style="background:var(--alert-soft);margin-bottom:12px">You’ve been clocked in since ${esc(fd(tcDay(o.in)))} at ${esc(tcTime(o.in))}. If you forgot to clock out, <button class="link" data-action="tc-out">set your finish time</button>.</div>`+h;return h}}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.tc-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #10b981;background:rgba(16,185,129,.1);color:#047857;border-radius:999px;padding:6px 12px;font-weight:600;font-size:13px;font-family:inherit;cursor:pointer;margin-right:6px}
+.tc-btn.on{border-color:#ef4444;background:rgba(239,68,68,.1);color:#b91c1c}.tc-btn.on svg{animation:tcp 2s infinite}@keyframes tcp{50%{opacity:.4}}
+@media(max-width:760px){.tc-l{display:none}}
+.tc-wk{display:flex;gap:10px;align-items:center;margin:4px 0 12px;flex-wrap:wrap}.tc-now{display:flex;gap:8px;flex-wrap:wrap;margin:-4px 0 12px}
+.tc-pill{background:rgba(239,68,68,.1);color:#b91c1c;border-radius:999px;padding:3px 10px;font-size:13px;font-weight:600}
+.tc-grid .tc-c{text-align:center}.tc-heat{display:inline-block;min-width:38px;padding:3px 6px;border-radius:6px;font-weight:700;color:#0f2a3d}.tc-today{color:#0e7490}
+.tc-bar{position:relative;height:12px;background:var(--line,#e5e7eb);border-radius:6px;overflow:visible}.tc-bar span{display:block;height:100%;background:#22b8d6;border-radius:6px}
+.tc-bar i{position:absolute;top:-3px;bottom:-3px;width:2px;background:#ef4444}.tc-dd{padding:8px 12px}.tc-dd-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}.tc-sep{height:1px;background:var(--line);margin:4px 0}#dd .item svg{vertical-align:-3px;margin-right:6px;opacity:.7}
+.tc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;animation:tcp 2s infinite}
+</style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
