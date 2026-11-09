@@ -3430,7 +3430,7 @@ A['ln-pick-all']=()=>{const p=lnPick();$$('.ilist.ln-pickable a.im').forEach(a=>
 A['ln-bulk']=d=>{const ms=lnPick().map(id=>byId(S.emails,id)).filter(Boolean);if(!ms.length)return toast('Click the emails you want first.',true);const n=ms.length,s=n===1?'':'s';
  if(d.op==='done'){ms.forEach(m=>{m.status='Closed';m.read=true;m.sorted=true});log(`Marked ${n} email${s} done`);toast(`${n} email${s} marked done`)}
  else if(d.op==='assign'){const who=($('#ln-bulk-who')||{}).value;if(!who)return;ms.forEach(m=>{m.owner=who;if(m.status==='New')m.status='Open'});log(`Assigned ${n} email${s} to ${who}`);toast(`${n} email${s} assigned to ${who}`)}
- else if(d.op==='trash'){if(!confirmBox(`Move ${n} email${s} to Trash? You can restore them for 30 days.`))return;trashMails(ms.map(m=>m.id),'bulk');toast(`${n} email${s} moved to Trash`)}
+ else if(d.op==='trash'){if(!(typeof confirmBox==="function"?confirmBox:confirm)(`Move ${n} email${s} to Trash? You can restore them for 30 days.`))return;trashMails(ms.map(m=>m.id),'bulk');toast(`${n} email${s} moved to Trash`)}
  ui.lnPick=[];ui.lnSel=false;save();rerender()};
 
 /* ================= Close dead conversations automatically =================
@@ -3790,7 +3790,7 @@ A['tc-edit']=d=>{if(!tcOwner())return toast('Only owners can change time entries
   const tag=`${USER.name} ${e?'edited':'added'} this${v.why?': '+v.why.trim():''}`;
   if(e){const before=`${tcTime(e.in)}–${e.out?tcTime(e.out):'open'}`;Object.assign(e,{who:v.who,in:i,out:o,note:(v.note||'').trim(),edited:tag});log(`Changed ${e.who}’s time on ${fd(tcDay(i))}${v.why?' ('+v.why.trim()+')':''}`,[{f:'Time',from:before,to:`${tcTime(i)}–${o?tcTime(o):'open'}`}])}
   else{TC().push({id:tcId(),who:v.who,in:i,out:o,note:(v.note||'').trim(),edited:tag});log(`Added time for ${v.who} on ${fd(tcDay(i))}${v.why?' ('+v.why.trim()+')':''}`)}save();toast('Saved');rerender()}})};
-A['tc-del']=d=>{const e=TC().find(x=>x.id===d.id);if(!e||!confirmBox(`Delete ${e.who}’s entry from ${fd(tcDay(e.in))}?`))return;S.timeclock=TC().filter(x=>x.id!==e.id);log(`Deleted ${e.who}’s time entry from ${fd(tcDay(e.in))} (${tcHM(tcMs(e))})`);save();closeModal();toast('Deleted');rerender()};
+A['tc-del']=d=>{const e=TC().find(x=>x.id===d.id);if(!e||!(typeof confirmBox==="function"?confirmBox:confirm)(`Delete ${e.who}’s entry from ${fd(tcDay(e.in))}?`))return;S.timeclock=TC().filter(x=>x.id!==e.id);log(`Deleted ${e.who}’s time entry from ${fd(tcDay(e.in))} (${tcHM(tcMs(e))})`);save();closeModal();toast('Deleted');rerender()};
 A['tc-csv']=()=>{const mon=ui.tcWeek||tcMon(TODAY),sun=tcAdd(mon,6);const q=s=>`"${String(s??'').replace(/"/g,'""')}"`;
  const lines=[['Person','Date','Clock in','Clock out','Hours','Note','Changed'].join(',')];TC().filter(e=>tcDay(e.in)>=mon&&tcDay(e.in)<=sun).sort((a,b)=>a.who.localeCompare(b.who)||a.in.localeCompare(b.in)).forEach(e=>lines.push([q(e.who),tcDay(e.in),q(tcTime(e.in)),q(e.out?tcTime(e.out):'still on the clock'),tcH(tcMs(e)).toFixed(2),q(e.note),q(e.edited||'')].join(',')));
  lines.push('');lines.push('Totals');const tot={};TC().filter(e=>tcDay(e.in)>=mon&&tcDay(e.in)<=sun).forEach(e=>tot[e.who]=(tot[e.who]||0)+tcMs(e));Object.entries(tot).forEach(([p,ms])=>lines.push([q(p),'','','',tcH(ms).toFixed(2)].join(',')));
@@ -3818,6 +3818,254 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .tc-bar i{position:absolute;top:-3px;bottom:-3px;width:2px;background:#ef4444}.tc-dd{padding:8px 12px}.tc-dd-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}.tc-sep{height:1px;background:var(--line);margin:4px 0}#dd .item svg{vertical-align:-3px;margin-right:6px;opacity:.7}
 .tc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;animation:tcp 2s infinite}
 </style>`);
+
+/* ================= Payment reminders =================
+   One email per customer listing their overdue invoices, at 7, 14 and 30 days past due, getting firmer each time.
+   Nothing goes out until an owner reviews the batch and clicks Send. Each send is recorded on the invoice. */
+const RM_STAGES=[30,14,7];
+const rmAcct=i=>(typeof acc==='function'&&acc(i.acct))||byId(S.accounts||[],i.acct)||{name:i.acct||'Customer'};
+const rmLate=i=>-dd(i.due);
+const rmStage=i=>{const d=rmLate(i);return RM_STAGES.find(s=>d>=s)||0};
+const rmOpen=i=>(+i.amount||0)-(+i.paid||0);
+const rm$=n=>'$'+(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+function rmEmail(a){const c=(S.contacts||[]).filter(x=>x.acct===a.id||x.acct===a.name);const ap=c.find(x=>/pay|a\/p|\bap\b|account|billing|finance/i.test((x.title||'')+' '+(x.name||'')+' '+(x.email||''))&&x.email);
+ return a.apEmail||a.billEmail||(ap&&ap.email)||a.email||(c.find(x=>x.email)||{}).email||''}
+function rmDue(){const by=new Map();(S.invoices||[]).filter(i=>!i.demo&&rmOpen(i)>0.005&&rmStage(i)>0).forEach(i=>{const a=rmAcct(i);const k=a.id||a.name;if(!by.has(k))by.set(k,{a,inv:[]});by.get(k).inv.push(i)});
+ return[...by.values()].map(g=>{const stage=Math.max(...g.inv.map(rmStage));const sent=g.inv.every(i=>(i.rem||[]).some(r=>r.stage>=rmStage(i)));const total=g.inv.reduce((t,i)=>t+rmOpen(i),0);
+  const last=g.inv.flatMap(i=>i.rem||[]).map(r=>r.on).sort().pop()||null;return{...g,stage,sent,total,last,to:rmEmail(g.a)}}).sort((x,y)=>(x.sent-y.sent)||y.total-x.total)}
+function rmText(g){const first=String(g.a.contact||'').split(' ')[0];const n=g.inv.length,many=n>1;
+ const lead=g.stage>=30?`The invoice${many?'s':''} below ${many?'are':'is'} now more than 30 days past due. Could you let us know when we can expect payment, or if anything is holding ${many?'them':'it'} up?`
+  :g.stage>=14?`Following up on the invoice${many?'s':''} below, which ${many?'are':'is'} now two weeks past due.`:`A friendly reminder that the invoice${many?'s':''} below ${many?'are':'is'} now past due.`;
+ const lines=g.inv.sort((a,b)=>a.due<b.due?-1:1).map(i=>{const o=i.ref&&byId(S.orders||[],i.ref);const po=o&&(o.custPo||o.po||o.poNo);return `• Invoice ${i.id}${po?` (your PO ${po})`:''}: ${rm$(rmOpen(i))} open, due ${longDate(i.due)} (${rmLate(i)} days ago)`});
+ const subject=`${g.stage>=30?'Past due 30+ days':'Payment reminder'}: ${many?`${n} invoices, ${rm$(g.total)}`:`invoice ${g.inv[0].id}, ${rm$(g.total)}`}`;
+ const text=`Hello${first?' '+first:''},\n\n${lead}\n\n${lines.join('\n')}\n${many?`\nTotal open: ${rm$(g.total)}\n`:''}\nIf payment is already on its way, thank you, and please disregard this note. Just reply to this email with any questions or if you need a copy of an invoice.`;
+ return{subject,text}}
+A['rm-review']=()=>{const due=rmDue().filter(g=>!g.sent);if(!due.length)return toast('No reminders are due. Everyone is either paid up or has been reminded at this stage.');
+ modal(`Payment reminders · ${due.length} customer${due.length===1?'':'s'}`,`<p class="muted sm" style="margin-top:0">One email per customer, from info@, listing every overdue invoice. Reminders go at 7, 14 and 30 days past due and get firmer each time. Untick anyone you’d rather call. Edit any message before sending.</p>
+  ${due.map((g,ix)=>{const t=rmText(g);return `<div class="rm-card"><label class="check-inline"><input type="checkbox" name="rm${ix}" ${g.to?'checked':''}> <b>${esc(g.a.name)}</b> <span class="chip ${g.stage>=30?'alert':g.stage>=14?'warn':''}">${g.stage}+ days</span> <span class="muted sm">${g.inv.length} invoice${g.inv.length===1?'':'s'} · ${rm$(g.total)}${g.last?` · last reminded ${esc(fd(g.last))}`:''}</span></label>
+   <div class="fg" style="margin-top:6px">${fld('To',inp('to'+ix,g.to,'type="email" placeholder="Customer’s accounts-payable email"'))}${fld('Subject',inp('sub'+ix,t.subject))}${fld('Message',`<textarea name="txt${ix}" rows="9">${esc(t.text)}</textarea>`,true)}</div></div>`}).join('')}`,
+ {wide:true,label:'Send reminders',submit:v=>{const pick=due.map((g,ix)=>({g,ix})).filter(({ix})=>v['rm'+ix]==='on'||$(`#mform [name=rm${ix}]`)?.checked);
+  if(!pick.length)return fail('Tick at least one customer.');const bad=pick.find(({ix})=>!isAddr(String(v['to'+ix]||'').trim()));if(bad)return fail(`Add an email address for ${bad.g.a.name}.`);
+  if(typeof CLOUD==='undefined'||!CLOUD)return fail('Sending email needs the online ERP.');$$('#modal-root button').forEach(b=>b.disabled=true);
+  (async()=>{const ok=[],err=[];for(const {g,ix} of pick){const to=String(v['to'+ix]).trim();try{
+    const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{to,subject:v['sub'+ix],text:v['txt'+ix],wait:true,newConversation:{fromName:g.a.contact||g.a.name,company:g.a.name,acct:g.a.id||null,cat:'Billing',links:[]}}});
+    let e=data&&data.error;if(error&&!e){try{e=(await error.context.json()).error}catch(x){e=error.message}}if(e)throw new Error(e);
+    g.inv.forEach(i=>{(i.rem=i.rem||[]).push({stage:rmStage(i),on:TODAY,by:USER.name,to})});if(g.a.id&&!g.a.apEmail&&to!==g.a.email)g.a.apEmail=to;ok.push(g.a.name)}catch(e){err.push(g.a.name+': '+e.message)}}
+   if(ok.length)log(`Sent payment reminders to ${ok.join(', ')}`);save();closeModal();toast(err.length?`Sent ${ok.length}. Not sent: ${err.join('; ')}`:`Sent ${ok.length} reminder${ok.length===1?'':'s'}`,!!err.length);rerender()})()}})};
+/* a banner where owners will see it: Finance and My work */
+function rmBanner(){if(typeof isOwner==='function'&&!isOwner())return'';const due=rmDue().filter(g=>!g.sent);if(!due.length)return'';const tot=due.reduce((t,g)=>t+g.total,0);
+ return `<div class="rm-banner">${ic('mail',18)}<div class="grow"><b>${due.length} customer${due.length===1?' is':'s are'} due a payment reminder</b><div class="sm">${esc(due.slice(0,4).map(g=>`${g.a.name} ${$f(g.total)}`).join(' · '))}${due.length>4?' …':''} · ${$f(tot)} overdue</div></div><button class="btn primary" data-action="rm-review">Review and send</button></div>`}
+const _finRm=VIEWS.finance;VIEWS.finance=id=>{const h=_finRm(id);const b=rmBanner();if(!b)return h;const k=h.indexOf('<div class="kpis');return k>0?h.slice(0,k)+b+h.slice(k):b+h};
+const _mwRm=VIEWS.mywork;if(_mwRm)VIEWS.mywork=id=>rmBanner()+_mwRm(id);
+if(typeof TIP_ACTION!=='undefined')TIP_ACTION['rm-review']='Review the payment reminder emails for customers with overdue invoices, then send them from info@.';
+document.head.insertAdjacentHTML('beforeend',`<style>
+.rm-banner{display:flex;gap:12px;align-items:center;padding:12px 16px;border-radius:12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);margin-bottom:14px}.rm-banner svg{color:#dc2626;flex:none}
+.rm-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+</style>`);
+
+/* ================= On the phone =================
+   - "Request a part" screen built for a phone: snap a photo of the old part, say how many, send.
+   - A bottom bar on small screens: My work · Inbox · Request · Requests · Clock.
+   - Installable as an app icon on the home screen (manifest.webmanifest + icons), with a "Request a part" shortcut. */
+(function(){const h=document.head;if(!h.querySelector('link[rel=manifest]'))h.insertAdjacentHTML('beforeend','<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png"><meta name="theme-color" content="#0f2a3d"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="M-RES">')})();
+VIEWS.ask=()=>{const done=ui.askDone;if(done){const r=fr(done);return `<div class="ask"><div class="ask-ok">${ic('check',40)}<h1>Sent</h1><p><b>${esc(done)}</b>${r?`: ${num(r.qty)} ${esc(r.unit||'pcs')} of ${esc(r.what)}`:''}. The team got an email and it’s on Part requests.</p>
+  <button class="btn primary ask-big" data-action="ask-again">Request another part</button><a class="btn ask-big" href="#/requests/${esc(done)}">See this request</a></div></div>`}
+ const d=ui.askDraft||{};
+ return `<div class="ask"><h1>Request a part</h1><p class="muted">Takes a minute. The team gets it right away, and it turns into an RFQ by itself.</p>
+ <form id="askf" autocomplete="off">
+  <label class="ask-photo"><input type="file" id="ask-files" accept="image/*,application/pdf" capture="environment" multiple hidden><span>${ic('box',26)}<b>Take a photo</b><small>of the old part or its label (optional)</small></span></label><div id="ask-picked" class="sm muted"></div>
+  <label class="ask-f">What do you need?<input name="what" required placeholder="e.g. EBM fan W1G110-AG03-07" value="${esc(d.what||'')}"></label>
+  <div class="ask-row"><label class="ask-f">How many?<input name="qty" type="number" inputmode="numeric" min="1" required value="${esc(d.qty||'')}"></label>
+   <label class="ask-f">Unit<select name="unit">${['pcs','sets','pairs','ft','m','kg','lbs'].map(u=>opt(u,u,u===(d.unit||'pcs'))).join('')}</select></label></div>
+  <label class="ask-f">What’s it for?<input name="forWhat" required placeholder="Customer, job, PO number, or stock" value="${esc(d.forWhat||'')}"></label>
+  <label class="ask-f">Needed by (optional)<input name="needBy" type="date" value="${esc(d.needBy||'')}"></label>
+  <div class="ask-f">How urgent?<div class="ask-seg">${FR_URG.map((u,i)=>`<label><input type="radio" name="urgency" value="${esc(u)}" ${(d.urgency||'Normal')===u?'checked':''}><span>${esc(u)}</span></label>`).join('')}</div></div>
+  <label class="ask-f">Anything else? (optional)<textarea name="specs" rows="3" placeholder="Voltage, size, model on the label, old supplier…">${esc(d.specs||'')}</textarea></label>
+  <button class="btn primary ask-big" type="submit">Send request</button></form></div>`};
+document.addEventListener('change',e=>{if(e.target&&e.target.id==='ask-files'){const f=[...e.target.files];const p=$('#ask-picked');if(p)p.textContent=f.length?`${f.length} file${f.length===1?'':'s'}: ${f.map(x=>x.name).join(', ')}`:''}});
+document.addEventListener('submit',e=>{const f=e.target;if(!f||f.id!=='askf')return;e.preventDefault();e.stopPropagation();const d=Object.fromEntries(new FormData(f));
+ const what=String(d.what||'').trim(),qty=+d.qty;if(!what||!(qty>0)||!String(d.forWhat||'').trim())return toast('Fill in what, how many, and what it’s for.',true);
+ const v={what,qty,unit:d.unit||'pcs',partNo:'',forWhat:String(d.forWhat).trim(),needBy:d.needBy||null,urgency:d.urgency||'Normal',assignee:'Anyone',specs:String(d.specs||''),budget:null};
+ const pick=[...(($('#ask-files')||{}).files||[])];const id=nextId(frs(),'FR-');const n={id,...v,from:USER.name,created:new Date().toISOString(),status:'New',thread:[],via:'phone'};frs().unshift(n);
+ log(`${USER.name} requested ${num(qty)} ${v.unit} of ${what} (${id})`,[{f:'For',from:'blank',to:v.forWhat}]);save();
+ (async()=>{const k=pick.length&&typeof frUpload==='function'?await frUpload(n,pick):0;if(typeof frNotify==='function')frNotify(n,`New part request from ${USER.name}.`,[v.specs,k?`Files attached: ${n.files.map(x=>x.name).join(', ')}`:''].filter(Boolean).join('\n\n'))})();
+ ui.askDraft=null;ui.askDone=id;rerender();try{window.scrollTo(0,0)}catch(x){}},true);
+document.addEventListener('input',e=>{const f=e.target&&e.target.form;if(f&&f.id==='askf')ui.askDraft=Object.fromEntries(new FormData(f))});
+A['ask-again']=()=>{ui.askDone=null;rerender()};
+if(typeof TIP_NAV!=='undefined')TIP_NAV.ask='Request a part from your phone.';
+
+/* bottom bar on phones */
+function mbBar(){const r=parse().r;const n=x=>{const c=typeof navCounts==='function'?(navCounts()[x]||0):0;return c?`<i>${c>99?'99+':c}</i>`:''};const o=typeof tcOpen==='function'&&tcOpen();
+ const it=(k,label,icon,extra='')=>`<a href="#/${k}" class="${r===k?'on':''}" ${extra}>${ic(icon,22)}${n(k)}<span>${label}</span></a>`;
+ return `<nav id="mbar" aria-label="Quick menu">${it('mywork','My work','check')}${it('inbox','Inbox','mail')}<a href="#/ask" class="mb-plus ${r==='ask'?'on':''}" aria-label="Request a part">${ic('plus',26)}<span>Request</span></a>${it('requests','Requests','ask')}
+  <button type="button" data-action="${o?'tc-out':'tc-in'}" class="${o?'mb-on':''}">${ic('clock',22)}<span>${o?tcHM(tcMs(o)):'Clock in'}</span></button></nav>`}
+const _shellMb=renderShell;renderShell=function(){_shellMb();const old=$('#mbar');if(old)old.remove();if(USER&&USER.name)document.body.insertAdjacentHTML('beforeend',mbBar())};
+if(typeof IC!=='undefined'&&!IC.plus)IC.plus='<path d="M12 5v14M5 12h14"/>';
+document.head.insertAdjacentHTML('beforeend',`<style>
+.ask{max-width:520px;margin:0 auto}.ask h1{margin:0 0 4px}.ask .muted{margin:0 0 14px}
+#askf{display:flex;flex-direction:column;gap:14px}.ask-f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15px}
+.ask-f input,.ask-f select,.ask-f textarea{font-size:17px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface,#fff);color:inherit;font-family:inherit;font-weight:400}
+.ask-row{display:grid;grid-template-columns:1fr 110px;gap:10px}.ask-big{width:100%;justify-content:center;padding:14px;font-size:17px;border-radius:12px;margin-top:4px}
+.ask-photo{border:2px dashed #22b8d6;border-radius:14px;padding:18px;text-align:center;cursor:pointer;background:rgba(34,184,214,.06)}.ask-photo span{display:flex;flex-direction:column;align-items:center;gap:4px}.ask-photo small{color:var(--muted,#64748b)}
+.ask-seg{display:flex;gap:6px}.ask-seg label{flex:1}.ask-seg input{position:absolute;opacity:0}.ask-seg span{display:block;text-align:center;padding:11px 6px;border:1px solid var(--line);border-radius:10px;font-weight:600;font-size:14px}
+.ask-seg input:checked+span{background:#22b8d6;border-color:#22b8d6;color:#fff}.ask-seg label:last-child input:checked+span{background:#ef4444;border-color:#ef4444}
+.ask-ok{text-align:center;padding:30px 10px;display:flex;flex-direction:column;gap:12px;align-items:center}.ask-ok svg{color:#10b981}
+#mbar{display:none}
+@media(max-width:760px){
+ #mbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--surface,#fff);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom));justify-content:space-around;box-shadow:0 -4px 16px rgba(0,0,0,.06)}
+ #mbar a,#mbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted,#64748b);text-decoration:none;background:none;border:0;font-family:inherit;position:relative;padding:2px 0}
+ #mbar .on{color:#0e7490;font-weight:700}#mbar i{position:absolute;top:-2px;left:calc(50% + 6px);background:#ef4444;color:#fff;font-style:normal;font-size:10px;font-weight:700;border-radius:9px;padding:0 5px}
+ #mbar .mb-plus svg{background:#22b8d6;color:#fff;border-radius:50%;padding:8px;width:44px;height:44px;margin-top:-18px;box-shadow:0 4px 12px rgba(34,184,214,.45)}#mbar .mb-on{color:#dc2626;font-weight:700}
+ body{padding-bottom:72px}.tc-btn{display:none}
+ #top .searchbtn{min-width:0;flex:1 1 auto}#top .searchbtn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#top .searchbtn kbd{display:none}
+ .ask-row>label{min-width:0}.ask-f select{width:100%;min-width:0;box-sizing:border-box}.ask-f input,.ask-f textarea{box-sizing:border-box;width:100%}
+ .modal,#mform{max-width:100vw!important}table{font-size:13px}
+}
+</style>`);
+
+/* ================= "+ New" in the top bar: start anything from any page (shortcut: N) ================= */
+const NEW_ITEMS=[['fr-new','Part request','ask','Ask the team to find a part'],['sreq-new','RFQ to suppliers','globe','Ask suppliers for prices'],['new-quote','Customer quote','tag','Price something for a customer'],['new-order','Sales order','tag','A customer’s order to us'],['new-po','Purchase order','cart','Our order to a supplier'],['new-account','Customer','users','A company we sell to'],['sup-new','Supplier','box','A company we buy from'],['pr-new','Prospect','target','A company we’d like to sell to'],['compose','Email','mail','Write a new email']];
+function nmBtn(){return `<button type="button" class="nm-btn" data-action="nm-open" aria-haspopup="menu" title="Start something new (N)">${ic('plus',16)}<span>New</span></button>`}
+const _shellNm=renderShell;renderShell=function(){_shellNm();if($('#top .nm-btn'))return;const s=$('#top [data-action="glossary"]')||$('#top .icon-btn');if(s)s.insertAdjacentHTML('beforebegin',nmBtn())};
+A['nm-open']=()=>{if($('#dd.nm-dd'))return closeDD();closeDD();const have=NEW_ITEMS.filter(([a])=>typeof A[a]==='function');
+ $('#top').insertAdjacentHTML('beforeend',`<div class="dd nm-dd" id="dd" role="menu" style="width:300px"><header><span>Start something new</span><span class="muted sm">press N anywhere</span></header>${have.map(([a,l,i,s])=>`<button class="item nm-item" role="menuitem" data-action="nm-go" data-a="${a}">${ic(i,17)}<span><b>${esc(l)}</b><small>${esc(s)}</small></span></button>`).join('')}</div>`);
+ const b=$('#top .nm-btn'),dd=$('#dd.nm-dd');if(b&&dd){const r=b.getBoundingClientRect(),t=$('#top').getBoundingClientRect();dd.style.right='auto';dd.style.left=Math.max(8,Math.min(r.left-t.left,t.width-308))+'px'}};
+A['nm-go']=d=>{closeDD();const f=A[d.a];if(f)f({})};
+document.addEventListener('keydown',e=>{if(e.key!=='n'&&e.key!=='N')return;if(e.ctrlKey||e.metaKey||e.altKey)return;const t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))return;if(typeof modalOpen==='function'&&modalOpen())return;e.preventDefault();A['nm-open']()});
+document.head.insertAdjacentHTML('beforeend',`<style>
+.nm-btn{display:inline-flex;align-items:center;gap:6px;background:#22b8d6;color:#fff;border:0;border-radius:999px;padding:7px 14px 7px 10px;font-weight:700;font-size:14px;font-family:inherit;cursor:pointer;margin-right:8px}.nm-btn:hover{background:#0e9fbd}
+.nm-item{display:flex!important;gap:10px;align-items:center}.nm-item svg{color:#0e7490;flex:none}.nm-item span{display:flex;flex-direction:column}.nm-item small{color:var(--muted,#64748b);font-size:12px}
+@media(max-width:760px){.nm-btn span{display:none}.nm-btn{padding:7px}}
+</style>`);
+
+/* ================= Margin on the "Best deal, delivered to us" panel =================
+   That panel already works out each quote's real delivered cost (shipping, duty, customs, card and wire fees).
+   This adds "We sell each for" and a Margin column, with a bar showing cost against our price. */
+const _dealPanelLc=dealPanel;dealPanel=function(id){const h=_dealPanelLc(id);const r=sreq(id);if(!r||typeof document==='undefined')return h;
+ const t=document.createElement('template');t.innerHTML=h;const ass=t.content.querySelector('.deal-ass');
+ if(ass)ass.insertAdjacentHTML('beforeend',`<label class="lc-sell">We sell each for $<input type="number" min="0" step="0.01" data-lc="sellEach" value="${r.sellEach??''}" placeholder="0.00"></label>`);
+ const tb=t.content.querySelector('table');const sell=+r.sellEach||0;if(!tb)return t.innerHTML;
+ const qs=reqQuotes(id).filter(liveQ).map(q=>({q,d:dealCost(q,r)})).filter(x=>x.d).sort((x,y)=>x.d.total-y.d.total);
+ const hr=tb.querySelector('thead tr');if(hr){const th=document.createElement('th');th.className='n';th.textContent='Margin each';hr.insertBefore(th,hr.cells[hr.cells.length-1])}
+ const max=Math.max(sell,...qs.map(x=>x.d.perNeed||0))||1;
+ [...tb.querySelectorAll('tbody tr')].forEach((tr,i)=>{const x=qs[i];if(!x)return;const td=document.createElement('td');td.className='n';
+  if(!sell)td.innerHTML='<span class="muted sm">set a sell price</span>';else{const m=sell-x.d.perNeed,p=m/sell*100;const tone=p>=35?'ok':p>=20?'warn':'alert';
+   td.innerHTML=`<span class="aq-age ${tone}">${unitCost(m)} · ${p.toFixed(0)}%</span><div class="lc-bar" title="Real cost against our sell price"><span style="width:${(x.d.perNeed/max*100).toFixed(1)}%"></span><i style="left:${(sell/max*100).toFixed(1)}%"></i></div>`}
+  tr.insertBefore(td,tr.cells[tr.cells.length-1])});
+ if(sell){const best=qs[0];if(best){const p=(sell-best.d.perNeed)/sell*100;tb.insertAdjacentHTML('afterend',`<p class="sm" style="margin:8px 16px 0">At ${unitCost(sell)} each, the best quote leaves <b>${unitCost(sell-best.d.perNeed)}</b> per part (<b>${p.toFixed(0)}%</b>), about <b>${$f(Math.round((sell-best.d.perNeed)*(+r.qty||0)))}</b> on ${num(r.qty)}.</p>`)}}
+ return t.innerHTML};
+document.addEventListener('change',e=>{const k=e.target&&e.target.dataset&&e.target.dataset.lc;if(k!=='sellEach')return;const id=parse().id;const r=id&&sreq(id);if(!r)return;const v=e.target.value===''?null:+e.target.value;const before=r.sellEach;r.sellEach=v;
+ log(`${r.no}: sell price each ${before??'blank'} → ${v??'blank'}`);save();rerender()});
+document.head.insertAdjacentHTML('beforeend',`<style>
+.lc-sell{font-weight:700}.lc-bar{position:relative;height:8px;width:110px;background:var(--line,#e5e7eb);border-radius:4px;margin:5px 0 0 auto}.lc-bar span{display:block;height:100%;background:#10b981;border-radius:4px}.lc-bar i{position:absolute;top:-3px;bottom:-3px;width:2px;background:#ef4444}
+</style>`);
+
+/* ================= Supplier scorecards (Sourcing → Suppliers) =================
+   For everyone we've asked for prices: how fast they answer, how often they're the cheapest, how often they win,
+   and whether their orders are running late. A grade (A–D) sorts the best to the top. */
+const scNorm=s=>String(s||'').toLowerCase().replace(/\b(co|ltd|limited|inc|llc|corp|corporation|company|gmbh|trading|technology|tech|industrial|industry|international|group)\b\.?/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+const scMed=a=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);const m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2};
+function scStats(){const msgs=S.smsgs||[],qs=(S.squotes||[]),reqs=S.srcReqs||[];const by=new Map();const get=id=>{if(!by.has(id))by.set(id,{id,rfqs:new Set(),quoted:new Set(),resp:[],cheap:0,compared:0,won:0,pos:0,late:0,last:''});return by.get(id)};
+ msgs.forEach(m=>{if(!m.supplier||!m.req)return;const x=get(m.supplier);x.rfqs.add(m.req);if(m.t>x.last)x.last=m.t});
+ qs.forEach(q=>{if(!q.supplier||!q.req)return;const x=get(q.supplier);x.rfqs.add(q.req);x.quoted.add(q.req);const t=q.date||'';if(t>x.last)x.last=t});
+ /* response time: from when we asked (our first message to them, or the RFQ going out) to their first answer */
+ by.forEach((x,sid)=>{x.rfqs.forEach(rid=>{const r=reqs.find(y=>y.id===rid)||{};const mine=msgs.filter(m=>m.supplier===sid&&m.req===rid).sort((a,b)=>a.t<b.t?-1:1);
+  const asked=(mine.find(m=>m.dir==='out')||{}).t||(r.emailedTo||[]).find(e=>e.id===sid)?.on||r.posted||null;if(!asked)return;
+  const ans=[...mine.filter(m=>m.dir==='in'&&m.t>asked).map(m=>m.t),...qs.filter(q=>q.supplier===sid&&q.req===rid&&q.date&&q.date>=String(asked).slice(0,10)).map(q=>q.date+'T12:00:00Z')].sort()[0];
+  if(ans){const h=(Date.parse(ans)-Date.parse(String(asked).length===10?asked+'T12:00:00Z':asked))/36e5;if(h>=0&&h<24*60)x.resp.push(h)}})});
+ /* price: on RFQs with two or more quotes, were they the cheapest real cost? */
+ reqs.forEach(r=>{const live=qs.filter(q=>q.req===r.id&&liveQ(q)).map(q=>({q,c:landed(q)})).filter(z=>z.c!=null);if(live.length<2)return;const min=Math.min(...live.map(z=>z.c));
+  new Set(live.map(z=>z.q.supplier)).forEach(sid=>{const x=get(sid);x.compared++;if(live.some(z=>z.q.supplier===sid&&z.c<=min+1e-9))x.cheap++});
+  const aw=r.awarded&&byId(qs,r.awarded);if(aw)get(aw.supplier).won++});
+ /* purchase orders to them (matched by name) */
+ (S.pos||[]).forEach(p=>{const s=(S.suppliers||[]).find(y=>y.id===p.vendor||scNorm(y.name)===scNorm(p.vendor));if(!s)return;const x=get(s.id);x.pos++;if(p.exp&&!['Received','Closed','Cancelled'].includes(p.status)&&dd(p.exp)<0)x.late++});
+ return[...by.values()].filter(x=>byId(S.suppliers||[],x.id)).map(x=>{const med=scMed(x.resp);const cheapPct=x.compared?x.cheap/x.compared:null;const winPct=x.quoted.size?x.won/x.quoted.size:null;
+  const score=(med==null?12:med<=24?30:med<=72?20:8)+(cheapPct==null?12:cheapPct*30)+(winPct==null?8:Math.min(1,winPct*2)*20)+(x.pos?(x.late?Math.max(0,20-10*x.late):20):12);
+  const grade=score>=75?'A':score>=58?'B':score>=42?'C':'D';return{...x,s:sup(x.id),med,cheapPct,winPct,score,grade}}).sort((a,b)=>b.score-a.score)}
+const scHrs=h=>h==null?'–':h<1?'under 1 h':h<48?`${Math.round(h)} h`:`${Math.round(h/24)} days`;
+function scPanel(){const rows=scStats();if(!rows.length)return'';const col={A:'#10b981',B:'#22b8d6',C:'#f59e0b',D:'#ef4444'};
+ return `<section class="panel sc-panel"><div class="ph"><h3>${ic('chart',16)} Supplier scorecard</h3><span class="sm muted">${rows.length} suppliers · best first</span></div><div class="tw"><table class="sc-t"><thead><tr><th></th><th>Supplier</th><th>RFQs</th><th>Quotes</th><th>Answers in</th><th>Cheapest</th><th>Won</th><th>POs</th><th>Last heard</th></tr></thead><tbody>
+ ${rows.map(x=>`<tr data-action="sup" data-id="${esc(x.id)}" style="cursor:pointer"><td><span class="sc-g" style="background:${col[x.grade]}">${x.grade}</span></td><td><b>${esc(x.s.name)}</b>${x.s.contact?`<div class="sm muted">${esc(x.s.contact)}</div>`:''}</td><td>${x.rfqs.size}</td><td>${x.quoted.size}</td>
+  <td>${scHrs(x.med)}${x.resp.length?`<div class="sc-mini"><span style="width:${Math.max(4,Math.min(100,100-(x.med/72)*100)).toFixed(0)}%;background:${x.med<=24?'#10b981':x.med<=72?'#f59e0b':'#ef4444'}"></span></div>`:''}</td>
+  <td>${x.compared?`${x.cheap} of ${x.compared}<div class="sc-mini"><span style="width:${(x.cheapPct*100).toFixed(0)}%;background:#22b8d6"></span></div>`:'<span class="muted">–</span>'}</td><td>${x.won||'–'}</td><td>${x.pos?`${x.pos}${x.late?` <span class="aq-age alert">${x.late} late</span>`:''}`:'–'}</td><td class="sm">${x.last?esc(ago(x.last.length===10?x.last+'T12:00:00Z':x.last)):'–'}</td></tr>`).join('')}</tbody></table></div>
+ <p class="sm muted" style="margin:8px 16px">Grade = how fast they answer, how often they’re cheapest (real cost incl. shipping), how often they win, and whether their orders run late. “Cheapest” only counts RFQs with two or more quotes.</p></section>`}
+const _srcSc=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcSc(id);if(id||(ui.tabs.sourcing||'')!=='Suppliers'||typeof document==='undefined')return h;const p=scPanel();if(!p)return h;
+ const t=document.createElement('template');t.innerHTML=h;const tb=t.content.querySelector('.tabs');if(tb)tb.insertAdjacentHTML('afterend',p);else return h+p;return t.innerHTML};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.sc-g{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;color:#fff;font-weight:800}.sc-mini{height:4px;background:var(--line,#e5e7eb);border-radius:3px;margin-top:4px;width:80px}.sc-mini span{display:block;height:100%;border-radius:3px}
+.sc-panel{margin-bottom:14px}.sc-t td{vertical-align:middle}
+</style>`);
+
+/* ================= First-day tour =================
+   Shows once for each person the first time they sign in (and any time from the account menu: "Take the tour").
+   Spotlights the few things that matter on day one. */
+const TOUR=[
+ ['#side a[href="#/mywork"], #mbar a[href="#/mywork"]','My work','Your to-do list. Everything waiting on you shows here, most urgent first. Start every day here.'],
+ ['#side a[href="#/inbox"], #mbar a[href="#/inbox"]','Inbox','Two lanes: People (customers and vendors) and Suppliers (Alibaba and supplier emails, sorted under the RFQ they belong to).'],
+ ['#side a[href="#/requests"], #mbar a[href="#/requests"]','Part requests','When someone needs a part found, it goes here, never in a text. Each request turns into an RFQ by itself.'],
+ ['#side a[href="#/sourcing"]','Sourcing (RFQs)','Every RFQ, the supplier answers, and the quotes side by side with the real cost of each part. Post on Alibaba from here.'],
+ ['#top .nm-btn','+ New','Start anything from any page: a part request, RFQ, quote, order, customer or supplier. Shortcut: press N.'],
+ ['#top .tc-btn, #mbar [data-action^="tc-"]','Time clock','Clock in when you start and out when you finish. Your hours are in the account menu.'],
+ ['#top [data-action="usermenu"]','Your account','Your hours, the team, your password, and this tour again.'],
+ ['#top [data-action="glossary"]','Help','Not sure what a word means (customer PO vs vendor PO)? It’s here. Hover over any button for a short explanation.']];
+let tourAt=-1;
+function tourVisible(sel){return sel.split(',').map(s=>$(s.trim())).find(el=>el&&el.offsetParent!==null&&el.getBoundingClientRect().width>0)}
+function tourShow(){let el;while(tourAt<TOUR.length&&!(el=tourVisible(TOUR[tourAt][0])))tourAt++;if(tourAt>=TOUR.length)return tourEnd(true);
+ const [_,title,text]=TOUR[tourAt];const n=TOUR.filter(t=>tourVisible(t[0])).length;const k=TOUR.slice(0,tourAt+1).filter(t=>tourVisible(t[0])).length;
+ el.scrollIntoView({block:'nearest'});const r=el.getBoundingClientRect();let o=$('#tour');if(!o){document.body.insertAdjacentHTML('beforeend','<div id="tour"><div class="tour-spot"></div><div class="tour-card" role="dialog" aria-live="polite"></div></div>');o=$('#tour')}
+ const sp=o.querySelector('.tour-spot');Object.assign(sp.style,{left:r.left-6+'px',top:r.top-6+'px',width:r.width+12+'px',height:r.height+12+'px'});
+ const c=o.querySelector('.tour-card');c.innerHTML=`<div class="sm muted">${k} of ${n}</div><h3>${esc(title)}</h3><p>${esc(text)}</p><div class="tour-b"><button class="link sm" data-tour="skip">Skip the tour</button><span>${k>1?'<button class="btn sm" data-tour="back">Back</button>':''}<button class="btn sm primary" data-tour="next">${k===n?'Done':'Next'}</button></span></div>`;
+ const W=innerWidth,H=innerHeight,cw=Math.min(320,W-24);c.style.width=cw+'px';let x=r.right+16,y=r.top;if(x+cw>W-12){x=Math.max(12,Math.min(r.left,W-cw-12));y=r.bottom+16}if(y+190>H)y=Math.max(12,r.top-200);Object.assign(c.style,{left:x+'px',top:y+'px'});c.querySelector('[data-tour="next"]').focus()}
+function tourStart(){closeDD&&closeDD();tourAt=0;tourShow()}
+function tourEnd(done){const o=$('#tour');if(o)o.remove();tourAt=-1;S.toured=S.toured||{};if(!S.toured[USER.name]){S.toured[USER.name]=TODAY;save()}if(done)toast('That’s it. Press N to start something new, and hover over anything you’re unsure of.')}
+document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-tour]');if(!b)return;e.preventDefault();e.stopPropagation();const a=b.dataset.tour;
+ if(a==='skip')return tourEnd(false);if(a==='back'){do{tourAt--}while(tourAt>0&&!tourVisible(TOUR[tourAt][0]));return tourShow()}tourAt++;if(tourAt>=TOUR.length||!TOUR.slice(tourAt).some(t=>tourVisible(t[0])))return tourEnd(true);tourShow()},true);
+document.addEventListener('keydown',e=>{if(tourAt<0)return;if(e.key==='Escape')tourEnd(false);if(e.key==='ArrowRight'||e.key==='Enter'){e.preventDefault();($('#tour [data-tour="next"]')||{click(){}}).click()}});
+addEventListener('resize',()=>{if(tourAt>=0)tourShow()});
+A['tour']=()=>{closeDD();location.hash='#/mywork';setTimeout(tourStart,250)};
+const _umTour=A.usermenu;A.usermenu=d=>{_umTour(d);const dd=$('#dd');if(!dd)return;const sep=dd.querySelector('.tc-sep');const html=`<button class="item" data-action="tour">${ic('check',15)} Take the tour</button>`;if(sep)sep.insertAdjacentHTML('beforebegin',html);else dd.insertAdjacentHTML('beforeend',html)};
+/* first time someone signs in: wait until the app is up, then start */
+(function(){let n=0;const t=setInterval(()=>{n++;if(n>40)return clearInterval(t);if(!USER||!USER.name||$('#gate')||!$('#top')||(typeof modalOpen==='function'&&modalOpen()))return;clearInterval(t);
+ if(USER.name==='Demo'||(S.toured&&S.toured[USER.name]))return;try{if(localStorage.getItem('mres-toured-'+USER.name))return;localStorage.setItem('mres-toured-'+USER.name,'1')}catch(e){}setTimeout(tourStart,600)},1000)})();
+document.head.insertAdjacentHTML('beforeend',`<style>
+#tour{position:fixed;inset:0;z-index:90}.tour-spot{position:fixed;border-radius:10px;box-shadow:0 0 0 9999px rgba(15,42,61,.62);transition:all .25s;pointer-events:none;outline:3px solid #22b8d6}
+.tour-card{position:fixed;background:var(--surface,#fff);color:var(--ink,#111);border-radius:12px;padding:14px 16px;box-shadow:0 12px 40px rgba(0,0,0,.3);transition:all .25s}.tour-card h3{margin:2px 0 6px;font-size:17px}.tour-card p{margin:0 0 12px;line-height:1.45}
+.tour-b{display:flex;justify-content:space-between;align-items:center;gap:8px}.tour-b span{display:flex;gap:6px}
+</style>`);
+
+/* ================= Find and merge duplicate customers and suppliers =================
+   Duplicates are found by name (ignoring "Co., Ltd.", "Inc.", punctuation) or by the same email address.
+   Merging keeps one record, fills its blanks from the others, and moves every order, RFQ, message, quote,
+   email and invoice over to it. Owners only; every merge is in the Activity log. */
+const DP_REF_KEYS=new Set(['acct','account','customer','vendor','supplier','company']);
+const dpNorm=s=>(typeof scNorm==='function'?scNorm(s):String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim());
+function dpGroups(list){const parent=new Map(list.map(x=>[x.id,x.id]));const f=a=>{while(parent.get(a)!==a)a=parent.get(a);return a};const join=(a,b)=>parent.set(f(a),f(b));
+ const seen=new Map();const key=(k,x)=>{if(!k)return;if(seen.has(k))join(x.id,seen.get(k));else seen.set(k,x.id)};
+ list.forEach(x=>{const n=dpNorm(x.name);if(n.length>=4)key('n:'+n,x);const e=String(x.email||'').trim().toLowerCase();if(/@/.test(e))key('e:'+e,x)});
+ const g=new Map();list.forEach(x=>{const r=f(x.id);if(!g.has(r))g.set(r,[]);g.get(r).push(x)});return[...g.values()].filter(a=>a.length>1)}
+function dpRefs(id,name){let n=0;const walk=(v,k)=>{if(typeof v==='string'){if(v===id||(name&&DP_REF_KEYS.has(k)&&v===name))n++;return}if(Array.isArray(v))v.forEach(x=>walk(x,k));else if(v&&typeof v==='object')Object.entries(v).forEach(([kk,x])=>walk(x,kk))};
+ Object.entries(S).forEach(([k,v])=>{if(k!=='suppliers'&&k!=='accounts')walk(v,k)});return n}
+function dpMerge(kind,keepId,dropIds){const list=S[kind];const keep=byId(list,keepId);const drops=dropIds.map(id=>byId(list,id)).filter(Boolean);if(!keep||!drops.length)return 0;
+ const ids=new Map(drops.map(d=>[d.id,keep.id])),names=new Map(drops.filter(d=>d.name&&d.name!==keep.name).map(d=>[d.name,keep.name]));let moved=0;
+ const walk=(o)=>{if(Array.isArray(o)){o.forEach((x,i)=>{if(typeof x==='string'&&ids.has(x)){o[i]=ids.get(x);moved++}else walk(x)});return}if(!o||typeof o!=='object')return;
+  Object.keys(o).forEach(k=>{const v=o[k];if(typeof v==='string'){if(ids.has(v)){o[k]=ids.get(v);moved++}else if(DP_REF_KEYS.has(k)&&names.has(v)){o[k]=names.get(v);moved++}}else walk(v)})};
+ Object.entries(S).forEach(([k,v])=>{if(k!==kind)walk(v)});
+ drops.forEach(d=>{Object.entries(d).forEach(([k,v])=>{if(k==='id')return;const cur=keep[k];if(cur==null||cur===''||(Array.isArray(cur)&&!cur.length))keep[k]=v;else if(Array.isArray(cur)&&Array.isArray(v))keep[k]=[...cur,...v.filter(x=>!cur.some(y=>JSON.stringify(y)===JSON.stringify(x)))]});
+  if(d.name&&d.name!==keep.name)keep.aliases=[...new Set([...(keep.aliases||[]),d.name])]});
+ S[kind]=list.filter(x=>!ids.has(x.id));log(`Merged ${drops.map(d=>d.name).join(', ')} into ${keep.name} (${moved} linked record${moved===1?'':'s'} moved)`);save();return moved}
+A['dp-find']=()=>{closeDD();if(typeof isOwner==='function'&&!isOwner())return toast('Only owners can merge records.',true);
+ const sets=[['suppliers','Suppliers',dpGroups(S.suppliers||[])],['accounts','Customers',dpGroups(S.accounts||[])]];const total=sets.reduce((t,s)=>t+s[2].length,0);
+ if(!total)return toast('No duplicates found. Every customer and supplier name is unique.');
+ modal(`Possible duplicates · ${total}`,`<p class="muted sm" style="margin-top:0">Pick the one to keep in each group. Merging moves every order, RFQ, message, quote, email and invoice to it, fills in its blank details from the others, and keeps the other names as aliases. Untick anything that isn’t really the same company.</p>
+  ${sets.map(([kind,label,groups])=>groups.length?`<h3 class="dp-h">${label}</h3>${groups.map((g,gi)=>{const ranked=g.map(x=>({x,n:dpRefs(x.id,x.name)})).sort((a,b)=>b.n-a.n);
+   return `<div class="dp-g" data-kind="${kind}" data-g="${gi}">${ranked.map(({x,n},i)=>`<div class="dp-r"><label><input type="radio" name="keep-${kind}-${gi}" value="${esc(x.id)}" ${i===0?'checked':''}> Keep</label><label><input type="checkbox" data-dp-in value="${esc(x.id)}" checked> <b>${esc(x.name)}</b> <span class="muted sm">${esc(x.id)}${x.email?' · '+esc(x.email):''}${x.contact?' · '+esc(x.contact):''} · ${n} linked</span></label></div>`).join('')}
+    <button type="button" class="btn sm primary" data-action="dp-merge" data-kind="${kind}" data-g="${gi}">Merge this group</button></div>`}).join('')}`:'').join('')}`,{wide:true,label:'Close',submit:()=>{}})};
+A['dp-merge']=d=>{const box=$(`.dp-g[data-kind="${d.kind}"][data-g="${d.g}"]`);if(!box)return;const keep=(box.querySelector(`input[type=radio]:checked`)||{}).value;
+ const inc=[...box.querySelectorAll('[data-dp-in]:checked')].map(x=>x.value);const drop=inc.filter(x=>x!==keep);if(!keep||!drop.length)return toast('Tick at least two records, including the one to keep.',true);
+ const k=byId(S[d.kind],keep);if(!(typeof confirmBox==="function"?confirmBox:confirm)(`Merge ${drop.length} record${drop.length===1?'':'s'} into ${k.name}? Everything linked to ${drop.length===1?'it':'them'} moves to ${k.name}. This can’t be undone.`))return;
+ const n=dpMerge(d.kind,keep,drop);box.innerHTML=`<div class="sm" style="color:#047857">${ic('check',14)} Merged into <b>${esc(k.name)}</b>. ${n} linked record${n===1?'':'s'} moved.</div>`;rerender()};
+const _umDp=A.usermenu;A.usermenu=d=>{_umDp(d);const dd=$('#dd');if(!dd||(typeof isOwner==='function'&&!isOwner()))return;const sep=dd.querySelector('.tc-sep');const html=`<button class="item" data-action="dp-find">${ic('users',15)} Find duplicates</button>`;if(sep)sep.insertAdjacentHTML('beforebegin',html);else dd.insertAdjacentHTML('beforeend',html)};
+document.head.insertAdjacentHTML('beforeend',`<style>.dp-h{margin:14px 0 8px;font-size:14px}.dp-g{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}.dp-r{display:flex;gap:14px;align-items:center;margin-bottom:6px}.dp-r label{display:flex;gap:6px;align-items:center}</style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
