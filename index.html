@@ -1542,7 +1542,7 @@ function parseAlibabaRFQs(text){const T=String(text||'').replace(/\r/g,'');
   const certs=['CE','UL','RoHS','IP44','ISO 9001'].filter(c=>new RegExp('\\b'+c.replace(' ','\\s?')+'\\b').test(details));if(!certs.length&&/certification/i.test(details))certs.push('Certifications and test reports requested');if(/inspection report/i.test(details))certs.push('Inspection reports');
   return{title:name,aliTitle:title,status:aliField(b,'Status')||'',category:aliField(b,'Category'),qty:qm?+qm[1].replace(/,/g,''):1,unit:qm?clean(qm[2]):'',incoterm:inc,dest,certs:certs.join(', '),specs:details,hasAttach:/^\s*Attachments\s*$/mi.test(b)||/attached|photograph|images? uploaded|as shown in image/i.test(details),sku:aliSku(name+'\n'+details)}})}
 const rfqDup=x=>S.srcReqs.find(r=>r.aliKey===normT(x.title)||normT(r.title)===normT(x.title));
-function rfqFromAli(x,extra={}){return{title:x.title,sku:x.sku,qty:x.qty,owner:USER.name,watchers:['Purchasing'],needBy:null,specs:x.specs,certs:x.certs,drawings:x.hasAttach?'Reference photos attached to the Alibaba RFQ':'',incoterm:x.incoterm,dest:x.dest,target:null,freight:0,duty:0,notes:x.category?`Alibaba category: ${x.category}.`:'',status:'Open',created:TODAY,posted:TODAY,alibabaUrl:'',alibabaStatus:x.status||'',aliKey:normT(x.title),...extra}}
+function rfqFromAli(x,extra={}){return{title:x.title,sku:x.sku,qty:x.qty,owner:USER.name,watchers:['Purchasing'],needBy:null,specs:x.specs,certs:x.certs,drawings:x.hasAttach?'Reference photos attached to the Alibaba RFQ':'',incoterm:x.incoterm,dest:x.dest,target:null,freight:0,duty:0,notes:x.category?`Alibaba category: ${x.category}.`:'',status:'Open',created:TODAY,posted:null,alibabaUrl:'',alibabaStatus:x.status||'',aliKey:normT(x.title),...extra}}
 function importAliRFQs(list,how){let made=[],skipped=[];list.forEach(x=>{const d=rfqDup(x);if(d){skipped.push(d.no);return}const id=nextId(S.srcReqs,'SR-'),no=nextRfqNo(TODAY);const r={id,no,...rfqFromAli(x)};S.srcReqs.push(r);made.push(r);
  log(`Imported ${no} ${r.title} from Alibaba${how?' ('+how+')':''}`,[{f:'Quantity',from:'blank',to:num(r.qty)},{f:'Alibaba status',from:'blank',to:r.alibabaStatus||'blank'},...(r.sku?[{f:'Part',from:'blank',to:r.sku}]:[])])});return{made,skipped}}
 /* one-time load of the four RFQs Satish has live on Alibaba */
@@ -3710,6 +3710,21 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 aqSteps=function(q){const a=aqAge(q);if(!a)return `<div class="aq-steps"><b>${esc(q.no)}</b> <span class="sm muted">${esc(q.status)}</span></div>`;
  return `<div class="aq-steps"><b>${esc(q.no)}</b> <span class="aq-age ${a.t}">${esc(a.step||a.l)}</span>${a.due?` <span class="aq-age ${a.due.t}">${esc(a.due.l)}</span>`:''}</div>`};
 document.head.insertAdjacentHTML('beforeend','<style>td .aq-age{white-space:normal}.aq-steps{gap:8px}</style>');
+
+/* ================= Fix "posted" on RFQs that were only imported =================
+   RFQs created with "Paste from Alibaba" used to be marked posted the day they were imported, posted or not.
+   New imports start as Not posted. For the old ones: a one-time check, plus "Not posted" on any RFQ. */
+const aqSuspect=()=>(S.srcReqs||[]).filter(r=>r.status==='Open'&&r.posted&&!r.alibabaUrl&&!r.postChecked&&(r.aliKey||r.alibabaStatus!=null)&&r.posted===r.created);
+A['aq-check-posted']=()=>{const list=aqSuspect();if(!list.length)return toast('Nothing to check.');
+ modal(`Which RFQs are really on Alibaba? · ${list.length}`,`<p class="muted sm" style="margin-top:0">These were marked posted on the day they were imported, so the date may be wrong. Leave a tick only on RFQs you actually submitted on Alibaba. Unticked ones change to <b>Not posted</b>, so they show up as needing to go out.</p>
+  <div class="aq-list">${list.map(r=>`<label class="check-inline aq-sup"><input type="checkbox" name="pc" value="${esc(r.id)}"> <b>${esc(r.no)}</b> ${esc(String(r.title||'').slice(0,70))} <span class="muted sm">· marked posted ${esc(fd(r.posted))}</span></label>`).join('')}</div>`,
+ {wide:true,label:'Save',submit:()=>{const keep=new Set($$('#mform [name=pc]:checked').map(x=>x.value));let n=0;
+  list.forEach(r=>{r.postChecked=TODAY;if(!keep.has(r.id)){r.posted=null;n++}});log(`Checked ${list.length} imported RFQs: ${n} changed to Not posted`);save();toast(`${n} RFQ${n===1?'':'s'} changed to Not posted`);rerender()}})};
+A['aq-unpost']=d=>{const r=sreq(d.id);if(!r)return;const was=r.posted;r.posted=null;r.alibabaUrl='';r.postChecked=TODAY;log(`${r.no}: changed to Not posted (was marked posted ${fd(was)})`,[{f:'Posted',from:fd(was),to:'Not posted'}]);save();toast(`${r.no} changed to Not posted`);rerender()};
+const _srcFix=VIEWS.sourcing;VIEWS.sourcing=id=>{let h=_srcFix(id);const r=id&&sreq(id);
+ if(r&&r.posted&&r.status==='Open'&&typeof document!=='undefined'){const t=document.createElement('template');t.innerHTML=h;const row=t.content.querySelector('.aq-panel .aq-row');if(row)row.insertAdjacentHTML('beforeend',`<button type="button" class="link sm" data-action="aq-unpost" data-id="${esc(r.id)}" title="If this RFQ was never actually submitted on Alibaba">Not actually posted?</button>`);h=t.innerHTML}
+ if(!id){const n=aqSuspect().length;if(n){const b=`<div class="rm-banner" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.4)">${ic('globe',18)}<div class="grow"><b>${n} RFQ${n===1?' is':'s are'} marked posted only because ${n===1?'it was':'they were'} imported</b><div class="sm">Tick the ones really on Alibaba; the rest change to Not posted.</div></div><button class="btn primary" data-action="aq-check-posted">Check them</button></div>`;const k=h.indexOf('<div class="kpis');h=k>0?h.slice(0,k)+b+h.slice(k):b+h}}
+ return h};
 
 /* ================= Invitations from info@ (no Supabase step) =================
    Owners see "Send invite" next to each person in Team and roles, and adding someone sends their invitation right away.
