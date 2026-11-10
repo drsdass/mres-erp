@@ -2,6 +2,7 @@
 (function(){
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const txt=e=>(e&&e.innerText||'').replace(/ /g,' ').trim();
+const hdr=()=>txt(document.querySelector('.message-container')).split('\n')[0].replace(/\s+\d{1,2}:\d{2}\s*(AM|PM)?\s*Local Time.*$/i,'').trim();
 function info(w){try{return JSON.parse(w.dataset.expinfo||'{}')}catch(e){return{}}}
 const listScroller=()=>{const root=document.querySelector('.normal-list-container');const inner=root&&[root,...root.querySelectorAll('*')].find(x=>x.scrollHeight>x.clientHeight+10&&/auto|scroll/.test(getComputedStyle(x).overflowY));if(inner)return inner;let e=root;while(e&&e!==document.body){const s=getComputedStyle(e);if(e.scrollHeight>e.clientHeight+10&&/auto|scroll/.test(s.overflowY))return e;e=e.parentElement}return null};
 const chatScroller=()=>document.querySelector('.message-box .common-load-more');
@@ -19,8 +20,8 @@ async function loadHistory(maxRounds){const sc=chatScroller();if(!sc)return;let 
     if(/Keep chats and transactions on Alibaba/.test(txt(sc.querySelector('.scroll-box')?.lastElementChild?.previousElementSibling))&&same>0)break}}
 function agentPanel(){const p=[...document.querySelectorAll('div,section,aside')].find(e=>/Trade Agent/.test(e.firstElementChild?txt(e).slice(0,40):'')&&e.childElementCount>1&&txt(e).length<6000);const t=txt(p);
   const product=(t.match(/Product:\s*([^\n]+)/)||[])[1]||'';const req=(t.split(/Product Requirements/)[1]||'').split(/Notes are being updated|Ask Trade Agent/)[0]||'';return{product:product.trim(),requirements:req.trim().slice(0,2000)}}
-async function openChat(el,name){el.scrollIntoView({block:'center'});el.click();for(let i=0;i<30;i++){await sleep(250);const h=txt(document.querySelector('.message-container')).split('\n')[0];if(h===name&&document.querySelector('.message-box .message-item-wrapper'))return true}return false}
-async function current(){const act=document.querySelector('.contact-item-container.active,.contact-item-container.selected,.contact-item-container[class*="active"]');const name=txt(document.querySelector('.message-container')).split('\n')[0];
+async function openChat(el,name){el.scrollIntoView({block:'center'});el.click();for(let i=0;i<30;i++){await sleep(250);const h=hdr();if(h&&name&&(h===name||h.startsWith(name))&&document.querySelector('.message-box .message-item-wrapper'))return true}return false}
+async function current(){const act=document.querySelector('.contact-item-container.active,.contact-item-container.selected,.contact-item-container[class*="active"]');const name=hdr();
   const el=act||[...document.querySelectorAll('.contact-item-container')].find(e=>e.dataset.name===name);const c=el?contactOf(el):{cid:'chat:'+name,name,company:''};
   await loadHistory(25);return{...c,agent:agentPanel(),messages:readMessages()}}
 async function all(opts={}){const since=Date.now()-(opts.days||120)*864e5,max=opts.max||200,onProgress=opts.onProgress||(()=>{});const ls=listScroller();const seen=new Map(),out=[];
