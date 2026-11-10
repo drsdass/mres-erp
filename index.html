@@ -2527,7 +2527,7 @@ M.frNew=(id)=>{const r=id?fr(id):null;
  ${fld('Needed by',inp('needBy',r?.needBy||'','type="date"'))}${fld('How urgent',`<select name="urgency">${FR_URG.map(u=>opt(u,u,u===(r?.urgency||'Normal'))).join('')}</select>`)}
  ${fld('Who should look',`<select name="assignee">${['Anyone',...TEAM.filter(t=>!['Sales','Purchasing','Warehouse','Accounting'].includes(t))].map(t=>opt(t,t,t===(r?.assignee||'Anyone'))).join('')}</select>`)}
  ${fld('Specs, sizes, photos or links',`<textarea name="specs" placeholder="Voltage, dimensions, material, brand you used before, a link to the old part or a listing">${esc(r?.specs||'')}</textarea>`,true)}
- ${fld('Budget per unit (optional, USD)',inp('budget',r?.budget??'','type="number" min="0" step="0.01"'))}
+ ${fld('Target buy price each (optional, USD; leave blank to use the default %)',inp('budget',r?.budget??'','type="number" min="0" step="0.01"'))}
  ${r?'':`<div class="f full">Spec sheets, drawings or photos (optional)<input type="file" name="files" id="fr-newfiles" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.dwg,.dxf,.step,.stp,.zip" class="input" style="padding:8px"><span class="muted sm">PDF, Word, Excel, drawings or photos, up to 25 MB each. On a phone you can take a picture.</span></div>`}</div>`,
  {label:r?'Save':'Send request',submit:d=>{const what=d.what.trim(),qty=+d.qty;
   if(!what)return fail('Say what you need.');if(!(qty>0))return fail('Add how many you need. That is the one thing that always gets lost in a text.');if(!d.forWhat.trim())return fail('Say what it is for (customer, job, order, or stock).');
@@ -4155,6 +4155,101 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .fm-o{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer}.fm-o span{display:flex;flex-direction:column}.fm-o small{color:var(--muted,#64748b);font-size:12px}.fm-o:has(input:checked){border-color:#22b8d6;background:rgba(34,184,214,.08)}
 .fm-mini{border:1px dashed var(--line);border-radius:10px;padding:8px 10px;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 @media(max-width:600px){.fm-opts{grid-template-columns:1fr}}
+</style>`);
+
+/* ================= Know the numbers before negotiating =================
+   A part request now carries the customer side: the customer PO / sales order, customer quote or email it's for,
+   and the price we sell it at. From that, every RFQ shows a target buy price, a walk-away price, what we paid
+   last time, and a suggested counter-offer. Sell prices are internal: they never go into posts or supplier emails.
+   Default target blends our two benchmark parts: axial fans ($24.74 bought, $78 sold = 32%) and bushings
+   ($125 bought, $785 sold = 16%), averaged to 24% of the sell price; walk away above 50%. Both are part prices before shipping, editable by owners. */
+const PX_DEF={targetPct:24,walkPct:50};
+const pxRules=()=>({...PX_DEF,...(S.priceRules||{})});
+const pxCompact=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+function pxTokens(what,partNo){const raw=String((what||'')+' '+(partNo||'')).toLowerCase();
+ const parts=[...new Set(raw.split(/[\s,()/;]+/).map(pxCompact).filter(x=>x.length>=5&&/\d/.test(x)&&/[a-z]/.test(x)))];
+ const words=[...new Set(raw.replace(/[^a-z0-9]+/g,' ').split(' ').filter(w=>w.length>=4&&!(typeof RL_STOP!=='undefined'&&RL_STOP.has(w))))];return{parts,words}}
+function pxHit(text,tk){const t=String(text||'').toLowerCase(),c=pxCompact(text);if(tk.parts.some(p=>c.includes(p)))return 3;const w=tk.words.filter(x=>t.includes(x)).length;return w>=2?w:0}
+const pxItemName=sku=>{const it=typeof item==='function'&&item(sku);return((it&&(it.name||it.desc))||'')+' '+sku};
+function pxFind(what,partNo){const tk=pxTokens(what,partNo);if(!tk.parts.length&&tk.words.length<2)return{so:[],cq:[],em:[],paid:[],sq:[]};const real=a=>(a||[]).filter(x=>x&&!x.demo);
+ const lineHits=(docs,kind)=>real(docs).flatMap(o=>(o.lines||[]).filter(l=>pxHit(pxItemName(l.sku),tk)).map(l=>({kind,id:o.id,acct:o.acct,cpo:o.cpo,qty:l.qty,price:+l.price||0,cost:+l.cost||0,date:o.date,status:o.status})));
+ const so=lineHits(S.orders,'so').filter(x=>!['Cancelled'].includes(x.status)).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,5);
+ const cq=lineHits(S.quotes,'cq').sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,4);
+ const em=real(S.emails).filter(m=>!(typeof lnIsAli==='function'&&lnIsAli(m))&&m.cat!=='Promotions').map(m=>({m,s:pxHit((m.subject||'')+' '+((m.thread||[])[0]||{}).body,tk)})).filter(x=>x.s>=3||x.s>=3&&x.m).sort((a,b)=>b.s-a.s||((b.m.received||'')>(a.m.received||'')?1:-1)).slice(0,4).map(x=>({kind:'email',id:x.m.id,from:x.m.fromName||x.m.from,company:x.m.company,subject:x.m.subject,date:String(x.m.received||'').slice(0,10)}));
+ const paid=real(S.pos).flatMap(p=>(p.lines||[]).filter(l=>pxHit(pxItemName(l.sku),tk)&&+l.cost>0).map(l=>({id:p.id,vendor:p.vendor,cost:+l.cost,qty:l.qty,date:p.date}))).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,3);
+ const sq=real(S.squotes).filter(q=>{const r=byId(S.srcReqs||[],q.req);return r&&pxHit(r.title,tk)&&q.unitPrice!=null}).map(q=>({supplier:sup(q.supplier).name,price:+q.unitPrice,date:q.date,rfq:(byId(S.srcReqs,q.req)||{}).no})).sort((a,b)=>a.price-b.price).slice(0,3);
+ return{so,cq,em,paid,sq}}
+const pxTarget=(sell,o={})=>{const r={...pxRules(),...o};return sell>0?{target:+(sell*r.targetPct/100).toFixed(2),walk:+(sell*r.walkPct/100).toFixed(2),...r}:null};
+const pxRefTxt=ref=>{if(!ref)return'';if(ref.kind==='so'){const o=byId(S.orders||[],ref.id);return `${ref.id}${o?` · ${o.acct}${o.cpo?' (PO '+o.cpo+')':''}`:''}`}if(ref.kind==='cq'){const q=byId(S.quotes||[],ref.id);return `customer quote ${ref.id}${q?` · ${q.acct}`:''}`}if(ref.kind==='email'){const m=byId(S.emails||[],ref.id);return `email from ${m?(m.company||m.fromName||m.from):'customer'}`}return ref.kind==='stock'?'for stock':ref.kind==='manual'?'Denny’s price':''};
+
+/* ---------- on the request form: what we already know, and the sell price ---------- */
+function pxBox(f){const g=n=>((f.querySelector(`[name="${n}"]`)||{}).value||'').trim();const k=pxFind(g('what'),g('partNo'));const box=f.querySelector('#px-box');if(!box)return;
+ const pick=f.dataset.pxPick||'';const radio=(val,label,sub,price)=>`<label class="px-o"><input type="radio" name="pxref" value="${esc(val)}" data-price="${price??''}" ${pick===val?'checked':''}><span><b>${label}</b>${sub?`<small>${sub}</small>`:''}</span></label>`;
+ const opts=[...k.so.map(x=>radio('so:'+x.id,`${esc(x.id)} · ${esc(x.acct||'')}${x.cpo?' · PO '+esc(x.cpo):''}`,`${num(x.qty)} @ ${unitCost(x.price)} · ${esc(fd(x.date))} · ${esc(x.status||'')}`,x.price)),
+  ...k.cq.map(x=>radio('cq:'+x.id,`Customer quote ${esc(x.id)} · ${esc(x.acct||'')}`,`${num(x.qty)} @ ${unitCost(x.price)} · ${esc(fd(x.date))}`,x.price)),
+  ...k.em.map(x=>radio('email:'+x.id,`Email from ${esc(x.company||x.from||'')}`,`${esc(String(x.subject||'').slice(0,70))} · ${esc(fd(x.date))}`,'')),
+  radio('none:quote','No PO yet: a customer asked for a price','',''),radio('none:stock','For stock (no customer yet)','','')].join('');
+ const hist=[...k.paid.map(p=>`Last paid <b>${unitCost(p.cost)}</b> each · ${esc(p.vendor||'')} · ${esc(p.id)} · ${esc(fd(p.date))}`),...k.sq.map(q=>`Quoted <b>${unitCost(q.price)}</b> · ${esc(q.supplier)} · ${esc(q.rfq||'')}`)];
+ box.innerHTML=`<div class="px-l">What is this for, and what do we sell it for?</div>${(k.so.length||k.cq.length||k.em.length)?`<div class="sm muted" style="margin:-2px 0 6px">Found in the ERP for this part. Pick the one this request is for:</div>`:''}<div class="px-opts">${opts}</div>
+  <div class="px-sell"><label>We sell each for $<input type="number" step="0.01" min="0" name="pxsell" value="${esc(f.dataset.pxSell||'')}" placeholder="0.00"></label><span class="sm muted" id="px-tg"></span></div>${hist.length?`<div class="px-hist sm">${hist.join('<br>')}</div>`:''}`;
+ pxTg(f)}
+function pxTg(f){const el=f.querySelector('#px-tg');if(!el)return;const s=+((f.querySelector('[name=pxsell]')||{}).value||0);const bd=+((f.querySelector('[name=budget]')||{}).value||0);if(bd){el.innerHTML=`Your target: buy ≤ <b>${unitCost(bd)}</b>${s?` (${Math.round(bd/s*100)}% of sell)`:''}. Camden negotiates to this.`;return}const t=pxTarget(s);el.innerHTML=t?`Target buy ≤ <b>${unitCost(t.target)}</b> · walk away above <b>${unitCost(t.walk)}</b> (part price, before shipping)`:'Add the sell price to get a target buy price for Camden.'}
+const _frNewPx=M.frNew;M.frNew=id=>{_frNewPx(id);const f=$('#mform');if(!f)return;const r=id?fr(id):null;const at=f.querySelector('.fm-f')||f.querySelector('[name=specs]')?.closest('div');
+ if(r){f.dataset.pxSell=r.sellEach??'';f.dataset.pxPick=r.sellRef?`${r.sellRef.kind==='stock'||r.sellRef.kind==='manual'?'none:'+(r.sellRef.kind==='stock'?'stock':'quote'):r.sellRef.kind+':'+r.sellRef.id}`:''}
+ const html='<div class="px-f" id="px-box"></div>';if(at)at.insertAdjacentHTML('beforebegin',html);else(f.querySelector('.fg')||f).insertAdjacentHTML('beforeend',html);pxBox(f);let tm;
+ f.addEventListener('input',e=>{const n=e.target.name;if(n==='what'||n==='partNo'){clearTimeout(tm);tm=setTimeout(()=>{f.dataset.pxSell=(f.querySelector('[name=pxsell]')||{}).value||f.dataset.pxSell||'';pxBox(f)},350)}else if(n==='pxsell'||n==='budget'){if(n==='pxsell')f.dataset.pxSell=e.target.value;pxTg(f)}});
+ f.addEventListener('change',e=>{if(e.target.name!=='pxref')return;f.dataset.pxPick=e.target.value;const p=e.target.dataset.price;const s=f.querySelector('[name=pxsell]');if(p&&s&&!s.value){s.value=p;f.dataset.pxSell=p}pxTg(f)});
+ f.addEventListener('submit',()=>{const sell=+((f.querySelector('[name=pxsell]')||{}).value||0)||null;const pv=(f.querySelector('[name=pxref]:checked')||{}).value||'';const [kind,rid]=pv.split(':');
+  const ref=!pv?null:kind==='none'?{kind:rid==='stock'?'stock':'manual'}:{kind,id:rid};if(!sell&&!ref)return;
+  setTimeout(()=>{const target=r||frs().find(x=>x.from===USER.name&&x.sellEach==null&&!x.sellRef&&Date.now()-Date.parse(x.created)<15000);if(!target)return;target.sellEach=sell;target.sellRef=ref;
+   const k=pxFind(target.what,target.partNo);if(k.paid[0])target.lastPaid=k.paid[0];const q=target.rfq&&sreq(target.rfq);if(q){if(sell!=null)q.sellEach=sell;q.sellRef=ref}save();rerender()},80)},true)};
+/* RFQs made from a request carry the price */
+const _aqMakePx=aqMake;aqMake=function(r){const q=_aqMakePx(r);if(r&&r.sellEach!=null&&q.sellEach==null)q.sellEach=r.sellEach;if(r&&r.sellRef)q.sellRef=r.sellRef;return q};
+
+/* ---------- the negotiation card on the RFQ ---------- */
+const pxReqOf=q=>(typeof frs==='function'?frs():[]).find(r=>r.rfq===q.id);
+function pxCard(q){const r=pxReqOf(q)||{};const sell=+(q.sellEach??r.sellEach)||0;const ref=q.sellRef||r.sellRef;const k=pxFind(q.title,'');const last=r.lastPaid||k.paid[0];
+ const man=+(q.target??r.budget)||0;const wp=+(q.walkPct||pxRules().walkPct);
+ let t=pxTarget(sell,q.targetPct?{targetPct:+q.targetPct,walkPct:wp}:{});
+ if(man){const walk=+Math.max(sell?sell*wp/100:0,man*1.2).toFixed(2);t={target:man,walk,targetPct:sell?Math.round(man/sell*100):null,walkPct:sell?Math.round(walk/sell*100):null,manual:true}}
+ const own=typeof isOwner!=='function'||isOwner();
+ const who=man?(q.target!=null&&+q.target!==+r.budget?'set on the RFQ':`set by ${r.from||'the request'}`):'';
+ const qs=(S.squotes||[]).filter(x=>x.req===q.id&&liveQ(x)&&x.unitPrice!=null).map(x=>({x,s:sup(x.supplier),p:tierPrice(x,q.qty),d:typeof dealCost==='function'?dealCost(x,q):null})).sort((a,b)=>a.p-b.p);const best=qs[0];
+ if(!sell&&!man)return `<section class="panel px-card"><div class="ph"><h3>${ic('dollar',16)} Negotiation</h3></div><div class="px-in"><p style="margin:0 0 8px">No sell price yet, so there’s no target buy price. What do we sell each for${ref?` (${esc(pxRefTxt(ref))})`:''}?</p><label class="lc-sell">We sell each for $<input type="number" min="0" step="0.01" data-lc="sellEach" placeholder="0.00"></label>${last?`<p class="sm muted" style="margin:8px 0 0">Last paid ${unitCost(last.cost)} · ${esc(last.vendor||'')} · ${esc(fd(last.date))}</p>`:''}</div></section>`;
+ const tone=p=>p<=t.target?'ok':p<=t.walk?'warn':'alert';const max=Math.max(sell,...qs.map(z=>z.p),last?last.cost:0)*1.05;const X=v=>(Math.min(v,max)/max*100).toFixed(1);
+ const counter=best&&best.p>t.target?Math.max(t.target,Math.floor(best.p*0.9*100)/100):null;
+ const msg=counter?`Thank you for the quote. For ${num(q.qty)} ${q.unit||'pcs'}, our target is ${unitCost(counter)} each${best.x.incoterm?' '+best.x.incoterm:''}. Can you meet that price? If so, we can move forward quickly.`:'';
+ const status=!best?'No quotes yet. Ask suppliers for their best price at our quantity.':best.p<=t.target?`Best quote ${unitCost(best.p)} from ${best.s.name} is at or under target. Good to award, after checking shipping and specs.`:best.p<=t.walk?`Best quote ${unitCost(best.p)} from ${best.s.name} is ${Math.round((best.p/t.target-1)*100)}% over target but under walk-away. Counter-offer.`:`Best quote ${unitCost(best.p)} from ${best.s.name} is above walk-away. Counter, or find more suppliers.`;
+ const dl=sell&&best&&best.d&&best.d.perNeed?best.d.perNeed:null;const dm=dl?(sell-dl)/sell*100:null;
+ return `<section class="panel px-card"><div class="ph"><h3>${ic('dollar',16)} Negotiation</h3><span class="sm muted">part price before shipping · internal only</span></div><div class="px-in">
+  <div class="px-nums"><div><small>We sell for</small><b>${sell?unitCost(sell):'–'}</b><span>${esc(pxRefTxt(ref)||'each')}</span></div><div class="ok"><small>Target buy</small><b>≤ ${unitCost(t.target)}</b><span>${t.manual?esc(who)+(t.targetPct?` · ${t.targetPct}% of sell`:''):t.targetPct+'% of sell'}</span></div><div class="alert"><small>Walk away above</small><b>${unitCost(t.walk)}</b><span>${t.walkPct?t.walkPct+'% of sell':'20% over target'}</span></div><div><small>Last paid</small><b>${last?unitCost(last.cost):'–'}</b><span>${last?esc((last.vendor||'')+' · '+fd(last.date)):'never bought'}</span></div></div>
+  <div class="px-scale" aria-hidden="true"><div class="px-z ok" style="width:${X(t.target)}%"></div><div class="px-z warn" style="left:${X(t.target)}%;width:${(X(t.walk)-X(t.target)).toFixed(1)}%"></div><div class="px-z alert" style="left:${X(t.walk)}%;right:0"></div>
+   ${qs.map(z=>`<i class="px-dot ${tone(z.p)}" style="left:${X(z.p)}%" title="${esc(z.s.name)} ${unitCost(z.p)}"></i>`).join('')}${last?`<i class="px-last" style="left:${X(last.cost)}%" title="Last paid ${unitCost(last.cost)}"></i>`:''}${sell?`<i class="px-sellm" style="left:${X(sell)}%" title="Our sell price"></i>`:''}</div>
+  <div class="px-legend sm muted"><span><i class="px-dot ok"></i> quotes</span><span><i class="px-last"></i> last paid</span><span><i class="px-sellm"></i> our sell price</span></div>
+  <p class="px-st ${best?tone(best.p):''}">${esc(status)}${dl&&dm<20?` <b>Careful:</b> delivered with shipping and fees it’s ${unitCost(dl)} each, only ${dm.toFixed(0)}% margin.`:''}</p>
+  ${counter?`<div class="px-ctr"><div class="sm"><b>Suggested counter-offer: ${unitCost(counter)} each</b></div><textarea readonly rows="3">${esc(msg)}</textarea><button type="button" class="btn sm primary" data-action="px-copy">Copy message</button></div>`:''}
+  ${!sell?`<p class="sm" style="margin:8px 0 0">Add our sell price to see the margin: <label class="lc-sell">$<input type="number" min="0" step="0.01" data-lc="sellEach" placeholder="0.00" style="width:90px"></label></p>`:''}${own?`<p class="sm muted" style="margin:8px 0 0">${t.manual?`Using the dollar target ${esc(who)}; it overrides the percentage. `:''}Defaults: target ${pxRules().targetPct}% and walk-away ${pxRules().walkPct}% of the sell price (24% blends the fans, $24.74 on $78 = 32%, and the bushings, $125 on $785 = 16%). <button class="link sm" data-action="px-rules" data-id="${esc(q.id)}">Change the target for this RFQ or the default</button></p>`:''}
+ </div></section>`}
+A['px-copy']=()=>{const t=$('.px-ctr textarea');if(!t)return;(typeof copyText==='function'?copyText:x=>navigator.clipboard.writeText(x))(t.value);toast('Counter-offer copied. Paste it into the supplier chat.')};
+A['px-rules']=d=>{const q=sreq(d.id);const r=pxRules();modal('Target and walk-away prices',`<p class="muted sm" style="margin-top:0">As a percent of our sell price, for the part price before shipping. Fans: $24.74 ÷ $78 = 32%. Bushings: $125 ÷ $785 = 16%. Average: 24%.</p><div class="fg">${q?fld('Target buy, $ each (leave blank to use the %)',inp('d',q.target??(pxReqOf(q)||{}).budget??'','type="number" min="0" step="0.01"')):''}${fld('Target buy, % of sell',inp('t',q&&q.targetPct||r.targetPct,'type="number" min="1" max="99"'))}${fld('Walk away above, % of sell',inp('w',q&&q.walkPct||r.walkPct,'type="number" min="1" max="99"'))}</div><label class="check-inline"><input type="checkbox" name="all"> Make these the default for every RFQ</label>`,
+ {label:'Save',submit:v=>{const tp=+v.t,wp=+v.w;if(q&&'d' in v){const nd=v.d===''?null:+v.d;const rq=pxReqOf(q);if(nd!==(q.target??null)){log(`${q.no}: target price ${q.target??'blank'} → ${nd??'blank'}`);q.target=nd;if(rq&&nd==null)rq.budget=null}}if(!(tp>0&&wp>tp))return fail('Walk-away has to be higher than the target.');if(v.all==='on'||$('#mform [name=all]')?.checked){S.priceRules={targetPct:tp,walkPct:wp};if(q){delete q.targetPct;delete q.walkPct}log(`Default target ${tp}% / walk-away ${wp}% of sell price`)}else if(q){q.targetPct=tp;q.walkPct=wp;log(`${q.no}: target ${tp}% / walk-away ${wp}%`)}save();rerender()}})};
+const _srcPx=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcPx(id);const q=id&&sreq(id);if(!q||q.status!=='Open'||typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ const at=t.content.querySelector('.aq-panel');const html=pxCard(q);if(at)at.insertAdjacentHTML('afterend',html);else{const s=t.content.querySelector('.grid2e, section.panel');if(s)s.insertAdjacentHTML('beforebegin',html)}return t.innerHTML};
+/* the request window shows the money too */
+const _frPx=M.fr;M.fr=id=>{_frPx(id);const r=fr(id);const box=$('#modal-root .mbody');if(!r||!box)return;const t=pxTarget(+r.sellEach||0);
+ box.insertAdjacentHTML('afterbegin',`<div class="fm-mini">${t?`<span class="sm">Sell <b>${unitCost(r.sellEach)}</b>${r.sellRef?' · '+esc(pxRefTxt(r.sellRef)):''} · target buy ≤ <b>${unitCost(t.target)}</b> · walk away above <b>${unitCost(t.walk)}</b></span>`:`<span class="muted sm">No sell price yet.</span>`} <button class="link sm" data-action="fr-new" data-id="${esc(r.id)}">${t?'Change':'Add the sell price'}</button></div>`)};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.px-f{grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:10px 12px}.px-l{font-weight:600;font-size:13px;margin-bottom:6px}.px-opts{display:flex;flex-direction:column;gap:6px}
+.px-o{display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13.5px}.px-o span{display:flex;flex-direction:column}.px-o small{color:var(--muted,#64748b);font-size:12px}
+.px-sell{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:10px}.px-sell label{font-weight:600;display:flex;gap:4px;align-items:center}.px-sell input{width:120px}.px-hist{margin-top:8px;color:var(--muted,#64748b)}
+.px-card{border-left:4px solid #8b5cf6}.px-in{padding:12px 16px 14px}.px-nums{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.px-nums>div{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column}
+.px-nums small{color:var(--muted,#64748b);font-size:12px}.px-nums b{font-size:20px}.px-nums span{font-size:12px;color:var(--muted,#64748b)}.px-nums .ok b{color:#047857}.px-nums .alert b{color:#b91c1c}
+.px-scale{position:relative;height:14px;background:var(--line,#e5e7eb);border-radius:7px;margin:16px 0 6px}.px-z{position:absolute;top:0;bottom:0}.px-z.ok{left:0;background:rgba(16,185,129,.35);border-radius:7px 0 0 7px}.px-z.warn{background:rgba(245,158,11,.35)}.px-z.alert{background:rgba(239,68,68,.3);border-radius:0 7px 7px 0}
+.px-dot{position:absolute;top:50%;width:12px;height:12px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid #fff;background:#0f2a3d;display:inline-block}.px-legend .px-dot,.px-legend .px-last,.px-legend .px-sellm{position:relative;transform:none;top:0;vertical-align:middle;left:0}
+.px-last{position:absolute;top:-4px;bottom:-4px;width:3px;background:#6366f1;display:inline-block;height:14px}.px-sellm{position:absolute;top:-6px;bottom:-6px;width:3px;background:#111827;display:inline-block;height:16px}
+.px-legend{display:flex;gap:14px}.px-legend span{display:inline-flex;gap:6px;align-items:center}.px-st{margin:10px 0 0;font-weight:600}.px-st.ok{color:#047857}.px-st.warn{color:#b45309}.px-st.alert{color:#b91c1c}
+.px-ctr{margin-top:10px;border:1px dashed #8b5cf6;border-radius:10px;padding:10px}.px-ctr textarea{width:100%;margin:6px 0;box-sizing:border-box;font-family:inherit}
+@media(max-width:760px){.px-nums{grid-template-columns:1fr 1fr}}
 </style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
