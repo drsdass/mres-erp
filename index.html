@@ -3583,7 +3583,7 @@ function aqText(v){const L=[];
  if(v.specs)L.push(`Specifications: ${String(v.specs).trim()}`);L.push(`Delivery: ${v.incoterm||'DDP'} to ${v.dest||'USA'}`);if(v.needBy)L.push(`Needed by: ${longDate(v.needBy)}`);
  L.push('','Please quote: unit price, MOQ, lead time, shipping cost to the USA, and payment terms. Photos or a spec sheet of your part help.');
  if(v.no)L.push(`Reference: ${v.no} (please put this number in your reply)`);return L.join('\n')}
-const aqOf=q=>aqText({title:q.title,qty:q.qty,unit:q.unit,partNo:'',specs:q.specs,incoterm:q.incoterm,dest:q.dest,needBy:q.needBy,no:q.no});
+let aqOf=q=>aqText({title:q.title,qty:q.qty,unit:q.unit,partNo:'',specs:q.specs,incoterm:q.incoterm,dest:q.dest,needBy:q.needBy,no:q.no});
 async function aqCopy(t){try{await navigator.clipboard.writeText(t);return true}catch(e){try{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();const ok=document.execCommand('copy');a.remove();return ok}catch(x){return false}}}
 /* Alibaba in its own window on the right half of the screen; the ERP's post window docks on the left half */
 function aqSide(){const W=screen.availWidth||1600,H=screen.availHeight||900,L=screen.availLeft||0,T=screen.availTop||0,w=Math.round(W/2);
@@ -4116,6 +4116,45 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .s1-tab small{color:var(--muted,#64748b);font-size:12.5px}.s1-tab.on{border-color:#f59e0b;box-shadow:inset 0 -3px 0 #f59e0b;background:rgba(245,158,11,.06)}.s1-tab:hover{border-color:#f59e0b}
 .s1-n{position:absolute;top:8px;right:10px;background:#ef4444;color:#fff;border-radius:9px;padding:0 7px;font-size:11px;font-weight:700}
 @media(max-width:760px){.s1-tab{min-width:0;flex:1}.s1-arrow{display:none}}
+</style>`);
+
+/* ================= Exact part, or an equivalent is fine? =================
+   On every part request: "Exact part only" (same brand and model) or "Equivalent is OK" (same specs, any brand).
+   It carries over to the RFQ and into the Alibaba post, so suppliers know whether they can offer an alternative. */
+const FM={exact:['Exact part only','Same brand and model number. No substitutes.','#0e7490'],equiv:['Equivalent is OK','Same specs, any brand. Suppliers can offer alternatives.','#047857']};
+const fmChip=m=>FM[m]?`<span class="fm-chip fm-${m}" title="${esc(FM[m][1])}">${m==='exact'?'● ':'≈ '}${esc(FM[m][0])}</span>`:'';
+const fmOf=q=>q&&(q.match||((typeof frs==='function'?frs():[]).find(r=>r.rfq===q.id)||{}).match)||null;
+const fmField=(cur)=>`<div class="fm-f"><div class="fm-l">Exact part, or would something similar work?</div><div class="fm-opts">${Object.entries(FM).map(([k,[l,d]])=>`<label class="fm-o"><input type="radio" name="fmatch" value="${k}" ${cur===k?'checked':''} required><span><b>${l}</b><small>${d}</small></span></label>`).join('')}</div></div>`;
+/* the request form (new and edit) */
+const _frNewFm=M.frNew;M.frNew=id=>{_frNewFm(id);const f=$('#mform');if(!f)return;const r=id?fr(id):null;const anchor=f.querySelector('[name=specs]');const box=anchor&&anchor.closest('.field, label, .fg > div, div');
+ const html=fmField(r?r.match:null);if(box)box.insertAdjacentHTML('beforebegin',html);else (f.querySelector('.fg')||f).insertAdjacentHTML('beforeend',html);
+ f.addEventListener('submit',()=>{const v=(f.querySelector('[name=fmatch]:checked')||{}).value||null;if(!v)return;const t0=Date.now();
+  setTimeout(()=>{const target=r||(frs().find(x=>x.from===USER.name&&!x.match&&Date.now()-Date.parse(x.created)<15000));if(!target)return;const was=target.match;target.match=v;const q=target.rfq&&sreq(target.rfq);if(q)q.match=v;
+   if(was!==v){if(was)log(`${target.id}: ${FM[was][0]} → ${FM[v][0]}`);save();rerender()}},60)},true)};
+/* the phone screen */
+const _askFm=VIEWS.ask;VIEWS.ask=()=>{let h=_askFm();if(ui.askDone)return h;const d=ui.askDraft||{};
+ return h.replace('<label class="ask-f">What’s it for?',`<div class="ask-f">Exact part, or would something similar work?<div class="ask-seg">${Object.entries(FM).map(([k,[l]])=>`<label><input type="radio" name="fmatch" value="${k}" ${d.fmatch===k?'checked':''}><span>${l}</span></label>`).join('')}</div></div><label class="ask-f">What’s it for?`)};
+document.addEventListener('submit',e=>{const f=e.target;if(!f||f.id!=='askf')return;const v=(f.querySelector('[name=fmatch]:checked')||{}).value||null;if(!v)return;setTimeout(()=>{const r=fr(ui.askDone);if(r&&!r.match){r.match=v;save()}},0)},true);
+/* RFQs made from a request get it too; the Alibaba post says it */
+const _aqMakeFm=aqMake;aqMake=function(r){const q=_aqMakeFm(r);if(r&&r.match)q.match=r.match;return q};
+const _aqOfFm=aqOf;aqOf=function(q){const t=_aqOfFm(q);const m=fmOf(q);if(!m)return t;const line=m==='exact'?'Exact part required: same brand and model number only, no substitutes.':'Equivalent parts welcome: same specifications, any brand. Please state the brand and model you are offering.';return t.replace('\n\nPlease quote:',`\n${line}\n\nPlease quote:`)};
+const _rfqPostFm=M.rfqPost;M.rfqPost=id=>{_rfqPostFm(id);const m=fmOf(sreq(id));const b=$('#rp-b');if(!m||!b||/Exact part required|Equivalent parts welcome/.test(b.value))return;
+ b.value=b.value.replace(/\n\nPlease quote:/,`\n${m==='exact'?'Exact part required: same brand and model number only, no substitutes.':'Equivalent parts welcome: same specifications, any brand. Please state the brand and model you are offering.'}\n\nPlease quote:`)};
+/* show it: request list, request window, RFQ page, RFQ list */
+const _reqFm=VIEWS.requests;VIEWS.requests=id=>{const h=_reqFm(id);if(typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ t.content.querySelectorAll('tr[data-action="fr-open"]').forEach(tr=>{const r=fr(tr.dataset.id);const c=tr.cells[1];if(r&&r.match&&c)c.insertAdjacentHTML('beforeend',`<div style="margin-top:3px">${fmChip(r.match)}</div>`)});return t.innerHTML};
+const _frFm=M.fr;M.fr=id=>{_frFm(id);const r=fr(id);const box=$('#modal-root .mbody');if(!r||!box)return;
+ box.insertAdjacentHTML('afterbegin',`<div class="fm-mini">${r.match?fmChip(r.match):'<span class="muted sm">Exact part or equivalent? Not said yet.</span>'} <span class="sm">${r.match?'':'Set it: '}<button class="link sm" data-action="fm-set" data-id="${esc(r.id)}" data-v="exact">Exact only</button> · <button class="link sm" data-action="fm-set" data-id="${esc(r.id)}" data-v="equiv">Equivalent OK</button></span></div>`)};
+A['fm-set']=d=>{const r=fr(d.id);if(!r)return;const was=r.match;r.match=d.v;const q=r.rfq&&sreq(r.rfq);if(q)q.match=d.v;log(`${r.id}: ${was?FM[was][0]+' → ':''}${FM[d.v][0]}`);(r.thread=r.thread||[]).push({t:new Date().toISOString(),user:USER.name,sys:true,text:`${USER.name} set this to: ${FM[d.v][0]}`});save();closeModal();M.fr(r.id);rerender()};
+const _srcFm=VIEWS.sourcing;VIEWS.sourcing=id=>{let h=_srcFm(id);if(typeof document==='undefined')return h;
+ if(id){const m=fmOf(sreq(id));if(!m)return h;const t=document.createElement('template');t.innerHTML=h;const st=t.content.querySelector('.aq-panel .aq-steps');if(st)st.insertAdjacentHTML('beforeend',' '+fmChip(m));return t.innerHTML}
+ const t=document.createElement('template');t.innerHTML=h;t.content.querySelectorAll('tr[data-href^="#/sourcing/"]').forEach(tr=>{const m=fmOf(sreq(tr.getAttribute('data-href').split('/').pop()));if(m&&tr.cells[1])tr.cells[1].insertAdjacentHTML('beforeend',`<div style="margin-top:3px">${fmChip(m)}</div>`)});return t.innerHTML};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.fm-chip{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap}.fm-exact{background:rgba(14,116,144,.12);color:#0e7490}.fm-equiv{background:rgba(16,185,129,.14);color:#047857}
+.fm-f{grid-column:1/-1}.fm-l{font-weight:600;font-size:13px;margin-bottom:6px}.fm-opts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fm-o{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer}.fm-o span{display:flex;flex-direction:column}.fm-o small{color:var(--muted,#64748b);font-size:12px}.fm-o:has(input:checked){border-color:#22b8d6;background:rgba(34,184,214,.08)}
+.fm-mini{border:1px dashed var(--line);border-radius:10px;padding:8px 10px;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+@media(max-width:600px){.fm-opts{grid-template-columns:1fr}}
 </style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
