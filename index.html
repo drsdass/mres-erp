@@ -4313,6 +4313,68 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 @media (prefers-reduced-motion:reduce){.px-strip{animation:none!important}}.px-strip.calm:not(.typed-over){animation:none}
 </style>`);
 
+/* ================= Who sent it: company first, the person under it =================
+   Inbox rows show the company in bold, with the person's name and email underneath in a lighter shade.
+   - The company comes from the customer account, then the supplier, then the vendor, matched by email,
+     by email domain (anyone @fanmotor.cn belongs to the same supplier) or by company name.
+   - Several people at one company: each email shows its own person under the same company name.
+     The first email from a new address at a company we know gets a "New person" tag, and the email's
+     side panel lists the other people we've heard from there.
+   - Not in the ERP yet: a business domain shows a best guess from the domain ("Fanmotor?") tagged
+     "Not in ERP"; a Gmail/QQ/163-type address shows "Unknown sender". The side panel's buttons
+     (Add as customer / It's a supplier) file them, and every later email from that company follows. */
+const SN_FREE=/^(gmail|googlemail|yahoo|ymail|outlook|hotmail|live|msn|icloud|me|aol|qq|163|126|yeah|foxmail|sina|sohu|aliyun|proton|protonmail|gmx|mail|zoho)\./i;
+const snDom=e=>String(e||'').toLowerCase().split('@')[1]||'';
+const snPretty=d=>{const st=d.split('.').filter(x=>!/^(mail|email|mx|smtp|en|www)$/.test(x))[0]||d;return st.replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase())};
+function snWho(m){const email=String(m.from||'').toLowerCase(),dom=snDom(email),free=!dom||SN_FREE.test(dom);
+ const person=String(m.fromName||'').trim();let co='',kind='unknown',key='';
+ if(/alibaba/i.test(email+' '+person)){co='Alibaba';kind='alibaba';key='ali'}
+ else if(m.acct&&typeof acct==='function'&&byId(S.accounts||[],m.acct)){const a=acct(m.acct);co=a.name;kind='customer';key='c:'+m.acct}
+ else{const s=typeof emSupplier==='function'?emSupplier(m):null;if(s){co=s.name;kind='supplier';key='s:'+s.id}
+  else{const vd=typeof whoIs==='function'?whoIs(m).vd:null;if(vd){co=vd.name;kind='vendor';key='v:'+vd.id}
+   else if(!free){const c=String(m.company||'').trim();co=c&&c.toLowerCase()!==person.toLowerCase()&&!SN_FREE.test(c.toLowerCase()+'.')?c:snPretty(dom);kind='guess';key='d:'+dom}
+   else{co='Unknown sender';kind='unknown';key='e:'+email}}}
+ return{co,kind,key,person:person&&person.toLowerCase()!==co.toLowerCase()&&person.toLowerCase()!==email?person:'',email}}
+/* everyone we've heard from at each company, worked out from the inbox itself (nothing extra stored) */
+let snCache=null;
+function snIndex(){const ems=S.emails||[];const sig=ems.length+'|'+(S.suppliers||[]).length+'|'+(S.accounts||[]).length+'|'+ems.reduce((t,m)=>t+(m.acct?1:0)+(m.supplier?2:0),0);if(snCache&&snCache.sig===sig)return snCache;
+ const by=new Map(),who=new Map();
+ [...ems].sort((a,b)=>String(a.received||'')<String(b.received||'')?-1:1).forEach(m=>{const w=snWho(m);who.set(m.id,w);if(w.kind==='alibaba'||w.kind==='unknown')return;
+  if(!by.has(w.key))by.set(w.key,new Map());const p=by.get(w.key);if(!p.has(w.email))p.set(w.email,{name:w.person,email:w.email,first:m.id,n:0});const x=p.get(w.email);x.n++;if(!x.name&&w.person)x.name=w.person});
+ /* known contacts on the records count as already known */
+ const known=new Set([...(S.suppliers||[]).map(s=>s.email),...(S.accounts||[]).map(a=>a.email),...(S.vendors||[]).map(v=>v.email)].filter(Boolean).map(e=>String(e).toLowerCase()));
+ return snCache={sig,by,who,known}}
+function snInfo(m){const ix=snIndex();const w=ix.who.get(m.id)||snWho(m);const ppl=ix.by.get(w.key);const me=ppl&&ppl.get(w.email);
+ const others=ppl?[...ppl.values()].filter(p=>p.email!==w.email):[];
+ const isNew=!!(me&&others.length&&me.first===m.id&&me.n===1&&!ix.known.has(w.email)&&(w.kind==='customer'||w.kind==='supplier'||w.kind==='vendor'));
+ return{...w,others,isNew}}
+const SN_KIND={customer:'Customer',supplier:'Supplier',vendor:'Vendor',guess:'Not in ERP',unknown:'Unknown sender',alibaba:'Alibaba'};
+const snTag=i=>i.kind==='guess'?' <span class="chip sn-tag guess">Not in ERP</span>':i.kind==='unknown'?' <span class="chip sn-tag unk">Unknown</span>':i.isNew?` <span class="chip sn-tag new" title="First email from this person at ${esc(i.co)}">New person</span>`:'';
+const _renderSn=render;render=function(k){_renderSn(k);try{if(parse().r!=='inbox')return;const v=$('#view');if(!v)return;
+ v.querySelectorAll('.ilist a.im').forEach(a=>{if(a.dataset.sn)return;a.dataset.sn='1';const m=byId(S.emails,(a.getAttribute('href')||'').split('/').pop());if(!m)return;const i=snInfo(m);if(i.kind==='alibaba')return;
+  const nm=a.querySelector('.r1 .nm');if(!nm)return;
+  [...nm.querySelectorAll('.chip')].forEach(c=>{if(/^\s*(New contact|Supplier)\s*$/.test(c.textContent))c.remove()});
+  const tn=[...nm.childNodes].find(n=>n.nodeType===3&&n.textContent.trim());const coEl=document.createElement('span');coEl.className='sn-co'+(i.kind==='guess'||i.kind==='unknown'?' sn-dim':'');coEl.textContent=i.kind==='guess'?i.co+'?':i.co;
+  if(tn)tn.replaceWith(coEl);else nm.prepend(coEl);coEl.insertAdjacentHTML('afterend',snTag(i));
+  a.querySelector('.r1').insertAdjacentHTML('afterend',`<div class="sn-who">${i.person?`<span class="sn-p">${esc(i.person)}</span>`:''}<span class="sn-e">${esc(i.email)}</span></div>`);
+  const p=a.querySelector('.r1 .p');if(p)p.textContent=SN_KIND[i.kind]||'';
+  a.dataset.fi=(a.dataset.fi||'')+' '+String(i.co+' '+i.email).toLowerCase()});
+ const id=parse().id;const m=id&&byId(S.emails,id);const sec=m&&v.querySelector('.iside section');if(m&&sec&&!sec.dataset.sn){sec.dataset.sn='1';const i=snInfo(m);if(i.kind==='alibaba')return;
+  const h=sec.querySelector('h4');const kids=[...sec.children].slice(1,4);kids.forEach(x=>x.remove());
+  h.insertAdjacentHTML('afterend',`<div class="sn-side"><b class="${i.kind==='guess'||i.kind==='unknown'?'sn-dim':''}">${esc(i.kind==='guess'?i.co+'?':i.co)}</b>${i.kind==='supplier'?'':` <span class="chip sn-tag ${i.kind}">${SN_KIND[i.kind]}</span>`}${i.isNew?' <span class="chip sn-tag new">New person</span>':''}
+   ${i.person?`<div class="sn-p">${esc(i.person)}</div>`:''}<div class="sn-e">${esc(i.email)}</div>
+   ${i.kind==='guess'?`<div class="sm muted" style="margin-top:4px">Guessed from the email domain. Add them below so the next email from anyone at ${esc(snDom(i.email))} is recognised.</div>`:i.kind==='unknown'?`<div class="sm muted" style="margin-top:4px">A personal address, so there’s no company to go on. If they’re business, add them below.</div>`:''}
+   ${i.others.length?`<div class="sn-others"><div class="sm muted">Also at ${esc(i.co)}</div>${i.others.slice(0,6).map(o=>`<div class="sm">${esc(o.name||o.email)}${o.name?` <span class="muted">${esc(o.email)}</span>`:''} <span class="muted">· ${o.n} email${o.n===1?'':'s'}</span></div>`).join('')}${i.others.length>6?`<div class="sm muted">and ${i.others.length-6} more</div>`:''}</div>`:''}</div>`)}
+ }catch(e){}};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.im .r1>span:last-child{white-space:nowrap;flex-shrink:0}.sn-co{font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sn-dim{color:var(--ink-2)!important;font-style:italic}
+.sn-who{display:flex;gap:6px;font-size:12px;color:var(--muted,#64748b);margin-top:1px;min-width:0;white-space:nowrap;overflow:hidden}.sn-who .sn-p{color:var(--ink-2,#475569);font-weight:500}.sn-who .sn-e{overflow:hidden;text-overflow:ellipsis;opacity:.85}
+.sn-tag{font-size:10.5px;padding:0 6px;line-height:16px}.sn-tag.guess{background:#fef3c7;color:#92400e}.sn-tag.unk,.sn-tag.unknown{background:#f1f5f9;color:#475569}.sn-tag.new{background:#e0f2fe;color:#075985}
+.sn-tag.customer{background:#dcfce7;color:#166534}.sn-tag.supplier,.sn-tag.vendor{background:#ede9fe;color:#5b21b6}
+.sn-side .sn-p{margin-top:4px;font-weight:500}.sn-side .sn-e{font-size:12px;color:var(--muted,#64748b)}.sn-others{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:2px}
+[data-theme=dark] .sn-tag.guess{background:#422006;color:#fcd34d}[data-theme=dark] .sn-tag.new{background:#0c2a3d;color:#7dd3fc}[data-theme=dark] .sn-tag.customer{background:#052e16;color:#86efac}[data-theme=dark] .sn-tag.supplier,[data-theme=dark] .sn-tag.vendor{background:#2e1065;color:#c4b5fd}[data-theme=dark] .sn-tag.unk,[data-theme=dark] .sn-tag.unknown{background:#1e293b;color:#cbd5e1}
+</style>`);
+
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
 const CFG=window.MRES_CONFIG||{};
 const CK='mres-erp-cloud-cache';
