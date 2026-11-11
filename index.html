@@ -3641,13 +3641,13 @@ function aqCandidates(q){const words=new Set(String(q.title+' '+(q.specs||'')).t
   const score=past.reduce((t,r)=>t+String(r.title).toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(w=>words.has(w)).length,0);return{s,score,past}}).sort((a,b)=>b.score-a.score||a.s.name.localeCompare(b.s.name))}
 A['aq-email']=d=>{const q=sreq(d.id);if(!q)return;const c=aqCandidates(q);const sent=new Set((q.emailedTo||[]).map(x=>x.id));
  if(!c.length)return toast('No suppliers with an email address yet. Add their email on the supplier, or use Post on Alibaba.',true);
- const body=`Hello,\n\nWe are looking for the part below. Could you send us your best quote?\n\n${aqOf(q)}\n\nThank you,`;
+ const body=`Hello,\n\nWe are looking for the part below. Could you send us your best quote?\n\n${aqOf(q)}\n\nThe quickest way to quote is this short form (English or Chinese, about a minute):\n{{link}}\n\nThank you,`;
  modal(`Email ${q.no} to suppliers`,`<p class="muted sm" style="margin-top:0">Each supplier gets their own email from ${esc(AQ_FROM)} with ${esc(q.no)} in the subject, so their answers file under this RFQ. Ticked: suppliers who have quoted similar parts.</p>
   <div class="aq-list">${c.map(x=>`<label class="check-inline aq-sup"><input type="checkbox" name="sup" value="${esc(x.s.id)}" ${x.score>0&&!sent.has(x.s.id)?'checked':''}> <b>${esc(x.s.name)}</b> <span class="muted sm">${esc(x.s.email)}${x.past.length?` · quoted on ${esc(x.past.slice(0,2).map(r=>r.no).join(', '))}`:''}${sent.has(x.s.id)?' · already emailed':''}</span></label>`).join('')}</div>
-  <div class="fg" style="margin-top:10px">${fld('Subject',inp('subject',`${q.no}: request for quote, ${q.title}`),true)}${fld('Message',`<textarea name="text" rows="12">${esc(body)}</textarea>`,true)}</div>`,{wide:true,label:'Send',submit:(v,f)=>{
+  <div class="fg" style="margin-top:10px">${fld('Subject',inp('subject',`${q.no}: request for quote, ${q.title}`),true)}${fld('Message <span class="muted sm">({{link}} becomes each supplier’s own quote form link)</span>',`<textarea name="text" rows="12">${esc(body)}</textarea>`,true)}</div>`,{wide:true,label:'Send',submit:(v,f)=>{
   const ids=$$('#mform [name=sup]:checked').map(x=>x.value);if(!ids.length)return fail('Tick at least one supplier.');if(typeof CLOUD==='undefined'||!CLOUD)return fail('Sending email needs the online ERP.');
   const btns=$$('#modal-root button');btns.forEach(x=>x.disabled=true);
-  (async()=>{const ok=[],bad=[];for(const id of ids){const s=sup(id);try{const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{to:s.email,subject:v.subject,text:v.text,wait:true,from:AQ_FROM,newConversation:{fromName:s.contact||s.name,company:s.name,cat:'Vendor',links:[]}}});
+  (async()=>{const ok=[],bad=[];for(const id of ids){const s=sup(id);try{const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{to:s.email,subject:v.subject,text:(typeof qlText==='function'?qlText(v.text,q,s):v.text),wait:true,from:AQ_FROM,newConversation:{fromName:s.contact||s.name,company:s.name,cat:'Vendor',links:[]}}});
     let err=data&&data.error;if(error&&!err){try{err=(await error.context.json()).error}catch(x){err=error.message}}if(err)throw new Error(err);ok.push(s);
     if(data&&data.conversationId){const m=byId(S.emails,data.conversationId);if(m)m.supplier=s.id}}catch(e){bad.push(s.name+': '+e.message)}}
    q.emailedTo=[...(q.emailedTo||[]).filter(x=>!ok.some(s=>s.id===x.id)),...ok.map(s=>({id:s.id,name:s.name,on:TODAY}))];
@@ -4380,6 +4380,72 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .sn-tag.customer{background:#dcfce7;color:#166534}.sn-tag.supplier,.sn-tag.vendor{background:#ede9fe;color:#5b21b6}
 .sn-side .sn-p{margin-top:4px;font-weight:500}.sn-side .sn-e{font-size:12px;color:var(--muted,#64748b)}.sn-others{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:2px}
 [data-theme=dark] .sn-tag.guess{background:#422006;color:#fcd34d}[data-theme=dark] .sn-tag.new{background:#0c2a3d;color:#7dd3fc}[data-theme=dark] .sn-tag.customer{background:#052e16;color:#86efac}[data-theme=dark] .sn-tag.supplier,[data-theme=dark] .sn-tag.vendor{background:#2e1065;color:#c4b5fd}[data-theme=dark] .sn-tag.unk,[data-theme=dark] .sn-tag.unknown{background:#1e293b;color:#cbd5e1}
+</style>`);
+
+/* ================= Supplier quote form =================
+   Each supplier gets their own link for one RFQ (erp.massrenewable.com/quote?t=…). They see the part, quantity,
+   specs and whether we need the exact part, and fill in price, MOQ, lead time, terms, shipping, brand and files,
+   in English or Chinese. No sign-in. What they send lands on the RFQ as a quote (channel "Form"), so it shows
+   in the quote table, the delivered-cost panel, the Negotiation card and the price bar right away.
+   Our target price, sell price and customer are never shown to them. Sending again updates the same quote.
+   Links: S.qlinks [{id, token, req, supplier, supplierName, created, by, opened, submitted, quoteId, sends, revoked}]
+   The cloud side is the vendor-quote function. */
+const QL_BASE=(()=>{try{return /^https?:/.test(location.origin)&&!/localhost|127\.0\.0\.1|file:/.test(location.origin)?location.origin:'https://erp.massrenewable.com'}catch(e){return 'https://erp.massrenewable.com'}})();
+const qls=()=>S.qlinks||(S.qlinks=[]);
+function qlToken(){const a=new Uint8Array(18);(globalThis.crypto||window.crypto).getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+const qlUrl=l=>`${QL_BASE}/quote?t=${l.token}`;
+function qlFor(reqId,supId,make=true){let l=qls().find(x=>x.req===reqId&&x.supplier===supId&&!x.revoked);if(l||!make)return l;
+ const s=sup(supId);l={id:nextId(qls(),'QL-'),token:qlToken(),req:reqId,supplier:supId,supplierName:s.name||'',created:new Date().toISOString(),by:USER.name,opened:null,submitted:null,quoteId:null,sends:0};qls().push(l);return l}
+const qlMsg=(q,l)=>`Hello,\n\nPlease send us your quote for ${q.title}${q.qty?` (${num(q.qty)} ${q.unit||'pcs'})`:''} using this short form. It takes about a minute and works in English or Chinese:\n${qlUrl(l)}\n\n您好，请通过以下链接填写报价（支持中文）：\n${qlUrl(l)}\n\nThank you,\n${USER.name}, Mass Renewable Energy Solutions`;
+function qlStatus(l){const qt=l.quoteId&&byId(S.squotes||[],l.quoteId);
+ if(qt)return `<span class="chip ql-st quoted">Quoted ${typeof unitCost==='function'?unitCost(qt.unitPrice):'$'+qt.unitPrice}${qt.currency&&qt.currency!=='USD'?' '+esc(qt.currency):''}</span> <span class="sm muted">${ago(l.submitted)}${(l.sends||0)>1?` · updated ${l.sends-1}×`:''}</span>`;
+ if(l.opened)return `<span class="chip ql-st opened">Opened</span> <span class="sm muted">${ago(l.opened)}, no quote yet</span>`;
+ return `<span class="chip ql-st sent">Not opened yet</span> <span class="sm muted">link made ${ago(l.created)}</span>`}
+function qlPanel(q){const ls=qls().filter(l=>l.req===q.id&&!l.revoked);
+ const files=(S.squotes||[]).filter(x=>x.req===q.id&&x.files&&x.files.length);
+ return `<section class="panel ql-panel"><div class="ph"><h3>${ic('mail',16)} Supplier quote form</h3><span class="sm muted">each supplier gets their own link · English and 中文</span></div><div class="ql-in">
+  ${ls.length?`<table class="ql-t"><tbody>${ls.map(l=>`<tr><td><b>${esc(sup(l.supplier).name||l.supplierName)}</b></td><td>${qlStatus(l)}</td><td class="ql-acts">
+   <button class="btn sm" data-action="ql-copy" data-id="${esc(l.id)}">Copy link</button><button class="btn sm" data-action="ql-copymsg" data-id="${esc(l.id)}" title="A short message with the link, ready to paste into Alibaba chat or WeChat">Copy message</button><button class="btn sm ghost" data-action="ql-stop" data-id="${esc(l.id)}" title="The link stops working">Stop link</button></td></tr>`).join('')}</tbody></table>`
+  :`<p class="muted sm" style="margin:0 0 10px">Send suppliers a link instead of chasing numbers in chat. Their price, MOQ, lead time and terms land here as a quote, ready to compare.</p>`}
+  ${files.length?`<div class="ql-files sm"><b>Files from suppliers:</b> ${files.flatMap(x=>x.files.map(f=>`<button class="link" data-action="att-open" data-path="${esc(f.path)}">${esc(f.name)}</button> <span class="muted">(${esc(sup(x.supplier).name)})</span>`)).join(' · ')}</div>`:''}
+  <div style="margin-top:10px"><button class="btn primary sm" data-action="ql-new" data-id="${esc(q.id)}">${ic('plus',14)} Send the form to a supplier</button></div></div></section>`}
+A['ql-copy']=d=>{const l=byId(qls(),d.id);if(l){copyText(qlUrl(l));toast('Link copied')}};
+A['ql-copymsg']=d=>{const l=byId(qls(),d.id);const q=l&&sreq(l.req);if(q){copyText(qlMsg(q,l));toast('Message copied. Paste it to the supplier.')}};
+A['ql-stop']=d=>{const l=byId(qls(),d.id);if(!l)return;const go=()=>{l.revoked=new Date().toISOString();log(`Stopped the quote form link for ${sup(l.supplier).name||l.supplierName} on ${(sreq(l.req)||{}).no||l.req}`);save();rerender()};
+ if((typeof confirmBox==='function'?confirmBox:confirm)(`Stop this link? ${sup(l.supplier).name||l.supplierName} won’t be able to send or change their quote with it. Quotes already sent stay.`))go()};
+A['ql-new']=d=>{const q=sreq(d.id);if(!q)return;const have=new Set(qls().filter(l=>l.req===q.id&&!l.revoked).map(l=>l.supplier));
+ const c=(typeof aqCandidates==='function'?aqCandidates(q).map(x=>x.s):[]);const rest=(S.suppliers||[]).filter(s=>!c.includes(s)).sort((a,b)=>String(a.name).localeCompare(b.name));const list=[...c,...rest].filter(s=>!have.has(s.id));
+ const cloud=typeof CLOUD!=='undefined'&&CLOUD;
+ modal(`Send the quote form for ${q.no}`,`<p class="muted sm" style="margin-top:0">Pick a supplier (or add a new one). You’ll get their own link to paste into Alibaba chat, WeChat or email. ${cloud?'If they have an email address, the ERP can email it for you from '+esc(typeof AQ_FROM!=='undefined'?AQ_FROM:'sourcing@'):''}.</p>
+  <div class="fg">${fld('Supplier',`<select name="sup"><option value="">Choose…</option><option value="__new">+ New supplier</option>${list.map(s=>opt(s.id,s.name+(s.email?` · ${s.email}`:''))).join('')}</select>`,true)}
+  <div id="ql-newsup" hidden class="fg" style="grid-column:1/-1">${fld('Company name',inp('name',''))}${fld('Contact person (optional)',inp('contact',''))}${fld('Email (optional)',inp('email','','type="email"'))}</div>
+  ${cloud?`<label class="check-inline" style="grid-column:1/-1"><input type="checkbox" name="send" checked> Email the link to them too (when they have an email address)</label>`:''}</div>`,{label:'Make the link',submit:v=>{
+  let sid=v.sup;if(!sid)return fail('Choose a supplier.');
+  if(sid==='__new'){const name=String(v.name||'').trim();if(!name)return fail('Type the company name.');const ex=(S.suppliers||[]).find(s=>String(s.name).toLowerCase()===name.toLowerCase());
+   if(ex)sid=ex.id;else{sid=nextId(S.suppliers,'SUP-');S.suppliers.push({id:sid,name,contact:String(v.contact||'').trim(),email:String(v.email||'').trim(),channel:'Form',added:TODAY});log(`Added supplier ${name}`)}}
+  const l=qlFor(q.id,sid);const s=sup(sid);log(`Made a quote form link for ${s.name} on ${q.no}`);save();
+  const emailIt=v.send&&s.email&&/@/.test(s.email)&&cloud;
+  if(emailIt)(async()=>{try{const {data,error}=await CLOUD.functions.invoke('mail-send',{body:{to:s.email,subject:`${q.no}: request for quote, ${q.title}`,text:qlMsg(q,l),wait:true,from:typeof AQ_FROM!=='undefined'?AQ_FROM:undefined,newConversation:{fromName:s.contact||s.name,company:s.name,cat:'Vendor',links:[]}}});
+    let err=data&&data.error;if(error&&!err)err=error.message;if(err)throw new Error(err);if(data&&data.conversationId){const m=byId(S.emails||[],data.conversationId);if(m)m.supplier=s.id}
+    S.smsgs.push({id:nextId(S.smsgs,'SM-'),supplier:s.id,req:q.id,channel:'Email',dir:'out',t:new Date().toISOString(),from:USER.name,text:'Sent the quote form link'});q.emailedTo=[...(q.emailedTo||[]).filter(x=>x.id!==s.id),{id:s.id,name:s.name,on:TODAY}];save();toast(`Emailed the form to ${s.name}`);rerender()}
+   catch(e){toast('Link made, but the email didn’t send: '+e.message+'. Copy the link instead.',true)}})();
+  const msg=qlMsg(q,l);
+  setTimeout(()=>modal(`Link for ${esc(s.name)}`,`<p class="sm" style="margin-top:0">${emailIt?`Emailing it to ${esc(s.email)} now. `:''}Paste this into Alibaba chat, WeChat or an email. The link only works for ${esc(q.no)} and only for ${esc(s.name)}.</p>
+   <div class="ql-link"><input readonly value="${esc(qlUrl(l))}" onclick="this.select()"><button type="button" class="btn sm primary" data-action="ql-copy" data-id="${esc(l.id)}">Copy link</button></div>
+   <p class="sm muted" style="margin:12px 0 4px">Or copy a ready message (English and Chinese):</p><textarea readonly rows="9" class="ql-msg">${esc(msg)}</textarea>`,{label:'Copy message',submit:()=>{copyText(msg);toast('Message copied')}}),0)}});
+ setTimeout(()=>{const s=$('#mform [name=sup]');if(s)s.addEventListener('change',()=>{const b=$('#ql-newsup');if(b)b.hidden=s.value!=='__new'})},0)};
+/* on the RFQ page, under the Negotiation card */
+const _srcQl=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcQl(id);const q=id&&sreq(id);if(!q||q.status!=='Open'||typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ const at=t.content.querySelector('.px-card')||t.content.querySelector('.aq-panel');const html=qlPanel(q);if(at)at.insertAdjacentHTML('afterend',html);else{const s=t.content.querySelector('section.panel');if(s)s.insertAdjacentHTML('beforebegin',html)}return t.innerHTML};
+/* "Email to suppliers": {{link}} in the message becomes each supplier's own form link (called from rfqauto.js) */
+function qlText(text,q,s){if(!/\{\{link\}\}/.test(String(text||'')))return text;const l=qlFor(q.id,s.id);return String(text).replace(/\{\{link\}\}/g,qlUrl(l))}
+if(typeof IC!=='undefined'&&!IC.mail)IC.mail='<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>';
+document.head.insertAdjacentHTML('beforeend',`<style>
+.ql-in{padding:12px 16px 16px}.ql-t{width:100%;border-collapse:collapse}.ql-t td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:middle}.ql-acts{text-align:right;white-space:nowrap}.ql-acts .btn{margin-left:4px}
+.ql-st{font-size:12px}.ql-st.quoted{background:#dcfce7;color:#166534}.ql-st.opened{background:#e0f2fe;color:#075985}.ql-st.sent{background:#f1f5f9;color:#475569}
+.ql-link{display:flex;gap:8px}.ql-link input{flex:1;font-family:ui-monospace,monospace;font-size:13px}.ql-msg{width:100%;font-size:13px}.ql-files{margin-top:10px}
+@media(max-width:760px){.ql-t td{display:block;border:0;padding:2px 0}.ql-t tr{display:block;padding:8px 0;border-bottom:1px solid var(--line)}.ql-acts{text-align:left}.ql-acts .btn{margin:4px 4px 0 0}}
+[data-theme=dark] .ql-st.quoted{background:#052e16;color:#86efac}[data-theme=dark] .ql-st.opened{background:#0c2a3d;color:#7dd3fc}[data-theme=dark] .ql-st.sent{background:#1e293b;color:#cbd5e1}
 </style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
