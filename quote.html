@@ -44,14 +44,14 @@ const T={
  en:{loading:'Loading…',title:'Quote request',for:'For',need:'What we need',part:'Part',pn:'Part number',qty:'Quantity',specs:'Details',needBy:'Needed by',exact:'Exact part only. Please quote the same brand and part number.',equiv:'Equivalent parts are welcome. Tell us the brand and model you are offering.',
   yourQuote:'Your quote',price:'Price per unit',moq:'Minimum order (MOQ)',lead:'Lead time (days)',terms:'Price terms',termsHelp:'EXW, FOB, etc.',ship:'Shipping per unit to the USA (optional)',sample:'Sample cost (optional)',pay:'Payment terms (optional)',payPh:'e.g. 100% before shipping',valid:'Price valid for (days)',
   offer:'What are you offering?',original:'Original part',equivalent:'Equivalent part',refurb:'Refurbished',brand:'Brand',model:'Model / part number you are quoting',tiers:'Volume pricing (optional)',tierQty:'Quantity',tierPrice:'Price per unit',addTier:'+ Add a price break',
-  files:'Datasheet or photos (optional)',filesHelp:'Up to 3 files, 10 MB each',notes:'Anything else? (optional)',you:'Your contact',name:'Your name',email:'Your email (optional)',send:'Send quote',update:'Update my quote',sending:'Sending…',
+  files:'Spec sheet, drawings or photos (optional)',filesHelp:'PDF, CAD (DWG, DXF, STEP) or images. Up to 3 files, 10 MB each',notes:'Anything else? (optional)',you:'Your contact',name:'Your name',email:'Your email (optional)',send:'Send quote',update:'Update my quote',sending:'Sending…',
   sentBefore:'You sent a quote on',sentBefore2:'Your answers are filled in below. Change anything and send again to update it.',
   thanks:'Thank you! Your quote was sent.',thanks2:'Our team will review it and reply. You can update your quote any time using this same link.',again:'Change my quote',
   closed:'This request is closed. Thank you for your interest.',needPrice:'Please enter your price per unit.',privacy:'Your quote goes only to the Mass Renewable sourcing team.',days:'days'},
  zh:{loading:'加载中…',title:'询价单',for:'致',need:'我们需要的产品',part:'产品',pn:'型号 / 料号',qty:'数量',specs:'详细要求',needBy:'需要日期',exact:'仅限原装正品，请报相同品牌和型号。',equiv:'可接受替代品，请注明您提供的品牌和型号。',
   yourQuote:'您的报价',price:'单价',moq:'最小起订量 (MOQ)',lead:'交货期（天）',terms:'价格条款',termsHelp:'EXW、FOB 等',ship:'到美国的每件运费（可选）',sample:'样品费（可选）',pay:'付款方式（可选）',payPh:'例如：发货前 100% 付款',valid:'报价有效期（天）',
   offer:'您提供的是？',original:'原装件',equivalent:'替代件',refurb:'翻新件',brand:'品牌',model:'您报价的型号 / 料号',tiers:'阶梯价格（可选）',tierQty:'数量',tierPrice:'单价',addTier:'+ 添加阶梯价',
-  files:'规格书或照片（可选）',filesHelp:'最多 3 个文件，每个 10 MB',notes:'其他说明（可选）',you:'联系人',name:'您的姓名',email:'您的邮箱（可选）',send:'提交报价',update:'更新报价',sending:'提交中…',
+  files:'规格书、图纸或照片（可选）',filesHelp:'PDF、CAD 图纸（DWG、DXF、STEP）或图片，最多 3 个文件，每个 10 MB',notes:'其他说明（可选）',you:'联系人',name:'您的姓名',email:'您的邮箱（可选）',send:'提交报价',update:'更新报价',sending:'提交中…',
   sentBefore:'您已于以下时间提交报价：',sentBefore2:'您之前的内容已填好。修改后再次提交即可更新。',
   thanks:'谢谢！您的报价已提交。',thanks2:'我们的团队会尽快查看并回复。您可以随时用同一个链接更新报价。',again:'修改报价',
   closed:'此询价已关闭，感谢您的关注。',needPrice:'请填写单价。',privacy:'您的报价仅发送给 Mass Renewable 采购团队。',days:'天'}};
@@ -94,7 +94,7 @@ function draw(){
    <label class="f">${esc(t('brand'))}<input name="brand" maxlength="80" value="${v('brand')}"></label>
    <label class="f">${esc(t('model'))}<input name="part" maxlength="120" value="${v('part')}"></label>
    <div class="f full tiers"><span>${esc(t('tiers'))}</span><div id="tiers">${tiers.map(tierRow).join('')}</div><button type="button" class="btn ghost" id="addTier">${esc(t('addTier'))}</button></div>
-   <label class="f full">${esc(t('files'))} <small>${esc(t('filesHelp'))}</small><input name="files" type="file" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"></label>
+   <label class="f full">${esc(t('files'))} <small>${esc(t('filesHelp'))}</small><input name="files" type="file" multiple accept="image/*,application/pdf,.pdf,.dwg,.dxf,.step,.stp,.igs,.iges,.doc,.docx,.xls,.xlsx"></label>
    <label class="f full">${esc(t('notes'))}<textarea name="notes" rows="4" maxlength="2000">${v('notes')}</textarea></label>
   </div>
   <h2 style="margin-top:20px">${esc(t('you'))}</h2>

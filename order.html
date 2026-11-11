@@ -29,7 +29,10 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-
 .line .rm{border:0;background:none;color:var(--muted);font:inherit;font-size:14px;cursor:pointer;text-decoration:underline}
 .line input,.line select,.line textarea{background:var(--card)}
 .photo{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink2);cursor:pointer;border:1px dashed var(--line);border-radius:10px;padding:9px 12px;background:var(--card)}
-.photo input{display:none}
+.photo input{display:none}.photo span{display:flex;flex-direction:column;line-height:1.3}.photo small{color:var(--muted);font-size:12.5px}
+.att-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}.att-list:empty{display:none}.att{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);font-size:13px;min-width:0}
+.att b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}.att small{color:var(--muted);white-space:nowrap}.att button{border:0;background:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0 4px}
+.att::before{content:'';display:none}.att{--c:#475569}.att .ty{font-style:normal;font-size:10.5px;font-weight:800;padding:2px 6px;border-radius:6px;background:#e2e8f0;color:#334155}.att.pdf .ty{background:#fee2e2;color:#b91c1c}.att.cad .ty{background:#e0e7ff;color:#3730a3}.att.pdf{border-color:#fecaca}.att.cad{border-color:#c7d2fe}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:14px 22px;font:inherit;font-weight:700;cursor:pointer}
 .btn.primary{background:var(--accent);color:#fff;width:100%;font-size:17px}.btn.add{background:none;border:1px dashed var(--accent);color:#0e7490;width:100%;padding:12px}
 .btn[disabled]{opacity:.6;cursor:wait}
@@ -39,8 +42,8 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-
 .hist table{width:100%;border-collapse:collapse;font-size:14px}.hist td{padding:8px 4px;border-bottom:1px solid var(--line);vertical-align:top}.st{display:inline-block;padding:2px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-size:12.5px;font-weight:600;white-space:nowrap}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 .note{font-size:13px;color:var(--muted);margin-top:14px;text-align:center}
-[hidden]{display:none!important}.hist td:first-child{white-space:nowrap}
-@media (max-width:600px){.grid{grid-template-columns:1fr}.grid3{grid-template-columns:1fr 1fr}.grid3>label:first-child{grid-column:1/-1}.seg.urg label{min-width:0}}
+[hidden]{display:none!important}.grid>*,.grid3>*{min-width:0}.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.hist td:first-child{white-space:nowrap}
+@media (max-width:600px){.grid{grid-template-columns:minmax(0,1fr)}.grid3{grid-template-columns:1fr 1fr}.grid3>label:first-child{grid-column:1/-1}.seg.urg label{min-width:0}}
 </style>
 </head>
 <body>
@@ -65,7 +68,8 @@ const lineHtml=(l,i)=>`<div class="line" data-i="${i}"><div class="n">Part ${i+1
   <label><input type="radio" name="m${i}" data-k="match" value="exact" ${l.match==='exact'?'checked':''}><span>Exact part</span></label>
   <label><input type="radio" name="m${i}" data-k="match" value="equiv" ${l.match!=='exact'?'checked':''}><span>Equivalent OK</span></label></div></div>
  <label class="f full">Details <small>(optional) voltage, size, turbine model, old supplier…</small><textarea data-k="notes" rows="2" maxlength="1000">${esc(l.notes||'')}</textarea></label>
- <label class="photo full"><input type="file" data-file="${i}" accept="image/*,application/pdf" multiple>📷 <span>${l.files&&l.files.length?esc(l.files.map(f=>f.name).join(', ')):'Add a photo of the part or its label (optional)'}</span></label></div></div>`;
+ <div class="full"><div class="att-list">${(l.files||[]).map((f,j)=>`<span class="att ${/\.pdf$/i.test(f.name)?'pdf':/\.(dwg|dxf|step|stp|igs|iges)$/i.test(f.name)?'cad':''}"><i class="ty">${/\.pdf$/i.test(f.name)?'PDF':/\.(dwg|dxf|step|stp|igs|iges)$/i.test(f.name)?'CAD':/^image\//.test(f.type)?'IMG':'DOC'}</i> <b>${esc(f.name)}</b> <small>${(f.size/1048576).toFixed(1)} MB</small><button type="button" data-rmf="${i}:${j}" aria-label="Remove ${esc(f.name)}">×</button></span>`).join('')}</div>
+ ${(l.files||[]).length<4?`<label class="photo"><input type="file" data-file="${i}" accept="image/*,application/pdf,.pdf,.dwg,.dxf,.step,.stp,.igs,.iges,.doc,.docx,.xls,.xlsx" multiple>📎 <span><b>Add spec sheet, drawing or photo</b><small>PDF, CAD (DWG, DXF, STEP) or images, up to 15 MB each (optional)</small></span></label>`:''}</div></div></div>`;
 function readLines(){document.querySelectorAll('.line').forEach(el=>{const i=+el.dataset.i;const l=lines[i]||(lines[i]={});el.querySelectorAll('[data-k]').forEach(x=>{if(x.type==='radio'){if(x.checked)l.match=x.value}else l[x.dataset.k]=x.value})})}
 function drawForm(){const me=store.get('me',{});const sites=D.sites||[];
  app.innerHTML=`<div class="card"><div class="muted sm">${esc(D.company)}</div><h1>Request parts from Mass Renewable</h1><p class="muted" style="margin:0">Send us what you need. It goes straight to our team, and you’ll get a confirmation by email.</p></div>
@@ -92,7 +96,8 @@ function drawForm(){const me=store.get('me',{});const sites=D.sites||[];
  if(f.site&&f.site.tagName==='SELECT')f.site.onchange=()=>{document.getElementById('site-o').hidden=f.site.value!=='__other'};
  document.getElementById('add').onclick=()=>{readLines();if(lines.length<15){lines.push({});redrawLines();const ins=document.querySelectorAll('.line [data-k=what]');ins[ins.length-1].focus()}};
  document.getElementById('lines').addEventListener('click',e=>{const r=e.target.dataset&&e.target.dataset.rm;if(r!=null){readLines();lines.splice(+r,1);redrawLines()}});
- document.getElementById('lines').addEventListener('change',e=>{const i=e.target.dataset&&e.target.dataset.file;if(i!=null){readLines();lines[+i].files=[...e.target.files].slice(0,3);redrawLines()}});
+ document.getElementById('lines').addEventListener('change',e=>{const i=e.target.dataset&&e.target.dataset.file;if(i!=null){readLines();const big=[...e.target.files].filter(x=>x.size>15*1024*1024);const ok=[...e.target.files].filter(x=>x.size<=15*1024*1024);lines[+i].files=[...(lines[+i].files||[]),...ok].slice(0,4);redrawLines();if(big.length){const m=document.getElementById('msg');if(m)m.innerHTML=`<div class="err">${esc(big.map(x=>x.name).join(', '))} ${big.length===1?'is':'are'} over 15 MB. Please send a smaller file or email it to info@massrenewable.com.</div>`}}});
+ document.getElementById('lines').addEventListener('click',e=>{const k=e.target.dataset&&e.target.dataset.rmf;if(k){readLines();const [i,j]=k.split(':').map(Number);lines[i].files.splice(j,1);redrawLines()}});
  f.onsubmit=submit;drawHist()}
 function redrawLines(){document.getElementById('lines').innerHTML=lines.map(lineHtml).join('')}
 async function submit(e){e.preventDefault();readLines();const f=e.target,msg=document.getElementById('msg'),b=f.querySelector('[type=submit]');msg.innerHTML='';
@@ -105,7 +110,7 @@ async function submit(e){e.preventDefault();readLines();const f=e.target,msg=doc
  const site=f.site&&f.site.value==='__other'?f.siteOther.value:(f.site?f.site.value:'');
  const fd=new FormData();fd.set('t',tok);['name','email','phone','po','needBy','notes','website'].forEach(k=>fd.set(k,f[k]?f[k].value:''));fd.set('kind',f.kind.value);fd.set('urgency',f.urgency.value);fd.set('site',site);
  fd.set('lines',JSON.stringify(ls.map(l=>({what:l.what||'',partNo:l.partNo||'',qty:l.qty,unit:l.unit||'pcs',match:l.match||'equiv',notes:l.notes||''}))));
- let size=0;ls.forEach((l,i)=>(l.files||[]).forEach(x=>{size+=x.size;fd.append('file_'+i,x)}));if(size>40*1024*1024)return bad('The photos are too large together. Please send fewer or smaller ones.');
+ let size=0,n=0;ls.forEach((l,i)=>(l.files||[]).forEach(x=>{size+=x.size;n++;fd.append('file_'+i,x)}));if(n>10)return bad('Please attach up to 10 files in one request. You can send another request for the rest.');if(size>40*1024*1024)return bad('The files are too large together (over 40 MB). Please send fewer, or email the big ones to info@massrenewable.com.');
  store.set('me',{name:f.name.value.trim(),email:f.email.value.trim(),phone:f.phone.value.trim()});
  b.disabled=true;b.textContent='Sending…';
  try{const r=await fetch(FN,{method:'POST',body:fd});const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||'Error '+r.status);
