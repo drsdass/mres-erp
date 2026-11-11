@@ -4390,10 +4390,10 @@ document.head.insertAdjacentHTML('beforeend',`<style>
    Our target price, sell price and customer are never shown to them. Sending again updates the same quote.
    Links: S.qlinks [{id, token, req, supplier, supplierName, created, by, opened, submitted, quoteId, sends, revoked}]
    The cloud side is the vendor-quote function. */
-const QL_BASE=(()=>{try{return /^https?:/.test(location.origin)&&!/localhost|127\.0\.0\.1|file:/.test(location.origin)?location.origin:'https://erp.massrenewable.com'}catch(e){return 'https://erp.massrenewable.com'}})();
+const QL_BASE='https://erp.massrenewable.com'; /* always the company address, never a Vercel preview address */
 const qls=()=>S.qlinks||(S.qlinks=[]);
-function qlToken(){const a=new Uint8Array(18);(globalThis.crypto||window.crypto).getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
-const qlUrl=l=>`${QL_BASE}/quote?t=${l.token}`;
+function qlToken(){const a=new Uint8Array(15);(globalThis.crypto||window.crypto).getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+const qlUrl=l=>`${QL_BASE}/q/${l.token}`;
 function qlFor(reqId,supId,make=true){let l=qls().find(x=>x.req===reqId&&x.supplier===supId&&!x.revoked);if(l||!make)return l;
  const s=sup(supId);l={id:nextId(qls(),'QL-'),token:qlToken(),req:reqId,supplier:supId,supplierName:s.name||'',created:new Date().toISOString(),by:USER.name,opened:null,submitted:null,quoteId:null,sends:0};qls().push(l);return l}
 const qlMsg=(q,l)=>`Hello,\n\nPlease send us your quote for ${q.title}${q.qty?` (${num(q.qty)} ${q.unit||'pcs'})`:''} using this short form. It takes about a minute and works in English or Chinese:\n${qlUrl(l)}\n\n您好，请通过以下链接填写报价（支持中文）：\n${qlUrl(l)}\n\nThank you,\n${USER.name}, Mass Renewable Energy Solutions`;
@@ -4456,10 +4456,10 @@ document.head.insertAdjacentHTML('beforeend',`<style>
    gets a confirmation. From there it's the normal flow: RFQ by itself, Camden's Negotiation card and price bar.
    Parts we have on the shelf are flagged "In stock" and are not sent out for sourcing.
    Links: S.olinks [{id, token, acct, created, by, revoked, uses, last, people}]. The cloud side is customer-request. */
-const OL_BASE=(()=>{try{return /^https?:/.test(location.origin)&&!/localhost|127\.0\.0\.1/.test(location.origin)?location.origin:'https://erp.massrenewable.com'}catch(e){return 'https://erp.massrenewable.com'}})();
+const OL_BASE='https://erp.massrenewable.com'; /* always the company address, never a Vercel preview address */
 const ols=()=>S.olinks||(S.olinks=[]);
-function olToken(){const a=new Uint8Array(18);(globalThis.crypto||window.crypto).getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
-const olUrl=l=>`${OL_BASE}/order?t=${l.token}`;
+function olToken(){const a=new Uint8Array(15);(globalThis.crypto||window.crypto).getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+const olUrl=l=>`${OL_BASE}/o/${l.token}`;
 const olOf=acctId=>ols().find(l=>l.acct===acctId&&!l.revoked);
 function olMake(acctId){const l={id:nextId(ols(),'OL-'),token:olToken(),acct:acctId,created:new Date().toISOString(),by:USER.name,uses:0};ols().push(l);return l}
 const olInvite=(a,l)=>`Hi,\n\nTo make ordering parts from us easier, your team can now send requests through this link:\n${olUrl(l)}\n\nAdd as many parts as you need, with quantities, part numbers and photos, and choose whether you want a quote first or are ready to order with a PO. It goes straight to our team, and you'll get a confirmation by email. It works on a phone too, so bookmark it or save it to your home screen.\n\nAnyone at ${a.name} can use it. Please don't share it outside your company.\n\nThank you,\n${USER.name}\nMass Renewable Energy Solutions`;

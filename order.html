@@ -48,7 +48,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-
 <main id="app"><div class="card"><p class="muted">Loading…</p></div></main>
 <script>
 const FN='https://ttjardwybyezgtccdath.supabase.co/functions/v1/customer-request';
-const tok=new URLSearchParams(location.search).get('t')||'';
+const tok=(location.pathname.match(/^\/o\/([A-Za-z0-9_-]+)/)||[])[1]||new URLSearchParams(location.search).get('t')||'';
 const KEY='mres-order-'+tok.slice(0,10);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const store={get(k,d){try{return JSON.parse(localStorage.getItem(KEY+k))??d}catch(e){return d}},set(k,v){try{localStorage.setItem(KEY+k,JSON.stringify(v))}catch(e){}}};
