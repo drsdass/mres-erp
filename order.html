@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Parts Request · Mass Renewable</title>
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0f2a3d">
+<style>
+:root{--ink:#0f172a;--ink2:#475569;--muted:#64748b;--line:#e2e8f0;--bg:#f1f5f9;--card:#fff;--brand:#0f2a3d;--accent:#22b8d6;--ok:#047857;--bad:#b91c1c;--soft:#f8fafc}
+@media (prefers-color-scheme:dark){:root{--ink:#e2e8f0;--ink2:#cbd5e1;--muted:#94a3b8;--line:#334155;--bg:#0b1220;--card:#111a2b;--soft:#0f1729}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:var(--brand);color:#fff;padding:14px 16px}header .in{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:10px}
+header img{width:36px;height:36px;border-radius:8px}header b{display:block;letter-spacing:.06em;font-size:15px}header small{display:block;font-size:10.5px;letter-spacing:.18em;opacity:.75}
+main{max-width:760px;margin:0 auto;padding:18px 16px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+h1{font-size:23px;margin:0 0 4px}h2{font-size:16px;margin:0 0 12px}.muted{color:var(--muted)}.sm{font-size:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.grid .full{grid-column:1/-1}.grid3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}
+label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:14px}label.f small{font-weight:400;color:var(--muted)}
+input,select,textarea{font:inherit;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--ink);width:100%}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.seg{display:flex;flex-wrap:wrap;gap:8px}.seg label{flex:1;min-width:110px;position:relative}.seg input{position:absolute;opacity:0;width:1px;height:1px}.seg span{display:block;text-align:center;padding:10px 8px;border:1px solid var(--line);border-radius:10px;font-weight:600;font-size:14px;cursor:pointer;background:var(--card)}
+.seg input:checked+span{background:var(--accent);border-color:var(--accent);color:#fff}.seg input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.seg.urg label:last-child input:checked+span{background:#dc2626;border-color:#dc2626}
+.line{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px;background:var(--soft);position:relative}
+.line .n{font-weight:700;font-size:13px;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.line .rm{border:0;background:none;color:var(--muted);font:inherit;font-size:14px;cursor:pointer;text-decoration:underline}
+.line input,.line select,.line textarea{background:var(--card)}
+.photo{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink2);cursor:pointer;border:1px dashed var(--line);border-radius:10px;padding:9px 12px;background:var(--card)}
+.photo input{display:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:14px 22px;font:inherit;font-weight:700;cursor:pointer}
+.btn.primary{background:var(--accent);color:#fff;width:100%;font-size:17px}.btn.add{background:none;border:1px dashed var(--accent);color:#0e7490;width:100%;padding:12px}
+.btn[disabled]{opacity:.6;cursor:wait}
+.err{background:#fef2f2;color:var(--bad);border:1px solid #fecaca;padding:10px 12px;border-radius:10px;font-weight:600;margin-top:12px}
+.done{text-align:center;padding:30px 18px}.tick{width:64px;height:64px;border-radius:50%;background:#d1fae5;color:var(--ok);display:inline-flex;align-items:center;justify-content:center;font-size:34px;margin-bottom:8px}
+.ids{list-style:none;padding:0;margin:14px auto;max-width:440px;text-align:left}.ids li{padding:8px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px}.ids b{color:#0e7490}
+.hist table{width:100%;border-collapse:collapse;font-size:14px}.hist td{padding:8px 4px;border-bottom:1px solid var(--line);vertical-align:top}.st{display:inline-block;padding:2px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-size:12.5px;font-weight:600;white-space:nowrap}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.note{font-size:13px;color:var(--muted);margin-top:14px;text-align:center}
+[hidden]{display:none!important}.hist td:first-child{white-space:nowrap}
+@media (max-width:600px){.grid{grid-template-columns:1fr}.grid3{grid-template-columns:1fr 1fr}.grid3>label:first-child{grid-column:1/-1}.seg.urg label{min-width:0}}
+</style>
+</head>
+<body>
+<header><div class="in"><img src="/icon-192.png" alt=""><div><b>MASS RENEWABLE</b><small>ENERGY SOLUTIONS</small></div></div></header>
+<main id="app"><div class="card"><p class="muted">Loading…</p></div></main>
+<script>
+const FN='https://ttjardwybyezgtccdath.supabase.co/functions/v1/customer-request';
+const tok=new URLSearchParams(location.search).get('t')||'';
+const KEY='mres-order-'+tok.slice(0,10);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store={get(k,d){try{return JSON.parse(localStorage.getItem(KEY+k))??d}catch(e){return d}},set(k,v){try{localStorage.setItem(KEY+k,JSON.stringify(v))}catch(e){}}};
+const app=document.getElementById('app');
+let D=null,view='form',last=null;let lines=[{}];
+const UNITS=['pcs','sets','pairs','ft','m','kg','lbs'];
+function fail(m){app.innerHTML=`<div class="card"><p class="err" style="margin:0">${esc(m)}</p></div>`}
+const lineHtml=(l,i)=>`<div class="line" data-i="${i}"><div class="n">Part ${i+1}${lines.length>1?`<button type="button" class="rm" data-rm="${i}">Remove</button>`:''}</div>
+ <div class="grid3"><label class="f">What part?<input data-k="what" required maxlength="200" placeholder="e.g. Coolant pump for GE 2.x" value="${esc(l.what||'')}"></label>
+ <label class="f">Quantity<input data-k="qty" type="number" min="1" inputmode="numeric" required value="${esc(l.qty||'')}"></label>
+ <label class="f">Unit<select data-k="unit">${UNITS.map(u=>`<option ${u===(l.unit||'pcs')?'selected':''}>${u}</option>`).join('')}</select></label></div>
+ <div class="grid" style="margin-top:12px"><label class="f">Part number / model <small>if you have it</small><input data-k="partNo" maxlength="80" value="${esc(l.partNo||'')}"></label>
+ <div class="f"><span style="font-weight:600;font-size:14px">Does it have to be this exact part?</span><div class="seg" role="radiogroup" aria-label="Exact part">
+  <label><input type="radio" name="m${i}" data-k="match" value="exact" ${l.match==='exact'?'checked':''}><span>Exact part</span></label>
+  <label><input type="radio" name="m${i}" data-k="match" value="equiv" ${l.match!=='exact'?'checked':''}><span>Equivalent OK</span></label></div></div>
+ <label class="f full">Details <small>(optional) voltage, size, turbine model, old supplier…</small><textarea data-k="notes" rows="2" maxlength="1000">${esc(l.notes||'')}</textarea></label>
+ <label class="photo full"><input type="file" data-file="${i}" accept="image/*,application/pdf" multiple>📷 <span>${l.files&&l.files.length?esc(l.files.map(f=>f.name).join(', ')):'Add a photo of the part or its label (optional)'}</span></label></div></div>`;
+function readLines(){document.querySelectorAll('.line').forEach(el=>{const i=+el.dataset.i;const l=lines[i]||(lines[i]={});el.querySelectorAll('[data-k]').forEach(x=>{if(x.type==='radio'){if(x.checked)l.match=x.value}else l[x.dataset.k]=x.value})})}
+function drawForm(){const me=store.get('me',{});const sites=D.sites||[];
+ app.innerHTML=`<div class="card"><div class="muted sm">${esc(D.company)}</div><h1>Request parts from Mass Renewable</h1><p class="muted" style="margin:0">Send us what you need. It goes straight to our team, and you’ll get a confirmation by email.</p></div>
+ <form id="of" novalidate>
+ <div class="card"><h2>What do you need?</h2><div class="seg" role="radiogroup" aria-label="Request type">
+   <label><input type="radio" name="kind" value="quote" ${(last&&last.kind)!=='order'?'checked':''}><span>A quote first</span></label>
+   <label><input type="radio" name="kind" value="order" ${(last&&last.kind)==='order'?'checked':''}><span>Ready to order (I have a PO)</span></label></div>
+  <div class="grid" style="margin-top:14px"><label class="f" id="po-f">PO number <small id="po-h">(optional)</small><input name="po" maxlength="60"></label>
+   <label class="f">Deliver to${sites.length?`<select name="site"><option value="">Choose a site…</option>${sites.map(s=>`<option>${esc(s)}</option>`).join('')}<option value="__other">Somewhere else…</option></select>`:`<input name="site" maxlength="160" placeholder="Site or address">`}</label>
+   <label class="f full" id="site-o" hidden>Other delivery address<input name="siteOther" maxlength="160"></label>
+   <label class="f">Needed by <small>(optional)</small><input name="needBy" type="date"></label>
+   <div class="f"><span style="font-weight:600;font-size:14px">How urgent?</span><div class="seg urg" role="radiogroup" aria-label="Urgency">${['Normal','Urgent','Machine down'].map((u,i)=>`<label><input type="radio" name="urgency" value="${u}" ${i===0?'checked':''}><span>${u}</span></label>`).join('')}</div></div></div></div>
+ <div class="card"><h2>Parts</h2><div id="lines">${lines.map(lineHtml).join('')}</div><button type="button" class="btn add" id="add">+ Add another part</button></div>
+ <div class="card"><h2>Your details</h2><div class="grid"><label class="f full">Your name *<input name="name" required maxlength="80" autocomplete="name" value="${esc(me.name||'')}"></label>
+  <label class="f">Email <small>(for the confirmation)</small><input name="email" type="email" maxlength="120" autocomplete="email" value="${esc(me.email||'')}"></label>
+  <label class="f">Phone <small>(optional)</small><input name="phone" type="tel" maxlength="40" autocomplete="tel" value="${esc(me.phone||'')}"></label>
+  <label class="f full">Anything else? <small>(optional)</small><textarea name="notes" rows="3" maxlength="2000"></textarea></label></div>
+  <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+  <div id="msg"></div><button class="btn primary" type="submit" style="margin-top:16px">Send request</button>
+  <p class="note">Goes to the Mass Renewable team at info@massrenewable.com.</p></div></form>
+ <div id="hist"></div>`;
+ const f=document.getElementById('of');
+ const kindSync=()=>{const o=f.kind.value==='order';document.getElementById('po-h').textContent=o?'(required to order)':'(optional)'};f.querySelectorAll('[name=kind]').forEach(x=>x.onchange=kindSync);kindSync();
+ if(f.site&&f.site.tagName==='SELECT')f.site.onchange=()=>{document.getElementById('site-o').hidden=f.site.value!=='__other'};
+ document.getElementById('add').onclick=()=>{readLines();if(lines.length<15){lines.push({});redrawLines();const ins=document.querySelectorAll('.line [data-k=what]');ins[ins.length-1].focus()}};
+ document.getElementById('lines').addEventListener('click',e=>{const r=e.target.dataset&&e.target.dataset.rm;if(r!=null){readLines();lines.splice(+r,1);redrawLines()}});
+ document.getElementById('lines').addEventListener('change',e=>{const i=e.target.dataset&&e.target.dataset.file;if(i!=null){readLines();lines[+i].files=[...e.target.files].slice(0,3);redrawLines()}});
+ f.onsubmit=submit;drawHist()}
+function redrawLines(){document.getElementById('lines').innerHTML=lines.map(lineHtml).join('')}
+async function submit(e){e.preventDefault();readLines();const f=e.target,msg=document.getElementById('msg'),b=f.querySelector('[type=submit]');msg.innerHTML='';
+ const bad=m=>{msg.innerHTML=`<div class="err">${esc(m)}</div>`;return false};
+ const ls=lines.filter(l=>String(l.what||'').trim()||String(l.partNo||'').trim());
+ if(!ls.length)return bad('Please add at least one part.');
+ for(const l of ls)if(!(+l.qty>0))return bad(`Please enter how many you need for "${l.what||l.partNo}".`);
+ if(!f.name.value.trim())return bad('Please enter your name.');
+ if(f.kind.value==='order'&&!f.po.value.trim())return bad('Please enter your PO number to order, or choose "A quote first".');
+ const site=f.site&&f.site.value==='__other'?f.siteOther.value:(f.site?f.site.value:'');
+ const fd=new FormData();fd.set('t',tok);['name','email','phone','po','needBy','notes','website'].forEach(k=>fd.set(k,f[k]?f[k].value:''));fd.set('kind',f.kind.value);fd.set('urgency',f.urgency.value);fd.set('site',site);
+ fd.set('lines',JSON.stringify(ls.map(l=>({what:l.what||'',partNo:l.partNo||'',qty:l.qty,unit:l.unit||'pcs',match:l.match||'equiv',notes:l.notes||''}))));
+ let size=0;ls.forEach((l,i)=>(l.files||[]).forEach(x=>{size+=x.size;fd.append('file_'+i,x)}));if(size>40*1024*1024)return bad('The photos are too large together. Please send fewer or smaller ones.');
+ store.set('me',{name:f.name.value.trim(),email:f.email.value.trim(),phone:f.phone.value.trim()});
+ b.disabled=true;b.textContent='Sending…';
+ try{const r=await fetch(FN,{method:'POST',body:fd});const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||'Error '+r.status);
+  const h=store.get('ids',[]);store.set('ids',[...(j.ids||[]),...h].slice(0,40));last={kind:f.kind.value,lines:j.lines||[],po:f.po.value.trim(),email:f.email.value.trim()};view='done';lines=[{}];draw();scrollTo(0,0)}
+ catch(err){bad(err.message);b.disabled=false;b.textContent='Send request'}}
+function drawDone(){app.innerHTML=`<div class="card done"><div class="tick">✓</div><h1>Request sent</h1><p class="muted">The Mass Renewable team has it${last.po?` (${esc(/^p\.?\s?o(?![a-z])/i.test(last.po)?last.po:'PO '+last.po)})`:''}.${last.email?` A confirmation is on its way to ${esc(last.email)}.`:''}</p>
+ <ul class="ids">${last.lines.map(l=>`<li><b>${esc(l.id)}</b> · ${esc(l.what)} × ${esc(l.qty)} ${esc(l.unit)}</li>`).join('')}</ul>
+ <button class="btn primary" id="again" style="max-width:320px">Request more parts</button></div><div id="hist"></div>`;document.getElementById('again').onclick=()=>{view='form';draw()};drawHist()}
+async function drawHist(){const ids=store.get('ids',[]);const el=document.getElementById('hist');if(!ids.length||!el)return;
+ try{const r=await fetch(FN+'?t='+encodeURIComponent(tok)+'&ids='+encodeURIComponent(ids.join(',')));const j=await r.json();if(!r.ok||!(j.requests||[]).length)return;
+  el.innerHTML=`<div class="card hist"><h2>Your recent requests</h2><table><tbody>${j.requests.sort((a,b)=>a.created<b.created?1:-1).map(x=>`<tr><td><b>${esc(x.id)}</b><div class="muted sm">${esc(new Date(x.created).toLocaleDateString('en-US',{month:'short',day:'numeric'}))}</div></td><td>${esc(x.what)} × ${esc(x.qty)} ${esc(x.unit||'')}</td><td style="text-align:right"><span class="st">${esc(x.status)}</span></td></tr>`).join('')}</tbody></table><p class="muted sm" style="margin:8px 0 0">Requests sent from this device.</p></div>`}catch(e){}}
+function draw(){if(!D)return;view==='done'?drawDone():drawForm()}
+(async()=>{if(!/^[A-Za-z0-9_-]{20,64}$/.test(tok))return fail('This link is not complete. Please open the full link you received from Mass Renewable.');
+ try{const r=await fetch(FN+'?t='+encodeURIComponent(tok));const j=await r.json().catch(()=>({}));if(!r.ok)return fail(j.error||'Could not load this page.');D=j;draw()}catch(e){fail('Could not connect. Please check your internet and try again.')}})();
+</script>
+</body>
+</html>

@@ -3611,7 +3611,7 @@ function aqMake(r){const id=nextId(S.srcReqs,'SR-'),no=nextRfqNo(TODAY);const te
  log(`Created ${no} automatically from part request ${r.id}`,[{f:'RFQ',from:'blank',to:no}]);return q}
 function aqAuto(){if(typeof frs!=='function'||typeof nextRfqNo!=='function')return 0;if(!S.aqSince){S.aqSince=new Date().toISOString();save();return 0}
  if(typeof ensureSourcing==='function')ensureSourcing();let n=0;
- frs().forEach(r=>{if(r.rfq||r.demo||!['New','Looking'].includes(r.status)||!(+r.qty>0)||!String(r.what||'').trim()||(r.created||'')<S.aqSince)return;const q=aqMake(r);n++;
+ frs().forEach(r=>{if(r.rfq||r.demo||(r.inStock&&r.inStock.enough)||!['New','Looking'].includes(r.status)||!(+r.qty>0)||!String(r.what||'').trim()||(r.created||'')<S.aqSince)return;const q=aqMake(r);n++;
   if(ui.aqPostNext&&r.from===USER.name){ui.aqPostNext=false;setTimeout(()=>{location.hash='#/sourcing/'+q.id;setTimeout(()=>{M.rfqPost(q.id);const f=$('#mform');if(f){f.classList.add('aq-dock');f.querySelector('.mbody').insertAdjacentHTML('afterbegin','<div id="aq-dockhint" class="sm aq-hint">Alibaba is open on the right. Copy the title and description into its form, attach the spec sheet, submit, then click Mark as posted here.</div>')}},250)},50)}});
  /* tell the requester (via info@ and the request's thread) when the first quote arrives */
  frs().forEach(r=>{const q=r.rfq&&sreq(r.rfq);if(!q||r.aqQuoted)return;const qs=(S.squotes||[]).filter(x=>x.req===q.id&&liveQ(x));if(!qs.length)return;r.aqQuoted=TODAY;
@@ -4446,6 +4446,46 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .ql-link{display:flex;gap:8px}.ql-link input{flex:1;font-family:ui-monospace,monospace;font-size:13px}.ql-msg{width:100%;font-size:13px}.ql-files{margin-top:10px}
 @media(max-width:760px){.ql-t td{display:block;border:0;padding:2px 0}.ql-t tr{display:block;padding:8px 0;border-bottom:1px solid var(--line)}.ql-acts{text-align:left}.ql-acts .btn{margin:4px 4px 0 0}}
 [data-theme=dark] .ql-st.quoted{background:#052e16;color:#86efac}[data-theme=dark] .ql-st.opened{background:#0c2a3d;color:#7dd3fc}[data-theme=dark] .ql-st.sent{background:#1e293b;color:#cbd5e1}
+</style>`);
+
+/* ================= Customer parts order form (for WECS and other customers) =================
+   One link per customer company: erp.massrenewable.com/order?t=…  Anyone on their staff with the link can send a
+   request: a quote first, or an order with their PO number, the delivery site (their sites from the customer record),
+   needed-by date, urgency, and one or more parts with quantity, part number, exact or equivalent, and photos.
+   Each part lands in Part requests (marked with the customer and the person), the team gets an email, and the person
+   gets a confirmation. From there it's the normal flow: RFQ by itself, Camden's Negotiation card and price bar.
+   Parts we have on the shelf are flagged "In stock" and are not sent out for sourcing.
+   Links: S.olinks [{id, token, acct, created, by, revoked, uses, last, people}]. The cloud side is customer-request. */
+const OL_BASE=(()=>{try{return /^https?:/.test(location.origin)&&!/localhost|127\.0\.0\.1/.test(location.origin)?location.origin:'https://erp.massrenewable.com'}catch(e){return 'https://erp.massrenewable.com'}})();
+const ols=()=>S.olinks||(S.olinks=[]);
+function olToken(){const a=new Uint8Array(18);(globalThis.crypto||window.crypto).getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+const olUrl=l=>`${OL_BASE}/order?t=${l.token}`;
+const olOf=acctId=>ols().find(l=>l.acct===acctId&&!l.revoked);
+function olMake(acctId){const l={id:nextId(ols(),'OL-'),token:olToken(),acct:acctId,created:new Date().toISOString(),by:USER.name,uses:0};ols().push(l);return l}
+const olInvite=(a,l)=>`Hi,\n\nTo make ordering parts from us easier, your team can now send requests through this link:\n${olUrl(l)}\n\nAdd as many parts as you need, with quantities, part numbers and photos, and choose whether you want a quote first or are ready to order with a PO. It goes straight to our team, and you'll get a confirmation by email. It works on a phone too, so bookmark it or save it to your home screen.\n\nAnyone at ${a.name} can use it. Please don't share it outside your company.\n\nThank you,\n${USER.name}\nMass Renewable Energy Solutions`;
+function olBox(a){const l=olOf(a.id);const reqs=frs().filter(r=>r.via==='customer-form'&&r.acct===a.id);
+ if(!l)return `<section class="ol-box"><h4>${ic('mail',15)} Parts order form for ${esc(a.name)} staff</h4><p class="sm muted" style="margin:4px 0 10px">Give their team one link to send part requests and orders (with photos and PO numbers) straight into Part requests, instead of emails and texts.</p><button type="button" class="btn sm primary" data-action="ol-make" data-id="${esc(a.id)}">Make the order form link</button></section>`;
+ return `<section class="ol-box"><h4>${ic('mail',15)} Parts order form for ${esc(a.name)} staff</h4>
+  <div class="ol-link"><input readonly value="${esc(olUrl(l))}" onclick="this.select()" aria-label="Order form link"><button type="button" class="btn sm primary" data-action="ol-copy" data-id="${esc(l.id)}">Copy link</button><button type="button" class="btn sm" data-action="ol-invite" data-id="${esc(l.id)}">Copy invite email</button></div>
+  <p class="sm muted" style="margin:8px 0 0">${l.uses?`${l.uses} request${l.uses===1?'':'s'} sent (${reqs.length} part${reqs.length===1?'':'s'})${(l.people||[]).length?` by ${esc(l.people.slice(-4).join(', '))}`:''}, last ${ago(l.last)}.`:`Made ${ago(l.created)} by ${esc(l.by)}. Nothing sent through it yet.`}
+   <button type="button" class="link" data-action="ol-stop" data-id="${esc(l.id)}">Stop this link and make a new one</button></p></section>`}
+A['ol-make']=d=>{const a=byId(S.accounts,d.id);if(!a)return;olMake(a.id);log(`Made a parts order form link for ${a.name}`);save();M.cust(a.id)};
+A['ol-copy']=d=>{const l=byId(ols(),d.id);if(l){copyText(olUrl(l));toast('Link copied')}};
+A['ol-invite']=d=>{const l=byId(ols(),d.id);const a=l&&byId(S.accounts,l.acct);if(a){copyText(olInvite(a,l));toast('Invite email copied. Paste it into an email to their team.')}};
+A['ol-stop']=d=>{const l=byId(ols(),d.id);const a=l&&byId(S.accounts,l.acct);if(!a)return;if(!(typeof confirmBox==='function'?confirmBox:confirm)(`Stop the current link for ${a.name}? Anyone with it won't be able to send requests. You'll get a new link to send them. Requests already sent stay.`))return;
+ l.revoked=new Date().toISOString();olMake(a.id);log(`Replaced the parts order form link for ${a.name}`);save();M.cust(a.id);toast('New link made. Send it to their team.')};
+const _custOl=M.cust;M.cust=id=>{_custOl(id);const a=byId(S.accounts,id);const b=$('#mform .mbody');if(a&&b)b.insertAdjacentHTML('afterbegin',olBox(a))};
+/* Part requests list: who at the customer sent it, and "In stock" */
+const _frTableOl=frTable;frTable=function(id,rows){const h=_frTableOl(id,rows);if(typeof document==='undefined'||!rows.some(r=>r.via==='customer-form'))return h;const t=document.createElement('template');t.innerHTML=h;
+ t.content.querySelectorAll('tr[data-id]').forEach(tr=>{const r=fr(tr.dataset.id);if(!r||r.via!=='customer-form')return;const c=tr.cells;
+  if(c[5])c[5].innerHTML=`${esc((r.contact&&r.contact.name)||r.from)}<div><span class="chip ol-chip">${esc(r.customer||'Customer')} form</span></div>`;
+  if(c[7]&&r.inStock)c[7].insertAdjacentHTML('afterbegin',`<span class="chip ol-stock" title="${esc(r.inStock.onhand+' on hand as '+r.inStock.sku)}">${r.inStock.enough?'In stock':'Some in stock'}</span> `);
+  if(c[3]&&r.po)c[3].innerHTML=`${esc(r.customer||'')} <b>${esc(/^p\.?\s?o(?![a-z])/i.test(r.po)?r.po:'PO '+r.po)}</b>${r.shipTo?`<div class="muted sm">${esc(r.shipTo)}</div>`:''}`});return t.innerHTML};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.ol-box{border:1px solid #a5f3fc;background:#ecfeff;border-radius:12px;padding:12px 14px;margin:0 0 16px}.ol-box h4{margin:0;display:flex;align-items:center;gap:6px;font-size:14px}
+.ol-link{display:flex;gap:6px;flex-wrap:wrap}.ol-link input{flex:1 1 240px;font-family:ui-monospace,monospace;font-size:12.5px}
+.ol-chip{font-size:11px;padding:0 6px;background:#e0f2fe;color:#075985}.ol-stock{font-size:11px;padding:0 6px;background:#dcfce7;color:#166534}
+[data-theme=dark] .ol-box{background:#082f39;border-color:#155e75}[data-theme=dark] .ol-chip{background:#0c2a3d;color:#7dd3fc}[data-theme=dark] .ol-stock{background:#052e16;color:#86efac}
 </style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
