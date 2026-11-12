@@ -4188,7 +4188,7 @@ function pxFind(what,partNo){const tk=pxTokens(what,partNo);if(!tk.parts.length&
  const sq=real(S.squotes).filter(q=>{const r=byId(S.srcReqs||[],q.req);return r&&pxHit(r.title,tk)&&q.unitPrice!=null}).map(q=>({supplier:sup(q.supplier).name,price:+q.unitPrice,date:q.date,rfq:(byId(S.srcReqs,q.req)||{}).no})).sort((a,b)=>a.price-b.price).slice(0,3);
  return{so,cq,em,paid,sq}}
 const pxTarget=(sell,o={})=>{const r={...pxRules(),...o};return sell>0?{target:+(sell*r.targetPct/100).toFixed(2),walk:+(sell*r.walkPct/100).toFixed(2),...r}:null};
-const pxRefTxt=ref=>{if(!ref)return'';if(ref.kind==='so'){const o=byId(S.orders||[],ref.id);return `${ref.id}${o?` · ${o.acct}${o.cpo?' (PO '+o.cpo+')':''}`:''}`}if(ref.kind==='cq'){const q=byId(S.quotes||[],ref.id);return `customer quote ${ref.id}${q?` · ${q.acct}`:''}`}if(ref.kind==='email'){const m=byId(S.emails||[],ref.id);return `email from ${m?(m.company||m.fromName||m.from):'customer'}`}return ref.kind==='stock'?'for stock':ref.kind==='manual'?'Denny’s price':''};
+const pxRefTxt=ref=>{if(!ref)return'';if(ref.kind==='so'){const o=byId(S.orders||[],ref.id);return `${ref.id}${o?` · ${typeof aname==='function'?aname(o.acct):o.acct}${o.cpo?' ('+(/^p\.?\s?o(?![a-z])/i.test(o.cpo)?o.cpo:'PO '+o.cpo)+')':''}`:''}`}if(ref.kind==='cq'){const q=byId(S.quotes||[],ref.id);return `customer quote ${ref.id}${q?` · ${typeof aname==='function'?aname(q.acct):q.acct}`:''}`}if(ref.kind==='email'){const m=byId(S.emails||[],ref.id);return `email from ${m?(m.company||m.fromName||m.from):'customer'}`}return ref.kind==='stock'?'for stock':ref.kind==='manual'?'Denny’s price':''};
 
 /* ---------- on the request form: what we already know, and the sell price ---------- */
 function pxBox(f){const g=n=>((f.querySelector(`[name="${n}"]`)||{}).value||'').trim();const k=pxFind(g('what'),g('partNo'));const box=f.querySelector('#px-box');if(!box)return;
@@ -4612,6 +4612,63 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .qc-seg input:checked+span{background:#0e7490;border-color:#0e7490;color:#fff}.qc-seg input:focus-visible+span{outline:2px solid #22b8d6}.qc-foot{display:flex;gap:8px;flex-wrap:wrap}.btn.danger{background:#dc2626;color:#fff;border-color:#dc2626}
 @media(max-width:760px){.qc-row{grid-template-columns:1fr 64px}.qc-name{grid-column:1/-1}.qc-q{grid-template-columns:1fr}.qc-t td{display:block;border:0;padding:3px 0}.qc-t tr{display:block;border-top:1px solid var(--line);padding:8px 0}.qc-t thead{display:none}.qc-acts{text-align:left}}
 [data-theme=dark] .qc-red{background:#3b0a0a;border-color:#7f1d1d;color:#fecaca}[data-theme=dark] .qc-flag{background:#450a0a;color:#fca5a5}[data-theme=dark] .qc-note{background:#3a2a05;border-color:#78350f}
+</style>`);
+
+/* ================= Match RFQs to customer POs and quotes, so every RFQ has a sell price and a target =================
+   When an RFQ (or its part request) has no sell price, the ERP looks for it:
+   1. Customer PO number: a PO on the request (order form, "WECS · PO 334792", or in the title/specs) that matches a
+      sales order's customer PO. The line for this part is used; if the order has one line, that line.
+   2. Part number: the same part number on a sales order line (most recent, same customer first).
+   3. Our quote to the customer with the same part number.
+   Those three are strong matches: the sell price is filled in by itself, marked "auto-matched", and the target and
+   walk-away follow from the pricing rules. Weaker matches (two or more words in common) are only suggested on the
+   RFQ's Negotiation card, with a "Use" button. Anything typed by Denny always wins and is never overwritten.
+   The RFQ list shows sell price and target for every RFQ, with a bar of how many open RFQs are priced. */
+const pmDigits=s=>String(s||'').replace(/\D/g,'');
+function pmPoOf(q,r){if(r&&r.po)return String(r.po);const t=[q.title,q.specs,r&&r.forWhat,r&&r.what,r&&r.specs].filter(Boolean).join(' ');const m=t.match(/\b(?:customer\s+)?P\.?\s?O\.?\s*(?:#|no\.?|number)?\s*[:\-]?\s*([A-Z]{0,4}\d[\w-]{3,})/i);return m?m[1]:''}
+function pmLinePick(o,tk){const ls=(o.lines||[]).filter(l=>+l.price>0);if(!ls.length)return null;const hit=ls.map(l=>({l,s:pxHit(pxItemName(l.sku),tk)})).sort((a,b)=>b.s-a.s)[0];return hit.s>0?hit.l:ls.length===1?ls[0]:null}
+function pmMatch(q){const r=pxReqOf(q)||{};const what=r.what||q.title,partNo=r.partNo||q.partNo||'';const tk=pxTokens(what,partNo);const real=a=>(a||[]).filter(x=>x&&!x.demo);const acct=r.acct||'';const out=[];
+ const po=pmPoOf(q,r),pd=pmDigits(po);
+ if(pd.length>=4)real(S.orders).filter(o=>o.status!=='Cancelled'&&[o.cpo,o.endPo,o.id].some(x=>x&&pmDigits(x)===pd)).forEach(o=>{const l=pmLinePick(o,tk);if(l)out.push({kind:'so',id:o.id,acct:o.acct,cpo:o.cpo,price:+l.price,qty:l.qty,sku:l.sku,date:o.date,why:'po',strong:true})});
+ const lines=(docs,kind)=>real(docs).flatMap(o=>(o.lines||[]).filter(l=>+l.price>0).map(l=>({o,l,s:pxHit(pxItemName(l.sku),tk)})).filter(x=>x.s>=2).map(x=>({kind,id:x.o.id,acct:x.o.acct,cpo:x.o.cpo,price:+x.l.price,qty:x.l.qty,sku:x.l.sku,date:x.o.date,why:x.s>=3?'part':'words',strong:x.s>=3,same:acct&&x.o.acct===acct})));
+ const so=lines((S.orders||[]).filter(o=>o.status!=='Cancelled'),'so'),cq=lines(S.quotes,'cq');
+ const rank=(a,b)=>(b.strong-a.strong)||((b.same?1:0)-(a.same?1:0))||String(b.date||'').localeCompare(String(a.date||''));
+ [...so.sort(rank),...cq.sort(rank)].forEach(x=>{if(!out.some(y=>y.kind===x.kind&&y.id===x.id))out.push(x)});
+ return out.slice(0,6)}
+const pmTxt=x=>`${x.kind==='so'?(x.id):'Quote '+x.id}${x.acct?` · ${typeof aname==='function'?aname(x.acct):x.acct}`:''}${x.cpo?` · ${/^p\.?\s?o(?![a-z])/i.test(x.cpo)?x.cpo:'PO '+x.cpo}`:''}`;
+const pmWhy={po:'same customer PO',part:'same part number',words:'similar description'};
+/* fill in sell prices for open RFQs from strong matches (never over a price someone typed) */
+let pmSig='';
+function pmSweep(){const sig=[(S.srcReqs||[]).length,(S.orders||[]).length,(S.quotes||[]).length,frs().length].join('|');if(sig===pmSig)return;pmSig=sig;let n=0;
+ (S.srcReqs||[]).filter(q=>q.status==='Open'&&!q.demo).forEach(q=>{const r=pxReqOf(q)||{};if(q.sellEach!=null&&q.sellEach!==''||r.sellEach!=null&&r.sellEach!==''||q.pmNo)return;
+  const m=pmMatch(q).find(x=>x.strong);if(!m)return;q.sellEach=m.price;q.sellRef={kind:m.kind,id:m.id,auto:true,why:m.why,at:new Date().toISOString()};n++;
+  log(`${q.no}: sell price ${unitCost(m.price)} matched automatically from ${pmTxt(m)} (${pmWhy[m.why]})`)});
+ if(n){save();toast(`Matched ${n} RFQ${n===1?'':'s'} to a customer price`)}}
+A['pm-use']=d=>{const q=sreq(d.id);if(!q)return;const m=pmMatch(q)[+d.i];if(!m)return;const before=q.sellEach;q.sellEach=m.price;q.sellRef={kind:m.kind,id:m.id,why:m.why,by:USER.name};delete q.pmNo;
+ log(`${q.no}: sell price ${before??'blank'} → ${m.price} from ${pmTxt(m)}`);save();rerender()};
+A['pm-undo']=d=>{const q=sreq(d.id);if(!q)return;log(`${q.no}: removed the auto-matched sell price ${q.sellEach} (${pmTxt(q.sellRef||{})})`);q.sellEach=null;q.sellRef=null;q.pmNo=true;save();rerender()};
+/* on the RFQ page: where the sell price came from, other matches, and suggestions when there's none */
+function pmBox(q){const r=pxReqOf(q)||{};const hasSell=(q.sellEach!=null&&q.sellEach!=='')||(r.sellEach!=null&&r.sellEach!=='');const ms=pmMatch(q);const ref=q.sellRef||{};
+ if(hasSell&&ref.auto)return `<div class="pm-box auto"><b>Sell price found automatically:</b> ${unitCost(q.sellEach)} each from <b>${esc(pmTxt(ref.id?{...ref,...(byId(S.orders||[],ref.id)||byId(S.quotes||[],ref.id)||{}),kind:ref.kind,id:ref.id}:ref))}</b> <span class="muted">(${esc(pmWhy[ref.why]||'match')})</span>. <button type="button" class="link" data-action="pm-undo" data-id="${esc(q.id)}">Not this part?</button></div>`;
+ if(hasSell)return '';
+ if(!ms.length)return `<div class="pm-box none"><b>No sell price yet.</b> No customer PO or quote in the ERP matches this part. Ask Denny what we sell it for, or type it below.</div>`;
+ return `<div class="pm-box"><b>Possible customer prices for this part:</b><div class="pm-list">${ms.map((m,i)=>`<div class="pm-row"><span><b>${unitCost(m.price)}</b> each · ${esc(pmTxt(m))}${m.sku?` · ${esc(m.sku)}`:''} <span class="muted sm">${esc(pmWhy[m.why])}${m.date?' · '+esc(fd(m.date)):''}</span></span><button type="button" class="btn sm" data-action="pm-use" data-id="${esc(q.id)}" data-i="${i}">Use ${unitCost(m.price)}</button></div>`).join('')}</div></div>`}
+const _srcPm=VIEWS.sourcing;VIEWS.sourcing=id=>{try{pmSweep()}catch(e){}const h=_srcPm(id);if(typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ if(id&&sreq(id)){const card=t.content.querySelector('.px-card');const html=pmBox(sreq(id));if(card&&html){const head=card.querySelector('.ph')||card.firstElementChild;head.insertAdjacentHTML('afterend',`<div style="padding:0 16px">${html}</div>`)}else if(html){const at=t.content.querySelector('.aq-panel');if(at)at.insertAdjacentHTML('afterend',`<section class="panel"><div style="padding:12px 16px">${html}</div></section>`)}return t.innerHTML}
+ const tb=[...t.content.querySelectorAll('table')].find(x=>/Target/.test((x.querySelector('thead')||{}).textContent||''));if(!tb)return h;
+ const ths=[...tb.querySelectorAll('thead th')];const ti=ths.findIndex(x=>/Target/.test(x.textContent));if(ti<0)return h;ths[ti].textContent='Sell → target';
+ tb.querySelectorAll('tbody tr[data-href]').forEach(tr=>{const rid=decodeURIComponent((tr.dataset.href||'').split('/').pop());const q=sreq(rid);const td=tr.cells[ti];if(!q||!td)return;const c=pxCalc(q);
+  td.innerHTML=c.none?'<span class="pm-miss">no price</span>':`<b>${unitCost(c.t.target)}</b><div class="sm muted">${c.sell?`sell ${unitCost(c.sell)}`:'Denny’s target'}${(q.sellRef||{}).auto?' · auto':''}</div>`});
+ const open=(S.srcReqs||[]).filter(q=>q.status==='Open'&&!q.demo);if(open.length){const priced=open.filter(q=>!pxCalc(q).none).length,auto=open.filter(q=>(q.sellRef||{}).auto).length;const pct=Math.round(priced/open.length*100);
+  const sec=tb.closest('section');if(sec)sec.insertAdjacentHTML('beforebegin',`<div class="pm-sum"><div class="pm-bar" role="img" aria-label="${priced} of ${open.length} open RFQs have a price"><span class="a" style="width:${(auto/open.length*100).toFixed(1)}%"></span><span class="m" style="width:${((priced-auto)/open.length*100).toFixed(1)}%"></span></div>
+   <div class="sm"><b>${priced} of ${open.length}</b> open RFQs have a sell price or target (${pct}%) · <span class="pm-k a"></span>${auto} matched automatically · <span class="pm-k m"></span>${priced-auto} set by hand · <span class="pm-k n"></span>${open.length-priced} need Denny</div></div>`)}
+ return t.innerHTML};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.pm-box{margin:10px 0;padding:10px 12px;border-radius:10px;background:#f0f9ff;border:1px solid #bae6fd;font-size:14px}.pm-box.auto{background:#ecfdf5;border-color:#a7f3d0}.pm-box.none{background:#fffbeb;border-color:#fde68a}
+.pm-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}.pm-row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.pm-miss{color:#b45309;font-size:12.5px;font-weight:600}.pm-sum{margin:0 0 10px}.pm-bar{display:flex;height:10px;border-radius:6px;overflow:hidden;background:#fde68a;margin-bottom:6px}.pm-bar span{display:block;height:100%}.pm-bar .a{background:#10b981}.pm-bar .m{background:#0e7490}
+.pm-k{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 4px 0 6px;vertical-align:0}.pm-k.a{background:#10b981}.pm-k.m{background:#0e7490}.pm-k.n{background:#fde68a;border:1px solid #f59e0b}
+[data-theme=dark] .pm-box{background:#0c2a3d;border-color:#155e75}[data-theme=dark] .pm-box.auto{background:#052e1a;border-color:#166534}[data-theme=dark] .pm-box.none{background:#3a2a05;border-color:#78350f}
 </style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */
