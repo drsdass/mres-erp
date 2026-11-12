@@ -3589,7 +3589,7 @@ const AQ_FROM=typeof SOURCING_INBOX!=='undefined'?SOURCING_INBOX:'sourcing@massr
 function aqText(v){const L=[];
  L.push(`Product: ${v.title}`);L.push(`Quantity: ${num(v.qty)} ${v.unit||'pcs'}`);if(v.partNo)L.push(`Part / model number: ${v.partNo}`);
  if(v.specs)L.push(`Specifications: ${String(v.specs).trim()}`);L.push(`Delivery: ${v.incoterm||'DDP'} to ${v.dest||'USA'}`);if(v.needBy)L.push(`Needed by: ${longDate(v.needBy)}`);
- L.push('','Please quote: unit price, MOQ, lead time, shipping cost to the USA, and payment terms. Photos or a spec sheet of your part help.');
+ L.push('','Please quote: unit price and currency; Incoterm and port (e.g. FOB Qingdao); MOQ and prices at 100 / 500 / 1,000 pcs; any tooling or mold cost; sample time and production time; packaging (cartons, gross weight, volume); HTS code; payment terms and whether you accept Trade Assurance; and whether you are a manufacturer or trading company. Please send your drawing or spec sheet too.');
  if(v.no)L.push(`Reference: ${v.no} (please put this number in your reply)`);return L.join('\n')}
 let aqOf=q=>aqText({title:q.title,qty:q.qty,unit:q.unit,partNo:'',specs:q.specs,incoterm:q.incoterm,dest:q.dest,needBy:q.needBy,no:q.no});
 async function aqCopy(t){try{await navigator.clipboard.writeText(t);return true}catch(e){try{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();const ok=document.execCommand('copy');a.remove();return ok}catch(x){return false}}}
@@ -4486,6 +4486,132 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 .ol-link{display:flex;gap:6px;flex-wrap:wrap}.ol-link input{flex:1 1 240px;font-family:ui-monospace,monospace;font-size:12.5px}
 .ol-chip{font-size:11px;padding:0 6px;background:#e0f2fe;color:#075985}.ol-stock{font-size:11px;padding:0 6px;background:#dcfce7;color:#166534}
 [data-theme=dark] .ol-box{background:#082f39;border-color:#155e75}[data-theme=dark] .ol-chip{background:#0c2a3d;color:#7dd3fc}[data-theme=dark] .ol-stock{background:#052e16;color:#86efac}
+</style>`);
+
+/* ================= Quote review checklist (from "Alibaba Quote Review Checklist") =================
+   Every supplier quote on an RFQ gets the six-section review: Is it our part? What's in the price? Lead time and logistics,
+   Payment and protection, Is the supplier real? Quality.
+   - Answers fill themselves in where the ERP already knows them: from the quote (Incoterm, currency, MOQ, price breaks,
+     validity, lead time, payment terms), from the supplier quote form (they answer most questions up front), and from
+     earlier reviews of the same supplier ("Is the supplier real?" and Trade Assurance are answered once per supplier).
+   - "Copy questions" makes a message with only the unanswered questions, in English and Chinese, for Alibaba chat or email.
+   - Red flags (price far below the others, no sample, paying off Alibaba, vague specs, no Incoterm) show in red with
+     "Ask Satish & Denny", which emails the team inbox.
+   - Landed cost per unit = unit price + (tooling + freight + broker + inspection) ÷ quantity + duty, for every quote,
+     drawn as a stacked bar so the real cheapest is obvious. Tooling and inspection now count in the delivered-cost panel too.
+   Stored: quote.qc {key: value}, supplier.vet {key: value}, RFQ duty % in rfq.duty (same field the deal panel uses). */
+const QC=[
+ {s:'Is it actually our part?',i:[
+  {k:'spec',t:'yn',q:'Matches our drawing or spec exactly (dimensions, tolerances, material grade, hardness)',zh:'是否完全符合我们的图纸/规格（尺寸、公差、材质、硬度）？',flag:'no'},
+  {k:'oem',t:'sel',o:['OEM','OEM-equivalent','Compatible'],q:'OEM, OEM-equivalent or “compatible”?',zh:'是原厂件、同等替代件还是兼容件？',src:q=>q.condition==='original'?'OEM':q.condition==='equivalent'?'OEM-equivalent':''},
+  {k:'xref',t:'text',q:'Turbine models and part numbers it cross-references',zh:'适用哪些风机型号和原厂料号？'},
+  {k:'drawing',t:'yn',q:'Will send their drawing or spec sheet back before we pay',zh:'付款前能否发回贵方图纸或规格书给我们确认？',src:q=>(q.files||[]).length?'yes':''},
+  {k:'cert',t:'sel',o:['Mill cert','Material test report','RoHS/REACH','None'],q:'Material certification that comes with it',zh:'随货提供哪种材质证明（材质证书、检测报告、RoHS/REACH）？'},
+  {k:'clear',t:'yn',q:'Clear, specific answers on material and specs',flag:'no',internal:true}]},
+ {s:'What’s in the price?',i:[
+  {k:'currency',t:'sel',o:['USD','CNY','EUR'],q:'Currency',src:q=>q.currency||(q.unitPrice!=null?'USD':''),w:'currency'},
+  {k:'incoterm',t:'sel',o:['EXW','FOB','FCA','CFR','CIF','DAP','DDP'],q:'Incoterm (and port, e.g. FOB Qingdao)',zh:'价格条款是什么（EXW、FOB、CIF、DDP）？哪个港口？',src:q=>q.incoterm,w:'incoterm'},
+  {k:'tooling',t:'num',q:'Tooling or mold cost, one-time ($; 0 if none)',zh:'是否有模具费/开模费？金额多少？',src:q=>q.tooling,w:'tooling'},
+  {k:'moldOwner',t:'sel',o:['We own it','Supplier owns it','No mold'],q:'Who owns the mold afterward',zh:'模具费付清后模具归谁所有？'},
+  {k:'moq',t:'num',q:'MOQ',zh:'最小起订量是多少？',src:q=>q.moq,w:'moq'},
+  {k:'breaks',t:'text',q:'Price breaks at 100 / 500 / 1,000 units',zh:'100 / 500 / 1000 件的阶梯价分别是多少？',src:q=>(q.tiers||[]).length?q.tiers.map(t=>`${num(t.qty)}: ${t.price}`).join(', '):''},
+  {k:'valid',t:'num',q:'Quote valid for (days)',zh:'报价有效期多少天？',src:q=>q.validDays,w:'validDays'}]},
+ {s:'Lead time and logistics',i:[
+  {k:'sampleDays',t:'num',q:'Days to make a sample',zh:'做样品需要几天？'},
+  {k:'prodDays',t:'num',q:'Production days after the deposit',zh:'收到定金后生产需要几天？',src:q=>q.leadDays,w:'leadDays'},
+  {k:'pack',t:'text',q:'Packaging: cartons, gross weight (kg), volume (CBM)',zh:'包装信息：箱数、毛重(kg)、体积(CBM)？'},
+  {k:'freightSea',t:'num',q:'Sea freight to Mesa, AZ, whole order ($)',zh:'整单海运到美国亚利桑那州 Mesa 的运费是多少？'},
+  {k:'freightAir',t:'num',q:'Air freight to Mesa, AZ, whole order ($)',zh:'整单空运到 Mesa 的运费是多少？'},
+  {k:'shipBy',t:'sel',o:['Sea','Air'],q:'We’ll ship by',internal:true},
+  {k:'forwarder',t:'sel',o:['Their forwarder','Ours'],q:'Their forwarder or ours',zh:'使用贵方货代还是我方货代？'},
+  {k:'hts',t:'text',q:'HTS code they use',zh:'贵方使用的 HTS 海关编码是多少？'},
+  {k:'duty',t:'num',q:'Duty rate % for this part (confirm with the customs broker)',internal:true,rfq:true}]},
+ {s:'Payment and protection',i:[
+  {k:'payTerms',t:'text',q:'Payment terms (typical: 30–50% deposit, balance before shipping)',zh:'付款方式是什么？（例如 30% 定金，发货前付尾款）',src:q=>q.paymentTerms,w:'paymentTerms'},
+  {k:'ta',t:'yn',q:'Accepts Alibaba Trade Assurance',zh:'是否接受阿里巴巴信用保障（Trade Assurance）订单？',sup:true},
+  {k:'bank',t:'yn',q:'Bank account is in the same company name as the storefront',zh:'收款银行账户是否与店铺公司名称一致？',sup:true,flag:'no'},
+  {k:'offAli',t:'yn',q:'They’re pushing us to pay outside Alibaba',flag:'yes',internal:true}]},
+ {s:'Is the supplier real?',i:[
+  {k:'kind',t:'sel',o:['Manufacturer','Trading company'],q:'Manufacturer or trading company',zh:'贵司是生产工厂还是贸易公司？',sup:true},
+  {k:'years',t:'num',q:'Years on Alibaba',sup:true,internal:true},
+  {k:'verified',t:'yn',q:'Verified Supplier on Alibaba',sup:true,internal:true,src:(q,s)=>s.verified===true?'yes':s.verified===false?'no':''},
+  {k:'iso',t:'yn',q:'ISO 9001 certified',zh:'是否有 ISO 9001 认证？',sup:true},
+  {k:'wind',t:'yn',q:'Has made parts for wind turbines or similar heavy equipment',zh:'是否生产过风电或类似重型设备的零件？能否提供案例或照片？',sup:true}]},
+ {s:'Quality',i:[
+  {k:'sample',t:'yn',q:'Will make a paid sample first',zh:'能否先做付费样品？',flag:'no'},
+  {k:'inspect',t:'yn',q:'Allows third-party pre-shipment inspection (SGS, QIMA)',zh:'是否接受第三方出货前验货（SGS、QIMA）？'},
+  {k:'inspectCost',t:'num',q:'Inspection cost if we book one ($; about 300)',internal:true,w:'inspection'},
+  {k:'defect',t:'sel',o:['Replace','Refund','Credit on next order','None stated'],q:'Defect policy',zh:'出现次品如何处理（换货、退款、下次订单抵扣）？'}]}];
+const QC_ALL=QC.flatMap((s,si)=>s.i.map(x=>({...x,si})));
+const qcSup=q=>sup(q.supplier)||{};
+function qcVal(q,x){const s=qcSup(q),r=sreq(q.req)||{};
+ if(x.rfq)return r.duty!=null&&r.duty!==''?r.duty:'';
+ const own=x.sup?((s.vet||{})[x.k]??(q.qc||{})[x.k]):(q.qc||{})[x.k];if(own!=null&&own!=='')return own;
+ const v=x.src?x.src(q,s):'';return v==null?'':v}
+function qcStat(q){const ans=QC_ALL.filter(x=>qcVal(q,x)!=='');const per=QC.map((s,si)=>{const it=s.i,a=it.filter(x=>qcVal(q,x)!=='').length;return{a,n:it.length}});return{a:ans.length,n:QC_ALL.length,per}}
+function qcFlags(q){const f=[],v=k=>qcVal(q,QC_ALL.find(x=>x.k===k));const r=sreq(q.req)||{};
+ const live=reqQuotes(q.req).filter(liveQ).filter(o=>o.id!==q.id);const qty=+r.qty||1;const p=tierPrice(q,qty);
+ if(live.length>=2&&p!=null){const ps=live.map(o=>tierPrice(o,qty)).filter(x=>x!=null).sort((a,b)=>a-b);const med=ps[Math.floor(ps.length/2)];if(med&&p<med*.6)f.push('Price far below every other quote')}
+ if(v('sample')==='no')f.push('Refuses to send a sample');
+ if(v('offAli')==='yes'||v('bank')==='no')f.push('Pushes to pay off Alibaba or to another name');
+ if(v('clear')==='no'||v('spec')==='no')f.push('Vague or mismatched material or specs');
+ if(!v('incoterm'))f.push('No Incoterm on the quote');return f}
+/* tooling and inspection are one-time costs: add them to the delivered cost */
+const _dealCostQc=dealCost;dealCost=function(q,r,qo){const qc=q.qc||{};if((q.shipTotal==null||q.shipTotal==='')&&(q.shipPerUnit==null||q.shipPerUnit==='')){const fr=qc.shipBy==='Air'?qc.freightAir:(qc.freightSea??qc.freightAir);if(fr!=null&&fr!=='')q={...q,shipTotal:+fr}}const d=_dealCostQc(q,r,qo);if(!d)return d;const tool=+q.tooling||0,insp=(q.qc&&q.qc.inspect==='yes')?(+q.inspection||0):0;if(!tool&&!insp)return d;
+ const total=d.total+tool+insp;return{...d,tooling:tool,inspection:insp,total,perNeed:total/d.need,perUnit:total/d.units}};
+/* the landed-cost chart for every live quote on an RFQ */
+function qcChart(rid){const r=sreq(rid);if(!r)return '';const qs=reqQuotes(rid).filter(liveQ).map(q=>({q,d:dealCost(q,r)})).filter(x=>x.d).sort((a,b)=>a.d.perNeed-b.d.perNeed);if(!qs.length)return '';
+ const parts=[['Part price','#0e7490',d=>d.goods],['Tooling','#a855f7',d=>d.tooling||0],['Freight','#f59e0b',d=>d.ship],['Duty','#ef4444',d=>d.duty],['Broker, inspection, fees','#64748b',d=>d.customs+d.inland+d.fee+(d.inspection||0)]];
+ const max=Math.max(...qs.map(x=>x.d.perNeed));const cheapUnit=[...qs].sort((a,b)=>(a.d.price??1e9)-(b.d.price??1e9))[0];
+ const note=cheapUnit&&cheapUnit!==qs[0]?`<p class="sm qc-note">${esc(sup(cheapUnit.q.supplier).name)} has the lowest unit price (${unitCost(cheapUnit.d.price)}), but <b>${esc(sup(qs[0].q.supplier).name)}</b> is cheapest delivered: ${unitCost(qs[0].d.perNeed)} vs ${unitCost(cheapUnit.d.perNeed)} per part (${Math.round((cheapUnit.d.perNeed/qs[0].d.perNeed-1)*100)}% more).</p>`:'';
+ return `<div class="qc-chart" role="img" aria-label="Landed cost per part for each quote">${qs.map(x=>{const d=x.d;return `<div class="qc-row"><div class="qc-name">${esc(sup(x.q.supplier).name)}<small>${esc(d.inc)}${x.q.unitPrice!=null?` · ${unitCost(d.price)} quoted`:''}${d.shipEst?' · <span class="qc-warn">freight not quoted</span>':''}${qcFlags(x.q).length?' · <span class="qc-warn">red flags</span>':''}</small></div><div class="qc-bar">${parts.map(([n,c,fn])=>{const v=fn(d)/d.need;return v>0?`<span style="width:${(v/max*100).toFixed(2)}%;background:${c}" title="${n}: ${unitCost(v)} per part"></span>`:''}).join('')}</div><b class="qc-tot">${unitCost(d.perNeed)}</b></div>`}).join('')}
+  <div class="qc-legend">${parts.map(([n,c])=>`<span><i style="background:${c}"></i>${n}</span>`).join('')}<span class="muted">per part, for ${num(qs[0].d.need)} ${esc(r.unit||'pcs')}</span></div></div>${note}`}
+function qcDots(q){const s=qcStat(q);return `<span class="qc-dots" title="${s.a} of ${s.n} answered">${s.per.map((p,i)=>`<i class="${p.a===p.n?'full':p.a?'part':''}" title="${esc(QC[i].s)}: ${p.a}/${p.n}"></i>`).join('')}</span>`}
+function qcPanel(rid){const r=sreq(rid);const qs=reqQuotes(rid).filter(liveQ);if(!qs.length)return '';
+ return `<section class="panel qc-panel"><div class="ph"><h3>${ic('check',16)} Quote review</h3><span class="sm muted">compare on landed cost per part, never on the quoted unit price</span></div><div class="qc-in">
+  ${qcChart(rid)}
+  <table class="qc-t"><thead><tr><th>Supplier</th><th>Checklist</th><th>Red flags</th><th></th></tr></thead><tbody>${qs.map(q=>{const st=qcStat(q),fl=qcFlags(q);return `<tr><td><b>${esc(sup(q.supplier).name)}</b><div class="sm muted">${q.unitPrice!=null?unitCost(q.unitPrice)+' each':''}${q.channel?` · ${esc(q.channel)}`:''}</div></td>
+   <td>${qcDots(q)} <span class="sm muted">${st.a}/${st.n}</span></td><td>${fl.length?fl.map(f=>`<span class="chip qc-flag">${esc(f)}</span>`).join(' '):'<span class="sm muted">none</span>'}${q.qcEsc?`<div class="sm muted">sent to Satish & Denny ${ago(q.qcEsc.at)}</div>`:''}</td>
+   <td class="qc-acts"><button class="btn sm primary" data-action="qc-open" data-id="${esc(q.id)}">Review</button><button class="btn sm" data-action="qc-ask" data-id="${esc(q.id)}" title="Unanswered questions, English and Chinese">Copy questions</button></td></tr>`}).join('')}</tbody></table></div></section>`}
+const _srcQc=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcQc(id);const q=id&&sreq(id);if(!q||typeof document==='undefined')return h;const html=qcPanel(q.id);if(!html)return h;const t=document.createElement('template');t.innerHTML=h;
+ const at=t.content.querySelector('.px-card')||t.content.querySelector('.aq-panel');if(at)at.insertAdjacentHTML('afterend',html);else t.content.prepend(document.createRange().createContextualFragment(html));return t.innerHTML};
+function qcAskText(q){const miss=QC_ALL.filter(x=>!x.internal&&!x.rfq&&x.zh&&qcVal(q,x)==='');if(!miss.length)return '';const r=sreq(q.req)||{};
+ return `Hello, thank you for your quote${r.no?` for ${r.no}`:''}. A few questions before we decide:\n\n${miss.map((x,i)=>`${i+1}. ${x.q.replace(/\s*\(.*?\)\s*$/,'')}?`).join('\n')}\n\n您好，感谢报价。下单前想请您确认以下几点：\n${miss.map((x,i)=>`${i+1}. ${x.zh}`).join('\n')}\n\nThank you,\n${USER.name}, Mass Renewable`}
+A['qc-ask']=d=>{const q=byId(S.squotes,d.id);if(!q)return;const t=qcAskText(q);if(!t)return toast('Every supplier question is already answered.');copyText(t);toast('Questions copied. Paste them to the supplier.')};
+A['qc-open']=d=>{const q=byId(S.squotes,d.id);if(!q)return;const s=qcSup(q),r=sreq(q.req)||{};
+ const inp_=x=>{const v=qcVal(q,x),n='qc_'+x.k;
+  if(x.t==='yn')return `<div class="qc-seg" role="radiogroup" aria-label="${esc(x.q)}">${[['yes','Yes'],['no','No'],['','Not yet']].map(([val,l])=>`<label><input type="radio" name="${n}" value="${val}" ${String(v)===val?'checked':''}><span>${l}</span></label>`).join('')}</div>`;
+  if(x.t==='sel')return `<select name="${n}"><option value="">Not yet</option>${x.o.map(o=>`<option ${String(v)===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  if(x.t==='num')return `<input name="${n}" type="number" min="0" step="any" value="${esc(v)}">`;
+  return `<input name="${n}" value="${esc(v)}">`};
+ const fl=qcFlags(q);
+ modal(`Review: ${esc(s.name)} · ${esc(r.no||'')}`,`${fl.length?`<div class="qc-red"><b>Stop and loop in Satish or Denny.</b> ${fl.map(esc).join(' · ')}</div>`:''}
+  <p class="sm muted" style="margin-top:0">Filled in from the quote${q.channel==='Form'?' and the supplier’s form':''} where we already know. <span class="qc-key"><i class="sup"></i>answered once per supplier</span> <span class="qc-key"><i class="in"></i>for us, not asked</span></p>
+  ${QC.map((sec,si)=>{const st=qcStat(q).per[si];return `<fieldset class="qc-sec"><legend>${si+1}. ${esc(sec.s)} <span class="sm muted">${st.a}/${st.n}</span></legend>${sec.i.map(x=>`<div class="qc-q ${x.sup?'sup':''} ${x.internal||x.rfq?'in':''}"><label>${esc(x.q)}${x.rfq?' <span class="muted sm">(whole RFQ)</span>':''}</label>${inp_(x)}</div>`).join('')}</fieldset>`}).join('')}
+  <div class="qc-foot sm"><button type="button" class="btn sm" data-action="qc-ask" data-id="${esc(q.id)}">Copy questions for the supplier</button>${fl.length?` <button type="button" class="btn sm danger" data-action="qc-esc" data-id="${esc(q.id)}">Ask Satish & Denny</button>`:''}</div>`,
+  {label:'Save review',wide:true,submit:v=>{const before=qcStat(q).a;q.qc=q.qc||{};s.vet=s.vet||{};let ch=0;
+   QC_ALL.forEach(x=>{const raw=v['qc_'+x.k];if(raw===undefined)return;const val=x.t==='num'?(raw===''?'':+raw):String(raw).trim();if(String(val)===String(qcVal(q,x)))return;ch++;
+    if(x.rfq){r.duty=val===''?null:val;return}
+    if(x.sup){s.vet[x.k]=val;if(x.k==='verified')s.verified=val==='yes'?true:val==='no'?false:s.verified}else q.qc[x.k]=val;
+    if(x.w){const nv=x.t==='num'?(val===''?null:val):(val||null);q[x.w]=nv}});
+   const by=q.qc.shipBy||'Sea',fr=by==='Air'?q.qc.freightAir:q.qc.freightSea;if(fr!==''&&fr!=null&&+q.shipTotal!==+fr){q.shipTotal=+fr;q.shipPerUnit=null;q.shipVia=by;ch++}
+   q.qcAt=new Date().toISOString();q.qcBy=USER.name;if(ch)log(`${USER.name} reviewed the ${s.name} quote on ${r.no||''}: ${qcStat(q).a}/${QC_ALL.length} answered (was ${before})`);save();rerender()}})};
+A['qc-esc']=d=>{const q=byId(S.squotes,d.id);if(!q)return;const s=qcSup(q),r=sreq(q.req)||{},fl=qcFlags(q);q.qcEsc={by:USER.name,at:new Date().toISOString(),flags:fl};log(`${USER.name} flagged the ${s.name} quote on ${r.no} for Satish and Denny: ${fl.join('; ')}`);save();
+ const L=[`${USER.name} flagged a quote for review.`,'',`RFQ: ${r.no} · ${r.title}`,`Supplier: ${s.name}`,`Quoted: ${q.unitPrice!=null?'$'+q.unitPrice:'?'} ${q.incoterm||'(no Incoterm)'}`,'','Red flags:',...fl.map(f=>'• '+f),'',`Open it: ${location.origin}/#/sourcing/${r.id}`];
+ if(typeof CLOUD!=='undefined'&&CLOUD)CLOUD.functions.invoke('mail-send',{body:{action:'notify',subject:`Quote red flag: ${s.name} on ${r.no}`,text:L.join('\n')}}).then(()=>toast('Sent to Satish & Denny')).catch(()=>toast('Saved, but the email didn’t send',true));else toast('Flagged');rerender()};
+document.head.insertAdjacentHTML('beforeend',`<style>
+.qc-in{padding:12px 16px 16px}.qc-t{width:100%;border-collapse:collapse;margin-top:12px}.qc-t th{text-align:left;font-size:12px;color:var(--ink-3,#64748b);font-weight:600;padding:6px}.qc-t td{padding:8px 6px;border-top:1px solid var(--line);vertical-align:top}.qc-acts{text-align:right;white-space:nowrap}.qc-acts .btn{margin-left:4px}
+.qc-dots{display:inline-flex;gap:3px;vertical-align:middle}.qc-dots i{width:10px;height:10px;border-radius:50%;background:var(--line,#e2e8f0);display:block}.qc-dots i.part{background:#fbbf24}.qc-dots i.full{background:#10b981}
+.qc-flag{background:#fee2e2;color:#b91c1c;font-size:11.5px;margin:0 4px 4px 0}.qc-red{background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:14px}
+.qc-chart{display:flex;flex-direction:column;gap:8px}.qc-row{display:grid;grid-template-columns:170px 1fr 70px;gap:10px;align-items:center}.qc-name{font-weight:600;font-size:13.5px;line-height:1.2;overflow:hidden}.qc-name small{display:block;font-weight:400;color:var(--ink-3,#64748b);font-size:11.5px}
+.qc-bar{display:flex;height:18px;border-radius:5px;overflow:hidden;background:var(--surface-2,#f1f5f9)}.qc-bar span{display:block;height:100%}.qc-bar span+span{border-left:1px solid rgba(255,255,255,.7)}.qc-tot{text-align:right;font-size:14px}.qc-warn{color:#dc2626;font-weight:600}
+.qc-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;margin-top:2px}.qc-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}.qc-note{margin:10px 0 0;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px}
+.qc-sec{border:1px solid var(--line);border-radius:10px;padding:8px 12px 10px;margin:0 0 12px}.qc-sec legend{font-weight:700;padding:0 6px}.qc-q{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)}.qc-q:last-child{border-bottom:0}
+.qc-q label{font-size:13.5px}.qc-q.sup>label::before,.qc-key i.sup{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;background:#8b5cf6;margin-right:6px;vertical-align:1px}.qc-q.in>label::before,.qc-key i.in{content:'';display:inline-block;width:8px;height:8px;border-radius:2px;background:#94a3b8;margin-right:6px;vertical-align:1px}
+.qc-key{margin-left:10px;white-space:nowrap}.qc-seg{display:flex;gap:4px}.qc-seg label{flex:1;position:relative}.qc-seg input{position:absolute;opacity:0}.qc-seg span{display:block;text-align:center;padding:5px 4px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;cursor:pointer}
+.qc-seg input:checked+span{background:#0e7490;border-color:#0e7490;color:#fff}.qc-seg input:focus-visible+span{outline:2px solid #22b8d6}.qc-foot{display:flex;gap:8px;flex-wrap:wrap}.btn.danger{background:#dc2626;color:#fff;border-color:#dc2626}
+@media(max-width:760px){.qc-row{grid-template-columns:1fr 64px}.qc-name{grid-column:1/-1}.qc-q{grid-template-columns:1fr}.qc-t td{display:block;border:0;padding:3px 0}.qc-t tr{display:block;border-top:1px solid var(--line);padding:8px 0}.qc-t thead{display:none}.qc-acts{text-align:left}}
+[data-theme=dark] .qc-red{background:#3b0a0a;border-color:#7f1d1d;color:#fecaca}[data-theme=dark] .qc-flag{background:#450a0a;color:#fca5a5}[data-theme=dark] .qc-note{background:#3a2a05;border-color:#78350f}
 </style>`);
 
 /* ================= shared cloud data (Supabase): sign-in, one shared copy for the whole team, live updates ================= */

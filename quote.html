@@ -9,7 +9,7 @@
 <style>
 :root{--ink:#0f172a;--ink2:#475569;--muted:#64748b;--line:#e2e8f0;--bg:#f1f5f9;--card:#fff;--brand:#0f2a3d;--accent:#22b8d6;--ok:#047857;--bad:#b91c1c;--soft:#f8fafc}
 @media (prefers-color-scheme:dark){:root{--ink:#e2e8f0;--ink2:#cbd5e1;--muted:#94a3b8;--line:#334155;--bg:#0b1220;--card:#111a2b;--soft:#0f1729}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box;overflow-anchor:none}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
 header{background:var(--brand);color:#fff;padding:14px 16px}header .in{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:12px;justify-content:space-between}
 .logo{display:flex;align-items:center;gap:10px}.logo img{width:36px;height:36px;border-radius:8px}.logo b{display:block;letter-spacing:.06em;font-size:15px}.logo small{display:block;font-size:10.5px;letter-spacing:.18em;opacity:.75}
 .lang{display:flex;border:1px solid rgba(255,255,255,.35);border-radius:8px;overflow:hidden}.lang button{background:none;border:0;color:#fff;padding:6px 10px;font:inherit;font-size:14px;cursor:pointer}.lang button.on{background:rgba(255,255,255,.18);font-weight:700}
@@ -23,12 +23,13 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:14p
 input,select,textarea{font:inherit;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--ink);width:100%}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
 .price{display:grid;grid-template-columns:1fr 96px;gap:8px}
-.seg{display:flex;flex-wrap:wrap;gap:8px}.seg label{flex:1;min-width:120px}.seg input{position:absolute;opacity:0;width:auto}.seg span{display:block;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;font-weight:600;font-size:14px;cursor:pointer}.seg input:checked+span{background:var(--accent);border-color:var(--accent);color:#fff}.seg input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:flex;flex-wrap:wrap;gap:8px}.seg label{flex:1;min-width:120px;position:relative}.seg input{position:absolute;opacity:0;width:1px;height:1px;left:0;top:0}.seg span{display:block;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;font-weight:600;font-size:14px;cursor:pointer}.seg input:checked+span{background:var(--accent);border-color:var(--accent);color:#fff}.seg input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
 .tiers>span{display:block;font-weight:600;font-size:14px;margin-bottom:6px}.tiers .row{display:grid;grid-template-columns:1fr 1fr 40px;gap:8px;margin-bottom:8px}.tiers button.x{border:1px solid var(--line);background:none;border-radius:10px;color:var(--muted);cursor:pointer;font-size:18px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:14px 22px;font:inherit;font-weight:700;cursor:pointer}.btn.primary{background:var(--accent);color:#fff;width:100%;font-size:17px}.btn.ghost{background:none;border:1px dashed var(--line);color:var(--ink2);padding:8px 12px;font-weight:600;font-size:14px}
 .btn[disabled]{opacity:.6;cursor:wait}
 .err{background:#fef2f2;color:var(--bad);border:1px solid #fecaca;padding:10px 12px;border-radius:10px;font-weight:600;margin-top:12px}
 .done{text-align:center;padding:36px 18px}.done .tick{width:64px;height:64px;border-radius:50%;background:#d1fae5;color:var(--ok);display:inline-flex;align-items:center;justify-content:center;font-size:34px;margin-bottom:10px}
+.more{margin-top:18px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--soft)}.more summary{cursor:pointer}.ql{font-weight:600;font-size:14px}.seg.sm2 label{min-width:80px}.more input,.more select{background:var(--card)}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 .note{font-size:13px;color:var(--muted);margin-top:14px}
 @media (max-width:560px){.grid{grid-template-columns:1fr}.need{grid-template-columns:1fr}.need dt{margin-top:6px}}
@@ -47,14 +48,32 @@ const T={
   files:'Spec sheet, drawings or photos (optional)',filesHelp:'PDF, CAD (DWG, DXF, STEP) or images. Up to 3 files, 10 MB each',notes:'Anything else? (optional)',you:'Your contact',name:'Your name',email:'Your email (optional)',send:'Send quote',update:'Update my quote',sending:'Sending…',
   sentBefore:'You sent a quote on',sentBefore2:'Your answers are filled in below. Change anything and send again to update it.',
   thanks:'Thank you! Your quote was sent.',thanks2:'Our team will review it and reply. You can update your quote any time using this same link.',again:'Change my quote',
-  closed:'This request is closed. Thank you for your interest.',needPrice:'Please enter your price per unit.',privacy:'Your quote goes only to the Mass Renewable sourcing team.',days:'days'},
+  closed:'This request is closed. Thank you for your interest.',moreT:'A few quick questions',moreH:'(optional, but it helps us decide faster)',yes:'Yes',no:'No',needPrice:'Please enter your price per unit.',privacy:'Your quote goes only to the Mass Renewable sourcing team.',days:'days'},
  zh:{loading:'加载中…',title:'询价单',for:'致',need:'我们需要的产品',part:'产品',pn:'型号 / 料号',qty:'数量',specs:'详细要求',needBy:'需要日期',exact:'仅限原装正品，请报相同品牌和型号。',equiv:'可接受替代品，请注明您提供的品牌和型号。',
   yourQuote:'您的报价',price:'单价',moq:'最小起订量 (MOQ)',lead:'交货期（天）',terms:'价格条款',termsHelp:'EXW、FOB 等',ship:'到美国的每件运费（可选）',sample:'样品费（可选）',pay:'付款方式（可选）',payPh:'例如：发货前 100% 付款',valid:'报价有效期（天）',
   offer:'您提供的是？',original:'原装件',equivalent:'替代件',refurb:'翻新件',brand:'品牌',model:'您报价的型号 / 料号',tiers:'阶梯价格（可选）',tierQty:'数量',tierPrice:'单价',addTier:'+ 添加阶梯价',
   files:'规格书、图纸或照片（可选）',filesHelp:'PDF、CAD 图纸（DWG、DXF、STEP）或图片，最多 3 个文件，每个 10 MB',notes:'其他说明（可选）',you:'联系人',name:'您的姓名',email:'您的邮箱（可选）',send:'提交报价',update:'更新报价',sending:'提交中…',
   sentBefore:'您已于以下时间提交报价：',sentBefore2:'您之前的内容已填好。修改后再次提交即可更新。',
   thanks:'谢谢！您的报价已提交。',thanks2:'我们的团队会尽快查看并回复。您可以随时用同一个链接更新报价。',again:'修改报价',
-  closed:'此询价已关闭，感谢您的关注。',needPrice:'请填写单价。',privacy:'您的报价仅发送给 Mass Renewable 采购团队。',days:'天'}};
+  closed:'此询价已关闭，感谢您的关注。',moreT:'几个简单问题',moreH:'（可选，填写后我们能更快决定）',yes:'是',no:'否',needPrice:'请填写单价。',privacy:'您的报价仅发送给 Mass Renewable 采购团队。',days:'天'}};
+const QF=[
+ ['kind','sel','Are you a manufacturer or a trading company?','贵司是工厂还是贸易公司？',[['Manufacturer','Manufacturer','工厂'],['Trading company','Trading company','贸易公司']]],
+ ['tooling','num','Tooling or mold cost, one-time (0 if none)','模具费/开模费（一次性，没有填 0）'],
+ ['moldOwner','sel','Who owns the mold afterward?','模具付清后归谁所有？',[['We own it','Mass Renewable','我方 (Mass Renewable)'],['Supplier owns it','Supplier','供应商'],['No mold','No mold needed','不需要模具']]],
+ ['sampleDays','num','Days to make a sample','做样品需要几天'],
+ ['sample','yn','Can you make a paid sample first?','能否先做付费样品？'],
+ ['pack','text','Packaging: cartons, gross weight (kg), volume (CBM)','包装：箱数、毛重(kg)、体积(CBM)'],
+ ['freightSea','num','Sea freight to Mesa, Arizona, USA, whole order','整单海运到美国亚利桑那州 Mesa 的运费'],
+ ['freightAir','num','Air freight to Mesa, Arizona, USA, whole order','整单空运到 Mesa 的运费'],
+ ['hts','text','HTS code you use for this part','此零件使用的 HTS 海关编码'],
+ ['ta','yn','Do you accept Alibaba Trade Assurance?','是否接受阿里巴巴信用保障订单？'],
+ ['iso','yn','ISO 9001 certified?','是否有 ISO 9001 认证？'],
+ ['wind','yn','Have you made parts for wind turbines or similar heavy equipment?','是否做过风电或类似重型设备的零件？'],
+ ['inspect','yn','Do you allow third-party inspection before shipping (SGS, QIMA)?','是否接受第三方出货前验货（SGS、QIMA）？'],
+ ['defect','sel','If parts are defective, you will…','如出现次品，贵方会…',[['Replace','Replace them','换货'],['Refund','Refund','退款'],['Credit on next order','Credit on the next order','下次订单抵扣']]],
+ ['cert','sel','Material certification included','随货提供的材质证明',[['Mill cert','Mill certificate','材质证书'],['Material test report','Material test report','材料检测报告'],['RoHS/REACH','RoHS / REACH','RoHS / REACH'],['None','None','无']]],
+ ['drawing','yn','Will you send your drawing or spec sheet for us to approve before we pay?','付款前能否发图纸或规格书给我们确认？'],
+ ['xref','text','Turbine models / OEM part numbers it fits','适用的风机型号 / 原厂料号']];
 let L=(()=>{try{return localStorage.getItem('mres-q-lang')||(/^zh/i.test(navigator.language)?'zh':'en')}catch(e){return 'en'}})();
 const t=k=>(T[L]&&T[L][k])||T.en[k]||k;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -64,7 +83,7 @@ const app=document.getElementById('app');
 function setLang(l){L=l;try{localStorage.setItem('mres-q-lang',l)}catch(e){}document.documentElement.lang=l==='zh'?'zh-CN':'en';document.querySelectorAll('.lang button').forEach(b=>b.classList.toggle('on',b.dataset.lang===l));if(document.getElementById('qf'))draft=collect();draw()}
 document.querySelectorAll('.lang button').forEach(b=>b.onclick=()=>setLang(b.dataset.lang));
 function fail(msg){app.innerHTML=`<div class="card"><p class="err" style="margin:0">${esc(msg)}</p></div>`}
-function collect(){const f=document.getElementById('qf');if(!f)return null;const o=Object.fromEntries(new FormData(f));delete o.files;o.tiers=[...f.querySelectorAll('.tiers .row')].map(r=>({qty:r.querySelector('[data-k=qty]').value,price:r.querySelector('[data-k=price]').value}));return o}
+function collect(){const f=document.getElementById('qf');if(!f)return null;const o=Object.fromEntries(new FormData(f));delete o.files;o.qc={};Object.keys(o).filter(k=>k.startsWith('qc_')).forEach(k=>{if(o[k]!=='')o.qc[k.slice(3)]=o[k];delete o[k]});o.tiers=[...f.querySelectorAll('.tiers .row')].map(r=>({qty:r.querySelector('[data-k=qty]').value,price:r.querySelector('[data-k=price]').value}));return o}
 const tierRow=(x={})=>`<div class="row"><input data-k="qty" type="number" min="1" inputmode="numeric" placeholder="${esc(t('tierQty'))}" value="${esc(x.qty??'')}" aria-label="${esc(t('tierQty'))}"><input data-k="price" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="${esc(t('tierPrice'))}" value="${esc(x.price??'')}" aria-label="${esc(t('tierPrice'))}"><button type="button" class="x" aria-label="Remove">×</button></div>`;
 function draw(){
  if(!D)return;
@@ -97,6 +116,10 @@ function draw(){
    <label class="f full">${esc(t('files'))} <small>${esc(t('filesHelp'))}</small><input name="files" type="file" multiple accept="image/*,application/pdf,.pdf,.dwg,.dxf,.step,.stp,.igs,.iges,.doc,.docx,.xls,.xlsx"></label>
    <label class="f full">${esc(t('notes'))}<textarea name="notes" rows="4" maxlength="2000">${v('notes')}</textarea></label>
   </div>
+  <details class="more" ${p.qc&&Object.keys(p.qc).length?'open':''}><summary><b>${esc(t('moreT'))}</b> <span class="muted sm">${esc(t('moreH'))}</span></summary><div class="grid" style="margin-top:12px">${QF.map(([k,ty,en,zh,opts])=>{const lab=L==='zh'?zh:en;const cur=(p.qc||{})[k]??'';
+   if(ty==='yn')return `<div class="f"><span class="ql">${esc(lab)}</span><div class="seg sm2"><label><input type="radio" name="qc_${k}" value="yes" ${cur==='yes'?'checked':''}><span>${esc(t('yes'))}</span></label><label><input type="radio" name="qc_${k}" value="no" ${cur==='no'?'checked':''}><span>${esc(t('no'))}</span></label></div></div>`;
+   if(ty==='sel')return `<label class="f">${esc(lab)}<select name="qc_${k}"><option value=""></option>${opts.map(([v,e,z])=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(L==='zh'?z:e)}</option>`).join('')}</select></label>`;
+   return `<label class="f ${ty==='text'?'full':''}">${esc(lab)}<input name="qc_${k}" ${ty==='num'?'type="number" min="0" step="any" inputmode="decimal"':'maxlength="300"'} value="${esc(cur)}"></label>`}).join('')}</div></details>
   <h2 style="margin-top:20px">${esc(t('you'))}</h2>
   <div class="grid"><label class="f">${esc(t('name'))}<input name="contactName" maxlength="80" autocomplete="name" value="${v('contactName')}"></label><label class="f">${esc(t('email'))}<input name="contactEmail" type="email" maxlength="120" autocomplete="email" value="${v('contactEmail')}"></label></div>
   <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
