@@ -380,6 +380,8 @@ details.stg .checklist{padding-bottom:8px}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
 <script>
 'use strict';
+/* always use the company address, never Vercel's own address */if(/\.vercel\.app$/i.test(location.hostname))location.replace('https://erp.massrenewable.com'+location.pathname+location.search+location.hash);
+
 /* ================= utilities ================= */
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
