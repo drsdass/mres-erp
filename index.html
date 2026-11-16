@@ -5404,5 +5404,127 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 </style>`);
 
 </script>
+<script>
+/* quotes.js */
+/* ================= Quotes: one place to add, find and compare every supplier quote =================
+   #/quotes (sidebar, under Today)
+   - "+ Add a quote": paste the supplier's Alibaba message and the price, MOQ, lead time, Incoterm, shipping and
+     price breaks fill themselves in. Pick the RFQ and the supplier (typing a new name adds the supplier). Save.
+   - Quotes from the supplier quote form land here by themselves, marked NEW with "Form".
+   - One card per RFQ: every quote side by side, sorted by what it really costs per part delivered (shipping, duty,
+     fees, tooling), best one marked, checked against the target and the most we'd pay.
+   - "Waiting on quotes": open RFQs with no quotes yet, with how many form links were sent and opened.
+   - The sidebar shows how many quotes are new since you last looked. */
+const QT_SEEN_KEY=()=>'mres-qseen-'+String((typeof USER!=='undefined'&&(USER.email||USER.name))||'me').toLowerCase();
+function qtSeen(){try{const v=localStorage.getItem(QT_SEEN_KEY());return v?new Set(JSON.parse(v)):null}catch(e){return null}}
+function qtNew(){const seen=qtSeen();const live=(S.squotes||[]).filter(q=>!q.demo&&liveQ(q));if(!seen){const cut=iso(addDays(T0,-3));return live.filter(q=>String(q.date||'')>=cut)}return live.filter(q=>!seen.has(q.id))}
+function qtMarkSeen(){try{localStorage.setItem(QT_SEEN_KEY(),JSON.stringify((S.squotes||[]).map(q=>q.id)))}catch(e){}}
+let qtFresh=null; /* the quotes that were new when this visit began, so the NEW tags stay while you look */
+/* ---- read a pasted supplier message ---- */
+function qtParse(text,qty){const t=String(text||'').replace(/\u00a0/g,' ');const out={};const n=v=>+String(v).replace(/,/g,'');
+ const cur=/(?:RMB|CNY|¥|元)/i.test(t)&&!/(?:US\$|USD|\$)/.test(t)?'CNY':'USD';if(cur==='CNY')out.currency='CNY';
+ const PR=cur==='CNY'?/(?:RMB|CNY|¥)\s*([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*(?:RMB|CNY|元)/gi:/(?:US\s?\$|USD|\$)\s*([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*(?:USD|US\$|dollars?)/gi;
+ /* price breaks: "100pcs: $12.5", "100-499 pcs US$12", "≥500 $11" */
+ const tiers=[];t.split(/\n|;|,(?=\s*\d+\s*(?:-|~|pcs|pieces|units|sets))/i).forEach(l=>{const q=l.match(/(?:≥|>=|over|above|from)?\s*(\d[\d,]*)\s*(?:-\s*\d[\d,]*\s*)?(?:pcs|pc|pieces|units|sets|nos)\b/i);PR.lastIndex=0;const p=PR.exec(l);if(q&&p)tiers.push({qty:n(q[1]),price:n(p[1]||p[2])})});
+ const uniq=tiers.filter((x,i,a)=>a.findIndex(y=>y.qty===x.qty)===i).sort((a,b)=>a.qty-b.qty);
+ /* the unit price: the price break that fits our quantity, or the first "$X/pc", or the first money amount that isn't shipping or a sample */
+ if(uniq.length>1){out.tiers=uniq;const fit=uniq.filter(x=>x.qty<=(+qty||uniq[0].qty)).pop()||uniq[0];out.unitPrice=fit.price}
+ else{const per=t.match(cur==='CNY'?/(?:RMB|CNY|¥)\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)\s*(?:pc|pcs|piece|unit|set|pair)/i:/(?:US\s?\$|USD|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per|each)\s*(?:pc|pcs|piece|unit|set|pair)?/i);
+  if(per)out.unitPrice=n(per[1]);else{PR.lastIndex=0;let m;while((m=PR.exec(t))){const before=t.slice(Math.max(0,m.index-40),m.index).toLowerCase();if(/ship|freight|express|sample|courier|dhl|fedex|ups|tooling|mold|mould/.test(before))continue;out.unitPrice=n(m[1]||m[2]);break}}
+  if(uniq.length===1&&!out.unitPrice)out.unitPrice=uniq[0].price}
+ const moq=t.match(/MOQ\s*(?:is|:|=)?\s*([\d,]+)/i)||t.match(/minimum\s+order(?:\s+quantity)?\s*(?:is|:)?\s*([\d,]+)/i)||t.match(/([\d,]+)\s*(?:pcs|pieces|units)\s*(?:is\s+(?:our|the)\s+)?MOQ/i);if(moq)out.moq=n(moq[1]);
+ const ld=t.match(/(?:lead\s*time|delivery(?:\s*time)?|production(?:\s*time)?|ready\s+in|ship\s+(?:in|within)|within)\D{0,20}(\d+)\s*(?:-|~|to)?\s*(\d+)?\s*(working\s*)?days/i)||t.match(/(\d+)\s*(?:-|~|to)\s*(\d+)\s*(working\s*)?days/i)||t.match(/(\d+)\s*(working\s*)?days/i);
+ if(ld){const a=+ld[1],b=ld[2]&&/^\d+$/.test(ld[2])?+ld[2]:a;out.leadDays=Math.round(Math.max(a,b)*(/working/i.test(ld[0])?1.4:1))}
+ const wk=!ld&&t.match(/(\d+)\s*(?:-|~|to)?\s*(\d+)?\s*weeks?/i);if(wk)out.leadDays=Math.max(+wk[1],+(wk[2]||0))*7;
+ const inc=t.match(/\b(EXW|FOB|FCA|CFR|CIF|DAP|DDP)\b/i);if(inc)out.incoterm=inc[1].toUpperCase();
+ const sh=t.match(/(?:shipping|freight|express|delivery\s+(?:cost|fee)|DHL|FedEx|UPS)[^$\d\n]{0,40}(?:US\s?\$|USD|\$)\s*([\d,]+(?:\.\d+)?)/i);if(sh)out.shipTotal=n(sh[1]);
+ const sm=t.match(/sample[^$\d\n]{0,30}(?:US\s?\$|USD|\$)\s*([\d,]+(?:\.\d+)?)/i);if(sm)out.sampleCost=n(sm[1]);
+ const tl=t.match(/(?:tooling|mold|mould)[^$\d\n]{0,30}(?:US\s?\$|USD|\$)\s*([\d,]+(?:\.\d+)?)/i);if(tl)out.tooling=n(tl[1]);
+ if(/trade\s*assurance/i.test(t))out.pay='Alibaba (card)';else if(/\bT\/?T\b|wire|bank transfer/i.test(t))out.pay='Wire (TT)';else if(/paypal/i.test(t))out.pay='PayPal';
+ return out}
+/* ---- add a quote ---- */
+A['qt-add']=d=>{const open=(S.srcReqs||[]).filter(r=>!r.demo&&r.status==='Open').sort((a,b)=>String(b.created||'')<String(a.created||'')?-1:1);
+ const rid=d&&d.rfq||'';const sups=[...(S.suppliers||[])].filter(s=>!s.demo).sort((a,b)=>String(a.name).localeCompare(b.name));
+ modal('Add a quote',`<div class="qt-paste"><label for="qt-txt"><b>Paste the supplier’s message</b> <span class="muted sm">(optional) the price, MOQ, lead time and terms fill in below</span></label><textarea id="qt-txt" name="paste" rows="4" placeholder="e.g. Dear friend, price is US$12.50/pc for 100pcs, US$11.80 for 500pcs. MOQ 50. Delivery 15 days. FOB Ningbo. Shipping by DHL about US$180."></textarea><div id="qt-got" class="sm" aria-live="polite"></div></div>
+  <div class="fg">${fld('RFQ',`<select name="req" required><option value="">Choose the RFQ…</option>${open.map(r=>opt(r.id,`${r.no||r.id} · ${String(r.title||'').slice(0,60)} · ${num(r.qty||0)} ${r.unit||'pcs'}`,r.id===rid)).join('')}</select>`,true)}
+   ${fld('Supplier',`${inp('sup','','list="qt-sups" required placeholder="Start typing; a new name adds the supplier" autocomplete="off"')}<datalist id="qt-sups">${sups.map(s=>`<option value="${esc(s.name)}">`).join('')}</datalist>`,true)}
+   ${fld('Price each',`<div class="qt-pr">${inp('unitPrice','','type="number" min="0" step="any" required')}<select name="currency"><option>USD</option><option>CNY</option></select></div>`)}
+   ${fld('MOQ',inp('moq','','type="number" min="0"'))}
+   ${fld('Lead time (days)',inp('leadDays','','type="number" min="0"'))}
+   ${fld('Price terms',`<select name="incoterm"><option value="">Not stated</option>${['EXW','FOB','FCA','CFR','CIF','DAP','DDP'].map(x=>opt(x,x)).join('')}</select>`)}
+   ${fld('Shipping to us, whole order ($)',inp('shipTotal','','type="number" min="0" step="any" placeholder="blank = not quoted"'))}
+   ${fld('Paying by',`<select name="pay">${['Alibaba (card)','Wire (TT)','PayPal','Card'].map(x=>opt(x,x)).join('')}</select>`)}
+   ${fld('Tooling or mold, one-time ($)',inp('tooling','','type="number" min="0" step="any"'))}
+   ${fld('Sample cost ($)',inp('sampleCost','','type="number" min="0" step="any"'))}
+   <input type="hidden" name="tiers" value="">
+   ${fld('Notes',`<textarea name="notes" rows="2" placeholder="Brand, model, original or equivalent, anything else"></textarea>`,true)}</div>`,{label:'Save quote',wide:true,submit:v=>{
+  const r=sreq(v.req);if(!r)return fail('Choose the RFQ this quote is for.');const name=String(v.sup||'').trim();if(!name)return fail('Type the supplier’s name.');const price=+v.unitPrice;if(!(price>0))return fail('Enter the price each.');
+  let s=(S.suppliers||[]).find(x=>String(x.name).trim().toLowerCase()===name.toLowerCase());if(!s){s={id:nextId(S.suppliers,'SUP-'),name,channel:'Alibaba',added:TODAY};S.suppliers.push(s);log(`Added supplier ${name}`)}
+  let tiers=[];try{tiers=JSON.parse(v.tiers||'[]')}catch(e){}
+  const num_=k=>v[k]===''||v[k]==null?null:+v[k];
+  S.squotes.filter(q=>q.supplier===s.id&&q.req===r.id&&liveQ(q)&&q.status!=='Awarded').forEach(q=>q.status='Superseded');
+  const q={id:nextId(S.squotes,'SQ-'),req:r.id,supplier:s.id,date:TODAY,channel:/@/.test(name)?'Email':'Alibaba',unitPrice:price,currency:v.currency||'USD',tiers,moq:num_('moq'),leadDays:num_('leadDays'),incoterm:v.incoterm||null,shipTotal:num_('shipTotal'),shipPerUnit:null,sampleCost:num_('sampleCost'),tooling:num_('tooling'),pay:v.pay||null,paymentTerms:'',validDays:null,status:'New',notes:String(v.notes||'').trim(),by:USER.name,pasted:String(v.paste||'').slice(0,2000)};
+  S.squotes.push(q);log(`${USER.name} added a quote from ${s.name} on ${r.no}: ${unitCost(price)} each${q.moq?`, MOQ ${num(q.moq)}`:''}${q.leadDays?`, ${q.leadDays} days`:''}`);
+  if(String(v.paste||'').trim())S.smsgs.push({id:nextId(S.smsgs,'SM-'),supplier:s.id,req:r.id,channel:'Alibaba',dir:'in',t:new Date().toISOString(),from:'',text:String(v.paste).trim().slice(0,1500)});
+  save();ui.qtFlash=q.id;toast(`Saved. ${s.name} is now in the comparison for ${r.no}.`);if(parse().r!=='quotes')location.hash='#/quotes';else rerender()}});
+ setTimeout(()=>{const ta=$('#qt-txt');if(!ta)return;ta.focus();ta.addEventListener('input',()=>{const f=$('#mform');const r=sreq((f.querySelector('[name=req]')||{}).value);const got=qtParse(ta.value,r&&r.qty);const lab=[];
+  const set=(k,val,l)=>{const el=f.querySelector(`[name=${k}]`);if(el&&val!=null&&val!==''){el.value=val;el.classList.add('qt-filled');lab.push(l)}};
+  set('unitPrice',got.unitPrice,'price');set('currency',got.currency,'currency');set('moq',got.moq,'MOQ');set('leadDays',got.leadDays,'lead time');set('incoterm',got.incoterm,'terms');set('shipTotal',got.shipTotal,'shipping');set('sampleCost',got.sampleCost,'sample');set('tooling',got.tooling,'tooling');set('pay',got.pay,'payment');
+  const th=f.querySelector('[name=tiers]');if(th)th.value=got.tiers?JSON.stringify(got.tiers):'';if(got.tiers)lab.push(`${got.tiers.length} price breaks`);
+  $('#qt-got').innerHTML=lab.length?`<span class="qt-ok">Filled in: ${esc(lab.join(', '))}.</span> Check them, then save.`:ta.value.trim()?'<span class="muted">Couldn’t find a price in that. Type it in below.</span>':''});
+  /* typing a known supplier that has one open RFQ quote request picks that RFQ */
+  const sf=$('#mform [name=sup]');if(sf)sf.addEventListener('change',()=>{const f=$('#mform');const rq=f.querySelector('[name=req]');if(rq.value)return;const s=(S.suppliers||[]).find(x=>x.name.toLowerCase()===sf.value.trim().toLowerCase());if(!s)return;const ids=[...new Set([...(S.qlinks||[]).filter(l=>l.supplier===s.id&&!l.revoked).map(l=>l.req),...(S.smsgs||[]).filter(m=>m.supplier===s.id&&m.req).map(m=>m.req)])].filter(id=>(sreq(id)||{}).status==='Open');if(ids.length===1)rq.value=ids[0]})},0)};
+/* ---- the comparison for one RFQ ---- */
+function qtCard(r){const qs=reqQuotes(r.id).filter(liveQ).map(q=>({q,d:dealCost(q,r)})).sort((a,b)=>(a.d?a.d.perNeed:1e12)-(b.d?b.d.perNeed:1e12));
+ const c=typeof pxCalc==='function'?pxCalc(r):null;const t=c&&!c.none?c.t:null;const best=qs.find(x=>x.d);
+ const links=(S.qlinks||[]).filter(l=>l.req===r.id&&!l.revoked);const quoted=l=>l.submitted||reqQuotes(r.id).some(q=>q.supplier===l.supplier&&liveQ(q));const opened=links.filter(l=>l.opened||quoted(l)).length,answered=links.filter(quoted).length;
+ const vs=x=>{if(!t||!x.d)return '';const v=x.d.perNeed;return v<=t.target?`<span class="chip ok">at or under target</span>`:v<=t.walk?`<span class="chip warn">${unitCost(v-t.target)} over target</span>`:`<span class="chip alert">over the most we’d pay</span>`};
+ return `<section class="panel qt-card ${qs.some(x=>qtFresh&&qtFresh.has(x.q.id))?'has-new':''}" id="qt-${esc(r.id)}"><div class="ph qt-ph"><div><a class="link" href="#/sourcing/${encodeURIComponent(r.id)}"><b>${esc(r.no||r.id)}</b></a> <span>${esc(r.title||'')}</span><div class="sm muted">${num(r.qty||0)} ${esc(r.unit||'pcs')}${t?` · target ≤ ${unitCost(t.target)} · most we’d pay ${unitCost(t.walk)}`:' · no target price yet'}${c&&c.sell?` · we sell at ${unitCost(c.sell)}`:''}</div></div>
+  <div class="qt-acts"><button class="btn sm primary" data-action="qt-add" data-rfq="${esc(r.id)}">${ic('plus',14)} Add a quote</button>${typeof A['ql-new']==='function'?`<button class="btn sm" data-action="ql-new" data-id="${esc(r.id)}">Send the quote form</button>`:''}</div></div>
+  <div class="tbl-wrap"><table class="qt-t"><thead><tr><th>Supplier</th><th class="n">Price each</th><th class="n">MOQ</th><th class="n">Lead time</th><th>Terms</th><th class="n">Shipping</th><th class="n">Delivered cost per part</th><th>vs target</th><th></th></tr></thead><tbody>
+  ${qs.map((x,i)=>{const q=x.q,d=x.d,s=sup(q.supplier);const isNew=qtFresh&&qtFresh.has(q.id);const flash=ui.qtFlash===q.id;
+   return `<tr class="${x===best?'best':''} ${flash?'flash':''}"><td><b>${esc(s.name)}</b> ${x===best?'<span class="chip ok">Best delivered</span>':''}${isNew?' <span class="chip qt-new">NEW</span>':''}<div class="sm muted">${esc(q.channel||'')}${q.contactName?` · ${esc(q.contactName)}`:''} · ${q.date?fds(q.date):''}${q.condition?` · ${esc(q.condition)}`:''}</div></td>
+    <td class="n"><b>${q.unitPrice!=null?unitCost(q.unitPrice):'–'}</b>${q.currency&&q.currency!=='USD'?` <span class="sm">${esc(q.currency)}</span>`:''}${(q.tiers||[]).length?`<div class="sm muted">${q.tiers.slice(0,3).map(z=>`${num(z.qty)}+: ${unitCost(z.price)}`).join(' · ')}</div>`:''}</td>
+    <td class="n">${q.moq?num(q.moq):'–'}${d&&d.units>d.need?`<div class="sm" style="color:#b45309">buy ${num(d.units)}</div>`:''}</td><td class="n">${q.leadDays!=null?q.leadDays+' d':'–'}</td><td>${esc(q.incoterm||'–')}</td>
+    <td class="n">${d?d.shipEst?`<span class="muted" title="Not quoted: using your estimate">~${$f(d.ship)}</span>`:d.ship?$f(d.ship):'incl.':'–'}</td>
+    <td class="n"><b class="qt-landed">${d?unitCost(d.perNeed):'–'}</b>${d&&d.flags.length?`<div class="sm muted" title="${esc(d.flags.join('; '))}">${esc(d.flags[0])}</div>`:''}</td><td>${vs(x)}</td>
+    <td class="qt-r">${typeof qcDots==='function'?qcDots(q):''}${typeof A['qc-open']==='function'?` <button class="btn sm" data-action="qc-open" data-id="${esc(q.id)}">Review</button>`:''}</td></tr>`}).join('')||`<tr><td colspan="9" class="muted">No quotes yet.</td></tr>`}
+  </tbody></table></div>${links.length?`<div class="qt-foot sm muted">Quote form sent to ${links.length} supplier${links.length===1?'':'s'} · ${opened} opened · ${answered} answered${links.length-answered?`: waiting on ${links.filter(l=>!quoted(l)).map(l=>esc(sup(l.supplier).name||l.supplierName)).slice(0,4).join(', ')}`:''}</div>`:''}</section>`}
+/* ---- the page ---- */
+VIEWS.quotes=()=>{if(!qtFresh)qtFresh=new Set(qtNew().map(q=>q.id));const f=String(ui.qtF||'').toLowerCase();
+ const open=(S.srcReqs||[]).filter(r=>!r.demo&&r.status==='Open');const hit=r=>!f||[r.no,r.title,...reqQuotes(r.id).map(q=>sup(q.supplier).name)].join(' ').toLowerCase().includes(f);
+ const withQ=open.filter(r=>reqQuotes(r.id).some(liveQ)&&hit(r)).sort((a,b)=>{const la=Math.max(0,...reqQuotes(a.id).map(q=>qtFresh.has(q.id)?2e9:+new Date(q.date||0))),lb=Math.max(0,...reqQuotes(b.id).map(q=>qtFresh.has(q.id)?2e9:+new Date(q.date||0)));return lb-la});
+ const waiting=open.filter(r=>!reqQuotes(r.id).some(liveQ)&&hit(r));const nNew=qtFresh.size,nForm=[...qtFresh].filter(id=>(byId(S.squotes,id)||{}).channel==='Form').length;
+ const html=`${phead('Quotes','Every supplier quote, side by side, cheapest delivered first.',btn(ic('plus',15)+' Add a quote','qt-add',{},'primary'))}
+  ${nNew?`<div class="qt-banner">${ic('bell',16)} <span><b>${nNew} new quote${nNew===1?'':'s'}</b> since you last looked${nForm?`, ${nForm} from the quote form`:''}. They’re marked NEW below.</span></div>`:''}
+  <div class="toolbar"><input class="qt-filter" id="qt-f" value="${esc(ui.qtF||'')}" placeholder="Filter by RFQ, part or supplier" aria-label="Filter quotes"><span class="grow"></span><span class="sm muted">${withQ.length} RFQ${withQ.length===1?'':'s'} with quotes · ${waiting.length} waiting</span></div>
+  ${withQ.map(qtCard).join('')||`<div class="empty">No quotes yet${f?' for that filter':''}. Use “Add a quote” for one you got in Alibaba chat, or send the quote form from an RFQ.</div>`}
+  ${waiting.length?`<section class="panel"><div class="ph"><h3>Waiting on quotes (${waiting.length})</h3></div><div class="tbl-wrap"><table class="qt-t"><tbody>${waiting.map(r=>{const links=(S.qlinks||[]).filter(l=>l.req===r.id&&!l.revoked);return `<tr><td><a class="link" href="#/sourcing/${encodeURIComponent(r.id)}"><b>${esc(r.no||r.id)}</b></a> ${esc(r.title||'')}<div class="sm muted">${num(r.qty||0)} ${esc(r.unit||'pcs')} · RFQ made ${r.created?fds(r.created):''}${links.length?` · form sent to ${links.length}, ${links.filter(l=>l.opened).length} opened`:' · quote form not sent yet'}</div></td><td class="qt-acts"><button class="btn sm" data-action="qt-add" data-rfq="${esc(r.id)}">Add a quote</button>${typeof A['ql-new']==='function'?`<button class="btn sm" data-action="ql-new" data-id="${esc(r.id)}">Send the quote form</button>`:''}</td></tr>`}).join('')}</tbody></table></div></section>`:''}`;
+ qtMarkSeen();return html};
+document.addEventListener('input',e=>{if(e.target&&e.target.id==='qt-f'){ui.qtF=e.target.value;const pos=e.target.selectionStart;rerender();const n=$('#qt-f');if(n){n.focus();try{n.setSelectionRange(pos,pos)}catch(x){}}}});
+/* leaving the page ends the visit: next time only newer quotes show as NEW */
+window.addEventListener('hashchange',()=>{if(parse().r!=='quotes'){qtFresh=null;ui.qtFlash=null}});
+/* sidebar: Quotes under Today, with a count of new ones */
+try{const g=(typeof NAV!=='undefined'&&NAV.find(x=>x[0]==='Today'))||(typeof NAV!=='undefined'&&NAV[0]);if(g&&!g[1].some(x=>x[0]==='quotes')){const i=g[1].findIndex(x=>x[0]==='sourcing');g[1].splice(i<0?g[1].length:i+1,0,['quotes','Quotes','tag'])}}catch(e){}
+const _navCountsQt=navCounts;navCounts=function(){const c=_navCountsQt();try{c.quotes=parse().r==='quotes'?0:qtNew().length}catch(e){}return c};
+if(typeof TIP_NAV!=='undefined')TIP_NAV.quotes='Every supplier quote side by side. Add one from an Alibaba chat by pasting the message.';
+/* the RFQ page gets an "Add a quote" button too */
+if(VIEWS.sourcing){const _srcQt=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcQt(id);const r=id&&sreq(id);if(!r||typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;const at=t.content.querySelector('.qc-panel .ph')||t.content.querySelector('.px-card .ph');if(at&&!at.querySelector('[data-action=qt-add]'))at.insertAdjacentHTML('beforeend',`<button class="btn sm primary" data-action="qt-add" data-rfq="${esc(r.id)}" style="margin-left:auto">${ic('plus',14)} Add a quote</button>`);return t.innerHTML}}
+/* "+ New" menu */
+try{if(typeof NEW_ITEMS!=='undefined'&&Array.isArray(NEW_ITEMS)&&!NEW_ITEMS.some(x=>x[0]==='qt-add')){const i=NEW_ITEMS.findIndex(x=>x[0]==='sreq-new');NEW_ITEMS.splice(i<0?0:i+1,0,['qt-add','Supplier quote','tag','A price a supplier sent us (paste their message)'])}}catch(e){}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.qt-paste{background:var(--surface-2);border:1px dashed #22b8d6;border-radius:10px;padding:10px 12px;margin:0 0 14px}.qt-paste textarea{width:100%;margin-top:6px;font:inherit;font-size:14px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);box-sizing:border-box}
+.qt-ok{color:#047857;font-weight:600}.qt-filled{background:#ecfdf5!important;border-color:#6ee7b7!important}[data-theme=dark] .qt-filled{background:#052e1a!important}
+.qt-pr{display:flex;gap:6px}.qt-pr input{flex:1;min-width:0}.qt-pr select{width:84px}
+.qt-banner{display:flex;gap:8px;align-items:center;background:#ecfeff;border:1px solid #a5f3fc;color:#155e75;border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:14.5px}[data-theme=dark] .qt-banner{background:#082f39;border-color:#155e75;color:#a5f3fc}
+.qt-filter{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);min-width:280px}
+.qt-card.has-new{box-shadow:0 0 0 2px #22b8d6}.qt-ph{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.qt-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.qt-t{width:100%;border-collapse:collapse;font-size:14px}.qt-t th{text-align:left;font-size:12px;color:var(--ink-3);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}.qt-t th.n,.qt-t td.n{text-align:right}.qt-t td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.qt-t tr.best td{background:rgba(16,185,129,.07)}.qt-t tr.flash td{animation:qtFlash 2s ease-out 1}@keyframes qtFlash{0%{background:#fef9c3}100%{background:transparent}}
+.qt-landed{font-size:15px}.qt-new{background:#22b8d6;color:#fff;font-size:10.5px;padding:0 6px}.qt-r{white-space:nowrap;text-align:right}.qt-foot{padding:8px 14px 12px}
+@media(max-width:760px){.qt-t thead{display:none}.qt-t tr{display:block;border-bottom:1px solid var(--line);padding:6px 0}.qt-t td{display:inline-block;border:0;padding:3px 8px}.qt-t td:first-child{display:block}.qt-filter{min-width:0;flex:1}}
+</style>`);
+
+</script>
 </body>
 </html>
