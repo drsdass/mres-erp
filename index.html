@@ -5283,5 +5283,126 @@ try{const t=localStorage.getItem('mres-theme');if(t)document.documentElement.dat
 window.addEventListener('hashchange',()=>{if(!S)return;closeSide();closeDD();if($('#modal-root').innerHTML&&!$('.pal'))closeModal();render()});
 cloudBoot();
 </script>
+<script>
+/* lookup.js */
+/* ================= Look up: any part, any PO, one box =================
+   #/lookup            one search box ("fan", "W2E200", "PO334969", "SO 20261026", "1024", invoice #)
+   #/lookup/<text>     - a PO / SO / invoice / our purchase-order number → a plain-English card for each match:
+                         who ordered what, how many, price, where it goes, when it's due, how far along it is
+                         (Ordered → On order from supplier → Delivered → Invoiced → Paid), what's late.
+                       - anything else → every part that matches, with open customer orders, quantity still to deliver,
+                         what's late, stock on hand, what's on order from suppliers, RFQs and part requests, and a chart.
+   Also in Ctrl+K search: the first results are "Look up …" and any PO that matches exactly. */
+const lkNorm=s=>String(s??'').toLowerCase();
+const lkComp=s=>String(s??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const lkDig=s=>String(s??'').replace(/\D/g,'');
+const lkItemTxt=sku=>{const it=item(sku)||{};return [sku,it.desc,it.name,it.cat,it.type].filter(Boolean).join(' ')};
+const lkName=sku=>{const it=item(sku)||{};return it.desc||it.name||sku};
+const lkSame=sku=>{const a=lkComp(lkName(sku)),b=lkComp(sku);return a===b||a.includes(b)||b.includes(a)};
+const lkPo=x=>!x?'':/^p\.?\s?o(?![a-z])/i.test(x)?String(x):'PO '+x;
+/* ---- which records does a typed number point at? ---- */
+function lkFindNumber(q){const c=lkComp(q).replace(/^(PO|SO|INV|INVOICE)/,''),d=lkDig(q);if(c.length<3)return{orders:[],pos:[]};
+ const eq=v=>{if(v==null||v==='')return false;const vc=lkComp(v).replace(/^(PO|SO|INV)/,'');return vc===c||(d.length>=4&&lkDig(v)===d&&lkDig(v).length===d.length&&/^\D*\d+\D*$/.test(String(v)))};
+ const orders=(S.orders||[]).filter(o=>{if(o.demo)return false;const why=[['customer PO',o.cpo],['end customer PO',o.endPo],['SO #',o.so],['order',o.id],['invoice #',o.invoice],...String(o.invoice||'').split(/[,\s]+/).map(v=>['invoice #',v])].find(([,v])=>eq(v));if(why){o._lkWhy=why[0];return true}return false});
+ const pos=(S.pos||[]).filter(p=>[p.id,p.vpo,p.ref].some(eq));return{orders,pos}}
+/* ---- which parts match the words? ---- */
+function lkParts(q){const toks=lkNorm(q).split(/[\s,]+/).filter(t=>t.length>=2&&!/^(the|and|for|of|a|an)$/.test(t));if(!toks.length)return[];
+ const skus=[...new Set([...(S.items||[]).map(i=>i.sku),...(S.orders||[]).flatMap(o=>(o.lines||[]).map(l=>l.sku)),...(S.pos||[]).flatMap(p=>(p.lines||[]).map(l=>l.sku))].filter(Boolean))];
+ const sc=skus.map(sku=>{const t=lkNorm(lkItemTxt(sku)),tc=lkComp(t);return{sku,s:toks.filter(k=>t.includes(k)||(k.length>=4&&tc.includes(lkComp(k)))).length}}).filter(x=>x.s>0);
+ const top=Math.max(0,...sc.map(x=>x.s));return sc.filter(x=>x.s===top).map(x=>x.sku)}
+/* ---- one order, in plain English ---- */
+function lkOrderState(o){const l=o.lines[0]||{qty:0,shipped:0};const inv=o.invoice?byId(S.invoices||[],o.invoice):null;const pend=sum(o.lines,x=>rem(x)),qty=sum(o.lines,x=>x.qty),del=sum(o.lines,x=>x.shipped||0);
+ const late=isOpen(o)&&pend>0&&o.expected&&dd(o.expected)<0;const paid=inv&&invStatus(inv)==='Paid';
+ const skus=o.lines.map(x=>x.sku);const sup=(S.pos||[]).filter(p=>p.order===o.id||String(p.forOrders||'').includes(o.so||'@@')).concat((S.pos||[]).filter(p=>p.order!==o.id&&poOpen(p)&&p.lines.some(x=>skus.includes(x.sku)))).filter((p,i,a)=>a.indexOf(p)===i);
+ const mine=sup.filter(p=>p.order===o.id||String(p.forOrders||'').includes(o.so||'@@'));
+ const steps=[['Ordered',true,o.date?fds(o.date):''],['Parts on order',mine.length>0||del>0||sup.length>0,mine[0]?mine[0].id:sup[0]?`${sup[0].id} (${num(sum(sup,p=>sum(p.lines.filter(x=>skus.includes(x.sku)),x=>x.qty-(x.received||0))))} coming)`:''],['Delivered',pend===0&&qty>0,del?`${num(del)} of ${num(qty)}`:''],['Invoiced',!!o.invoice,o.invoice?'#'+o.invoice:''],['Paid',!!paid,paid&&inv.paidOn?fds(inv.paidOn):'']];
+ return{l,inv,pend,qty,del,late,paid,sup,mine,steps}}
+function lkSentence(o,st){const lines=o.lines.map(x=>`${num(x.qty)} × ${lkName(x.sku)}${x.sku&&!lkSame(x.sku)?` (${x.sku})`:''}${x.price?` at ${unitCost(x.price)} each`:''}`).join(' and ');
+ return `${aname(o.acct)} ordered ${lines}${oRev(o)?`, ${$f(oRev(o))} in total`:''}${o.shipTo?`, delivering to ${o.shipTo}`:''}.`}
+function lkWhen(o,st){if(!isOpen(o)||st.pend===0)return st.del?{t:`All ${num(st.qty)} delivered${o.tracking?` · ${o.tracking}`:''}.`,c:'ok'}:{t:'Completed.',c:'ok'};
+ if(!o.expected)return{t:`${num(st.pend)} still to deliver. No expected date set.`,c:'warn'};const d=dd(o.expected);
+ if(d<0)return{t:`${-d} day${d===-1?'':'s'} late. It was expected ${fd(o.expected)}, and ${num(st.pend)} of ${num(st.qty)} still haven’t been delivered.`,c:'alert'};
+ if(d<=7)return{t:`Due ${d===0?'today':d===1?'tomorrow':'in '+d+' days'} (${fd(o.expected)}). ${num(st.pend)} of ${num(st.qty)} still to deliver.`,c:'warn'};
+ return{t:`Due ${fd(o.expected)}, in ${d} days. ${num(st.pend)} of ${num(st.qty)} still to deliver.`,c:'ok'}}
+function lkOrderCard(o){const st=lkOrderState(o),w=lkWhen(o,st);const title=o.cpo?lkPo(o.cpo):o.so?'SO '+o.so:o.id;
+ const rows=[['Customer PO',o.cpo&&lkPo(o.cpo)],['End customer PO',o.endPo],['Our SO #',o.so],['Ordered',o.date&&fd(o.date)],['Expected',o.expected&&fd(o.expected)],['Deliver to',o.shipTo],['Lead time',o.lead],['Ship method',o.shipMethod],['Tracking',o.tracking],['Invoice',o.invoice&&`#${o.invoice}${st.inv?` · ${$f(st.inv.amount)} · ${invStatus(st.inv)}`:''}`],['Supplier PO',(st.mine.length?st.mine:st.sup.filter(poOpen)).map(p=>`${p.id} · ${vend(p.vendor).name} · ${p.status}${p.exp?' · expected '+fds(p.exp):''}`).join('<br>')],['Status in ERP',o.status]].filter(r=>r[1]);
+ const notes=(o.notes||[]).map(n=>typeof n==='string'?n:n.text).filter(Boolean);
+ return `<section class="lk-card ${w.c}"><div class="lk-top"><div><div class="lk-k">${esc(aname(o.acct))} order${o._lkWhy&&o._lkWhy!=='customer PO'?` · found by its ${esc(o._lkWhy)}`:''}</div><h2>${esc(title)}</h2></div><div class="lk-big"><b>${num(st.pend)}</b><span>still to deliver</span></div></div>
+  <p class="lk-say">${esc(lkSentence(o,st))}</p><p class="lk-when ${w.c}">${esc(w.t)}</p>
+  <ol class="lk-steps">${st.steps.map(([n,done,sub])=>`<li class="${done?'done':''}"><i>${done?'✓':''}</i><b>${n}</b><small>${esc(sub||'')}</small></li>`).join('')}</ol>
+  <dl class="lk-dl">${rows.map(([k,v])=>`<dt>${k}</dt><dd>${k==='Supplier PO'?v:esc(v)}</dd>`).join('')}</dl>
+  ${notes.length?`<div class="lk-notes"><b>Notes</b>${notes.slice(-4).map(n=>`<div>${esc(n)}</div>`).join('')}</div>`:''}
+  <div class="lk-acts"><a class="btn primary sm" href="${oHref(o)}">Open the full order</a><button class="btn sm" data-action="lk-copy" data-id="${esc(o.id)}">Copy a summary</button>${o.lines[0]?`<a class="btn sm" href="#/lookup/${encodeURIComponent(o.lines[0].sku)}">All orders for this part</a>`:''}</div></section>`}
+function lkPoCard(p){const qty=sum(p.lines,l=>l.qty),got=sum(p.lines,l=>l.received||0);const late=lateP(p);const o=p.order&&byId(S.orders,p.order);
+ const say=`Our purchase order to ${vend(p.vendor).name}: ${p.lines.map(l=>`${num(l.qty)} × ${lkName(l.sku)}${l.cost?` at ${unitCost(l.cost)}`:''}`).join(', ')}${poTot(p)?`, ${$f(poTot(p))} in total`:''}.`;
+ const when=!poOpen(p)?{t:`${num(got)} of ${num(qty)} received. ${p.status}.`,c:'ok'}:late?{t:`${-dd(p.exp)} days late from ${vend(p.vendor).name}. Expected ${fd(p.exp)}, ${num(qty-got)} still to arrive.`,c:'alert'}:{t:`${p.status}. ${p.exp?`Expected ${fd(p.exp)}. `:''}${num(got)} of ${num(qty)} received.`,c:p.status==='Draft'?'warn':'ok'};
+ return `<section class="lk-card ${when.c}"><div class="lk-top"><div><div class="lk-k">Purchase order to ${esc(vend(p.vendor).name)}</div><h2>${esc(p.id)}</h2></div><div class="lk-big"><b>${num(qty-got)}</b><span>still to arrive</span></div></div>
+  <p class="lk-say">${esc(say)}</p><p class="lk-when ${when.c}">${esc(when.t)}</p>
+  <dl class="lk-dl">${[['Sent',p.date&&fd(p.date)],['Expected',p.exp&&fd(p.exp)],['For',o?`${aname(o.acct)} ${lkPo(o.cpo)||oLabel(o)}`:p.forOrders||'Stock'],['Status',p.status]].filter(r=>r[1]).map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+  <div class="lk-acts"><a class="btn primary sm" href="#/purchasing">Open Purchasing</a>${o?`<a class="btn sm" href="#/lookup/${encodeURIComponent(o.cpo||o.so||o.id)}">See the customer order</a>`:''}</div></section>`}
+A['lk-copy']=d=>{const o=byId(S.orders,d.id);if(!o)return;const st=lkOrderState(o),w=lkWhen(o,st);copyText(`${o.cpo?lkPo(o.cpo):oLabel(o)}${o.so?` (our SO ${o.so})`:''}\n${lkSentence(o,st)}\n${w.t}${o.invoice?`\nInvoice #${o.invoice}${st.inv?`: ${invStatus(st.inv)}`:''}`:''}`);toast('Summary copied')};
+/* ---- everything about a part ---- */
+function lkChart(os){if(!os.length)return '';const max=Math.max(...os.map(o=>sum(o.lines,rem)))||1;
+ return `<div class="lk-chart" role="img" aria-label="Quantity still to deliver on each open order">${os.map(o=>{const p=sum(o.lines,rem),d=o.expected?dd(o.expected):null;const c=d==null?'none':d<0?'late':d<=7?'soon':'ok';
+  return `<a class="lk-bar" href="#/lookup/${encodeURIComponent(o.cpo||o.so||o.id)}"><span class="lk-bl">${esc(o.cpo?lkPo(o.cpo):oLabel(o))}<small>${esc(o.shipTo||aname(o.acct))}</small></span><span class="lk-bt"><span class="${c}" style="width:${Math.max(3,p/max*100).toFixed(1)}%"></span></span><span class="lk-bv"><b>${num(p)}</b> ${d==null?'<small>no date</small>':d<0?`<small class="late">${-d}d late</small>`:`<small>due ${fds(o.expected)}</small>`}</span></a>`}).join('')}
+  <div class="lk-leg"><span><i class="late"></i>Late</span><span><i class="soon"></i>Due within a week</span><span><i class="ok"></i>On time</span><span><i class="none"></i>No date</span></div></div>`}
+function lkPartView(q,skus){const has=o=>o.lines.some(l=>skus.includes(l.sku));const all=(S.orders||[]).filter(o=>!o.demo&&has(o));
+ const open=all.filter(o=>isOpen(o)&&sum(o.lines.filter(l=>skus.includes(l.sku)),rem)>0).sort((a,b)=>String(a.expected||'9')<String(b.expected||'9')?-1:1);const done=all.filter(o=>!open.includes(o)).sort((a,b)=>String(b.date||'')<String(a.date||'')?-1:1);
+ const ln=o=>o.lines.filter(l=>skus.includes(l.sku));const pend=sum(open,o=>sum(ln(o),rem)),val=sum(open,o=>sum(ln(o),l=>rem(l)*(l.price||0)));const late=open.filter(o=>o.expected&&dd(o.expected)<0);
+ const onhand=sum(skus,s=>+(item(s)||{}).onhand||0),onpo=sum(skus,s=>onPO(s));const short=Math.max(0,pend-onhand-onpo);
+ const pos=(S.pos||[]).filter(p=>p.lines.some(l=>skus.includes(l.sku))).sort((a,b)=>String(b.date||'')<String(a.date||'')?-1:1);
+ const words=lkNorm(q).split(/\s+/).filter(t=>t.length>=3);const rq=(S.srcReqs||[]).filter(r=>!r.demo&&(skus.some(s=>lkComp(r.title+' '+(r.partNo||'')).includes(lkComp(s)))||words.length&&words.every(w=>lkNorm(r.title).includes(w))));
+ const fq=(typeof frs==='function'?frs():[]).filter(r=>!r.demo&&!rq.some(x=>x.id===r.rfq)&&(skus.some(s=>lkComp((r.what||'')+' '+(r.partNo||'')).includes(lkComp(s)))||words.length&&words.every(w=>lkNorm(r.what).includes(w))));
+ const dk={};open.forEach(o=>{const k=lkComp(o.cpo)+'|'+ln(o).map(l=>l.sku+'x'+l.qty).join();if(o.cpo)(dk[k]=dk[k]||[]).push(o)});const dupes=Object.values(dk).filter(x=>x.length>1).map(x=>x[0].cpo);
+ const tile=(n,l,c='')=>`<div class="lk-tile ${c}"><b>${n}</b><span>${l}</span></div>`;
+ const orow=o=>{const p=sum(ln(o),rem),q2=sum(ln(o),l=>l.qty),d=o.expected?dd(o.expected):null;return `<tr class="click" data-href="#/lookup/${encodeURIComponent(o.cpo||o.so||o.id)}"><td><b>${esc(o.cpo?lkPo(o.cpo):oLabel(o))}</b>${o.so?`<div class="sm muted">SO ${esc(o.so)}</div>`:''}</td><td>${esc(aname(o.acct))}<div class="sm muted">${esc(o.shipTo||'')}</div></td><td class="nowrap">${o.date?fds(o.date):'–'}</td><td class="n">${num(q2)}</td><td class="n">${num(q2-p)}</td><td class="n"><b>${num(p)}</b></td><td class="nowrap">${o.expected?fds(o.expected):'–'}${d!=null&&d<0&&p?`<div class="sm" style="color:var(--alert)">${-d} d late</div>`:''}</td><td>${o.invoice?'#'+esc(o.invoice):''}</td></tr>`};
+ return `<div class="lk-head"><div><div class="lk-k">Part lookup</div><h1>${esc(skus.length===1?lkName(skus[0]):`“${q}”`)}</h1><div class="lk-skus">${skus.map(s=>`<a class="chip plain" href="#/lookup/${encodeURIComponent(s)}">${esc(lkSame(s)?lkName(s):s+' · '+lkName(s))}</a>`).join(' ')}</div></div></div>
+  <div class="lk-tiles">${tile(num(open.length),'open customer order'+(open.length===1?'':'s'))}${tile(num(pend),'still to deliver')}${tile($f(val),'value still to deliver')}${tile(num(late.length),'late order'+(late.length===1?'':'s'),late.length?'alert':'')}${tile(num(onhand),'on hand')}${tile(num(onpo),'on order from suppliers')}${tile(short?num(short):'0',short?'short: not on hand or on order':'covered',short?'alert':'ok')}</div>
+  ${dupes.length?`<div class="lk-dupe">${ic('alert',16)} <span><b>${dupes.map(d=>esc(lkPo(d))).join(', ')}</b> ${dupes.length===1?'is':'are'} listed more than once with the same part and quantity, so the totals may be counted twice. Open one of them in Sales orders and delete the extra copy.</span></div>`:''}
+  ${open.length?`<section class="panel"><div class="ph"><h3>Open orders: still to deliver</h3></div><div style="padding:12px 16px">${lkChart(open)}</div></section>`:''}
+  <section class="panel"><div class="ph"><h3>Open customer orders (${open.length})</h3><span class="sm muted">click a row to see that PO</span></div>${table('lk-open',['PO','Customer and site','Ordered','#Qty','#Delivered','#Still to deliver','Expected','Invoice'],open.map(orow),'No open orders for this part.')}</section>
+  ${pos.length?`<section class="panel"><div class="ph"><h3>Our purchase orders to suppliers (${pos.length})</h3></div>${table('lk-pos',['PO','Supplier','Sent','#Qty','#Received','Expected','Status'],pos.map(p=>{const L=p.lines.filter(l=>skus.includes(l.sku));return `<tr class="click" data-href="#/lookup/${encodeURIComponent(p.id)}"><td><b>${esc(p.id)}</b></td><td>${esc(vend(p.vendor).name)}</td><td>${p.date?fds(p.date):'–'}</td><td class="n">${num(sum(L,l=>l.qty))}</td><td class="n">${num(sum(L,l=>l.received||0))}</td><td>${p.exp?fds(p.exp):'–'}${lateP(p)?`<div class="sm" style="color:var(--alert)">${-dd(p.exp)} d late</div>`:''}</td><td>${chip(lateP(p)?'Late':p.status)}</td></tr>`}))}</section>`:''}
+  ${rq.length||fq.length?`<section class="panel"><div class="ph"><h3>Sourcing for this part</h3></div><div style="padding:8px 16px 14px">${rq.map(r=>`<div class="lk-li"><a class="link" href="#/sourcing/${encodeURIComponent(r.id)}">${esc(r.no||r.id)}</a> ${esc(r.title)} · ${num(r.qty)} · ${chip(r.status)}</div>`).join('')}${fq.map(r=>`<div class="lk-li"><a class="link" href="#/requests/${encodeURIComponent(r.id)}">${esc(r.id)}</a> ${esc(r.what)} × ${num(r.qty)} · ${chip(r.status)}</div>`).join('')}</div></section>`:''}
+  ${done.length?`<details class="panel lk-done"><summary class="ph"><h3>Delivered and completed (${done.length})</h3></summary>${table('lk-done',['PO','Customer and site','Ordered','#Qty','#Delivered','#Still to deliver','Expected','Invoice'],done.map(orow))}</details>`:''}`}
+/* ---- the page ---- */
+VIEWS.lookup=id=>{const q=String(id||'').trim();
+ const box=`<form class="lk-search" id="lkf" role="search"><input id="lkq" value="${esc(q)}" placeholder="A part (fan, coolant pump, W2E200) or any number (PO334969, SO 20261026, invoice 1024)" aria-label="Look up a part or PO" autocomplete="off"><button class="btn primary" type="submit">${ic('search',16)} Look up</button></form>`;
+ if(!q){const open=(S.orders||[]).filter(o=>!o.demo&&isOpen(o));const by={};open.forEach(o=>o.lines.forEach(l=>{if(rem(l)>0){const k=l.sku;by[k]=by[k]||{sku:k,n:0,q:0,late:0};by[k].n++;by[k].q+=rem(l);if(o.expected&&dd(o.expected)<0)by[k].late++}}));const top=Object.values(by).sort((a,b)=>b.q-a.q).slice(0,12);
+  return `${phead('Look up','Type a part or any PO, SO or invoice number. You get the whole story on one page.')}${box}
+   ${top.length?`<h3 class="lk-h3">Parts on open orders</h3><div class="lk-parts">${top.map(x=>`<a class="lk-pc ${x.late?'late':''}" href="#/lookup/${encodeURIComponent(x.sku)}"><b>${esc(lkName(x.sku))}</b>${lkSame(x.sku)?'':`<small>${esc(x.sku)}</small>`}<span><b>${num(x.q)}</b> to deliver on ${x.n} order${x.n===1?'':'s'}${x.late?` · <em>${x.late} late</em>`:''}</span></a>`).join('')}</div>`:''}`}
+ const f=lkFindNumber(q);let b='';
+ if(f.orders.length||f.pos.length)b=`<div class="lk-k" style="margin:4px 0 10px">${f.orders.length+f.pos.length} match${f.orders.length+f.pos.length===1?'':'es'} for “${esc(q)}”</div>${f.orders.map(lkOrderCard).join('')}${f.pos.map(lkPoCard).join('')}`;
+ else{const skus=lkParts(q);b=skus.length?lkPartView(q,skus):`<div class="empty">Nothing matches “${esc(q)}”. Try part of the name (“fan”), the part number, or the PO number as it’s written on the order.</div>`}
+ return `<a class="crumb" href="#/lookup">${ic('back',16)} Look up</a>${box}${b}`};
+document.addEventListener('submit',e=>{if(e.target&&e.target.id==='lkf'){e.preventDefault();const v=($('#lkq')||{}).value||'';location.hash='#/lookup/'+encodeURIComponent(v.trim())}},true);
+/* Ctrl+K: "Look up …" first, and exact PO matches */
+if(typeof palRun==='function'){const _palLk=palRun;palRun=function(q){_palLk(q);try{const t=String(q||'').trim();if(t.length<2)return;const f=lkFindNumber(t);
+ const extra=[...f.orders.slice(0,4).map(o=>({g:'PO lookup',t:`${o.cpo?lkPo(o.cpo):oLabel(o)} · ${aname(o.acct)}`,s:`${o.lines.map(l=>num(l.qty)+' × '+lkName(l.sku)).join(', ')} · ${lkWhen(o,lkOrderState(o)).t.split('.')[0]}`,k:t,go:()=>{location.hash='#/lookup/'+encodeURIComponent(t)}})),
+  ...f.pos.slice(0,2).map(p=>({g:'PO lookup',t:`${p.id} · ${vend(p.vendor).name}`,s:'Our purchase order',k:t,go:()=>{location.hash='#/lookup/'+encodeURIComponent(p.id)}})),
+  {g:'Look up',t:`Look up “${t}”`,s:'every order, PO and RFQ for it, on one page',k:t,go:()=>{location.hash='#/lookup/'+encodeURIComponent(t)}}];
+ palRes=[...extra,...palRes].slice(0,40);palIdx=0;palDraw(q)}catch(e){}}}
+/* in the sidebar under Today */
+try{const g=(typeof NAV!=='undefined'&&NAV.find(x=>x[0]==='Today'))||(typeof NAV!=='undefined'&&NAV[0]);if(g&&!g[1].some(x=>x[0]==='lookup'))g[1].push(['lookup','Look up','search'])}catch(e){}
+if(typeof TIP_NAV!=='undefined')TIP_NAV.lookup='Any part or PO number: every order, what’s late, what’s on order.';
+document.head.insertAdjacentHTML('beforeend',`<style>
+.lk-search{display:flex;gap:8px;margin:0 0 18px;max-width:760px}.lk-search input{flex:1;font:inherit;font-size:16px;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)}.lk-search input:focus{outline:2px solid #22b8d6;outline-offset:1px}
+.lk-k{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:700}.lk-h3{margin:8px 0 10px;font-size:15px}
+.lk-parts{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}.lk-pc{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:inherit;text-decoration:none}.lk-pc:hover{border-color:#22b8d6}.lk-pc small{color:var(--ink-3)}.lk-pc span{margin-top:6px;font-size:13.5px}.lk-pc em{color:var(--alert);font-style:normal;font-weight:700}.lk-pc.late{border-left:4px solid var(--alert)}
+.lk-card{background:var(--surface);border:1px solid var(--line);border-left:5px solid #10b981;border-radius:12px;padding:16px 18px;margin:0 0 16px;max-width:900px}.lk-card.alert{border-left-color:var(--alert,#dc2626)}.lk-card.warn{border-left-color:#f59e0b}
+.lk-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.lk-top h2{margin:2px 0 0;font-size:24px}.lk-big{text-align:right}.lk-big b{display:block;font-size:30px;line-height:1}.lk-big span{font-size:12px;color:var(--ink-3)}
+.lk-say{font-size:16px;margin:12px 0 4px}.lk-when{margin:0 0 12px;font-weight:600}.lk-when.alert{color:var(--alert,#dc2626)}.lk-when.warn{color:#b45309}.lk-when.ok{color:#047857}
+.lk-steps{display:flex;list-style:none;padding:0;margin:0 0 14px;gap:0}.lk-steps li{flex:1;position:relative;text-align:center;font-size:12.5px;color:var(--ink-3)}.lk-steps li::before{content:'';position:absolute;top:12px;left:-50%;width:100%;height:3px;background:var(--line)}.lk-steps li:first-child::before{display:none}.lk-steps li.done::before{background:#10b981}
+.lk-steps i{position:relative;z-index:1;display:inline-flex;width:26px;height:26px;border-radius:50%;border:2px solid var(--line);background:var(--surface);align-items:center;justify-content:center;font-style:normal;font-weight:800;color:#fff}.lk-steps li.done i{background:#10b981;border-color:#10b981}.lk-steps b{display:block;color:var(--ink);margin-top:4px;font-size:12.5px}.lk-steps small{display:block}
+.lk-dl{display:grid;grid-template-columns:150px 1fr;gap:4px 14px;margin:0 0 10px;font-size:14px}.lk-dl dt{color:var(--ink-3)}.lk-dl dd{margin:0}.lk-notes{font-size:13.5px;background:var(--surface-2);border-radius:8px;padding:8px 10px;margin-bottom:10px}.lk-notes div{margin-top:2px}.lk-acts{display:flex;gap:8px;flex-wrap:wrap}
+.lk-head h1{margin:2px 0 6px}.lk-skus{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.lk-skus a{text-decoration:none}
+.lk-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:0 0 16px}.lk-tile{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}.lk-tile b{display:block;font-size:24px;line-height:1.1}.lk-tile span{font-size:12.5px;color:var(--ink-3)}.lk-tile.alert b{color:var(--alert,#dc2626)}.lk-tile.ok b{color:#047857}
+.lk-chart{display:flex;flex-direction:column;gap:6px}.lk-bar{display:grid;grid-template-columns:190px 1fr 130px;gap:10px;align-items:center;color:inherit;text-decoration:none;padding:2px 0}.lk-bar:hover .lk-bl{color:#0e7490}.lk-bl{font-weight:600;font-size:13.5px;line-height:1.2}.lk-bl small{display:block;font-weight:400;color:var(--ink-3);font-size:12px}
+.lk-bt{height:16px;background:var(--surface-2);border-radius:5px;overflow:hidden}.lk-bt span{display:block;height:100%;border-radius:5px}.lk-bv{font-size:13.5px}.lk-bv small{color:var(--ink-3)}.lk-bv small.late{color:var(--alert,#dc2626);font-weight:700}
+.lk-bt .late,.lk-leg .late{background:#ef4444}.lk-bt .soon,.lk-leg .soon{background:#f59e0b}.lk-bt .ok,.lk-leg .ok{background:#10b981}.lk-bt .none,.lk-leg .none{background:#94a3b8}.lk-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-3);margin-top:4px}.lk-leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.lk-li{padding:4px 0;font-size:14px}.lk-dupe{display:flex;gap:8px;align-items:flex-start;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:10px;padding:10px 12px;margin:0 0 14px;font-size:14px}[data-theme=dark] .lk-dupe{background:#3a2a05;border-color:#78350f;color:#fde68a}.lk-done summary{cursor:pointer;list-style:none}.lk-done summary::-webkit-details-marker{display:none}
+@media(max-width:760px){.lk-bar{grid-template-columns:1fr 90px}.lk-bt{grid-column:1/-1;order:3}.lk-dl{grid-template-columns:1fr}.lk-dl dt{margin-top:6px}.lk-steps small{display:none}.lk-search{flex-direction:column}}
+</style>`);
+
+</script>
 </body>
 </html>
