@@ -5526,5 +5526,56 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 </style>`);
 
 </script>
+<script>
+/* rfqclose.js */
+/* ================= Closing an RFQ closes everyone who answered it =================
+   When an RFQ is closed (the "Close RFQ" link on the RFQ page) or awarded, everything that came in for it is closed too:
+   - quotes still open → "Not selected" (the awarded one stays Awarded), so they leave All quotes, Quotes and the Triage counts
+   - supplier messages for it → closed, hidden from Sourcing → Messages (a "Show closed" link brings them back)
+   - supplier emails filed to it → Closed in the inbox's Alibaba/suppliers lane (unless that supplier has another open RFQ)
+   - follow-up reminders for it → done; quote form links stop working (the form already refuses closed RFQs)
+   RFQs that were already closed or awarded before this update get the same clean-up automatically, once.
+   "Reopen" on a closed RFQ puts the RFQ back to Open (the quotes can be restored from the quote list). */
+function rcOtherOpen(supId,rid){return [...(S.smsgs||[]),...(S.squotes||[])].some(x=>x.supplier===supId&&x.req&&x.req!==rid&&(sreq(x.req)||{}).status==='Open')}
+function rcClose(r){const n={q:0,m:0,e:0,t:0};
+ (S.squotes||[]).filter(q=>q.req===r.id&&liveQ(q)&&q.status!=='Awarded').forEach(q=>{q.closedFrom=q.status;q.status='Not selected';q.closedWith=r.id;n.q++});
+ const ems=new Set();(S.smsgs||[]).filter(m=>m.req===r.id).forEach(m=>{if(!m.closed){m.closed=true;n.m++}if(m.emailId)ems.add(m.emailId)});
+ (S.emails||[]).forEach(e=>{if((e.links||[]).some(l=>l.t==='rfq'&&l.id===r.id))ems.add(e.id)});
+ ems.forEach(id=>{const e=byId(S.emails||[],id);if(!e||e.status==='Closed')return;const sid=e.supplier||((S.smsgs||[]).find(m=>m.emailId===id)||{}).supplier;if(sid&&rcOtherOpen(sid,r.id))return;e.status='Closed';e.read=true;e.sorted=true;e.closedWith=r.id;n.e++});
+ (S.stasks||[]).filter(t=>t.req===r.id&&!t.done).forEach(t=>{t.done=true;t.doneOn=TODAY;n.t++});
+ (S.qlinks||[]).filter(l=>l.req===r.id&&!l.revoked).forEach(l=>{l.revoked=new Date().toISOString()});
+ r.respClosed=TODAY;return n}
+const rcTxt=n=>[n.q&&`${n.q} quote${n.q===1?'':'s'}`,n.m&&`${n.m} message${n.m===1?'':'s'}`,n.e&&`${n.e} email${n.e===1?'':'s'}`,n.t&&`${n.t} follow-up${n.t===1?'':'s'}`].filter(Boolean).join(', ');
+/* closed or awarded RFQs whose responses are still open get cleaned up (covers awarding, and RFQs closed before this update) */
+let rcSig='';
+function rcSweep(){const sig=(S.srcReqs||[]).map(r=>r.id+r.status+(r.respClosed||'')).join();if(sig===rcSig)return;rcSig=sig;let k=0;const all={q:0,m:0,e:0,t:0};
+ (S.srcReqs||[]).filter(r=>r.status&&r.status!=='Open'&&!r.respClosed).forEach(r=>{const n=rcClose(r);Object.keys(all).forEach(x=>all[x]+=n[x]);k++});
+ if(k){const t=rcTxt(all);if(t)log(`Closed the responses on ${k} closed RFQ${k===1?'':'s'}: ${t}`);save()}}
+A['rc-close']=d=>{const r=sreq(d.id);if(!r)return;const live=reqQuotes(r.id).filter(q=>liveQ(q)&&q.status!=='Awarded').length,msgs=(S.smsgs||[]).filter(m=>m.req===r.id&&!m.closed).length;
+ if(!(typeof confirmBox==='function'?confirmBox:confirm)(`Close ${r.no||r.title}?\n\nThis also closes ${live} open quote${live===1?'':'s'} and ${msgs} supplier message${msgs===1?'':'s'} for it, so they leave the Sourcing lists. You can reopen it later.`))return;
+ const was=r.status;r.status='Closed';r.closedOn=TODAY;r.closedBy=USER.name;const n=rcClose(r);
+ const f=typeof frs==='function'&&frs().find(x=>x.rfq===r.id);
+ log(`${USER.name} closed ${r.no||r.title}${rcTxt(n)?` and its responses: ${rcTxt(n)}`:''}`,[{f:'RFQ',from:was,to:'Closed'}]);save();toast(`${r.no||'RFQ'} closed${rcTxt(n)?`, with ${rcTxt(n)}`:''}.`);rerender()};
+A['rc-reopen']=d=>{const r=sreq(d.id);if(!r)return;const was=r.status;r.status='Open';delete r.respClosed;delete r.closedOn;delete r.closedBy;
+ (S.smsgs||[]).filter(m=>m.req===r.id).forEach(m=>delete m.closed);(S.squotes||[]).filter(q=>q.closedWith===r.id).forEach(q=>{q.status=q.closedFrom||'New';delete q.closedWith;delete q.closedFrom});
+ log(`${USER.name} reopened ${r.no||r.title}`,[{f:'RFQ',from:was,to:'Open'}]);save();toast(`${r.no||'RFQ'} reopened, with its quotes.`);rerender()};
+A['rc-showclosed']=()=>{ui.rcShow=!ui.rcShow;rerender()};
+const _srcRc=VIEWS.sourcing;VIEWS.sourcing=id=>{try{rcSweep()}catch(e){}const h=_srcRc(id);if(typeof document==='undefined')return h;const t=document.createElement('template');t.innerHTML=h;
+ const r=id&&sreq(id);
+ if(r){const head=t.content.querySelector('.phead');if(head){if(r.status==='Open'){const sub=head.querySelector('p, .muted')||head.firstElementChild;if(sub&&!head.querySelector('[data-action=rc-close]'))sub.insertAdjacentHTML('beforeend',` <button type="button" class="link rc-link" data-action="rc-close" data-id="${esc(r.id)}">Close RFQ</button>`)}
+   else head.insertAdjacentHTML('afterend',`<div class="rc-closed">${ic('check',16)} <span><b>${esc(r.status)}</b>${r.closedOn?` ${fds(r.closedOn)}`:''}${r.closedBy?` by ${esc(r.closedBy)}`:''}. Everyone who answered it is closed too.</span> <button type="button" class="link" data-action="rc-reopen" data-id="${esc(r.id)}">Reopen</button></div>`)}
+  return t.innerHTML}
+ /* Messages tab: hide messages for closed RFQs */
+ const rows=[...t.content.querySelectorAll('tr[data-pk^="sm:"]')];if(rows.length){let hid=0;rows.forEach(tr=>{const m=byId(S.smsgs||[],tr.dataset.pk.slice(3));const rq=m&&m.req&&sreq(m.req);if(m&&(m.closed||(rq&&rq.status!=='Open'))){if(ui.rcShow)tr.classList.add('rc-dim');else{tr.remove();hid++}}});
+  const tb=t.content.querySelector('.toolbar');const n=hid||rows.filter(tr=>tr.classList.contains('rc-dim')).length;if(tb&&n)tb.insertAdjacentHTML('beforeend',`<span class="grow"></span><button type="button" class="link sm" data-action="rc-showclosed">${ui.rcShow?'Hide':'Show'} ${n} from closed RFQs</button>`)}
+ return t.innerHTML};
+try{rcSweep()}catch(e){}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.rc-link{font-size:13px;margin-left:8px;color:var(--ink-3)}.rc-link:hover{color:var(--alert,#dc2626)}
+.rc-closed{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f1f5f9;border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:14px}[data-theme=dark] .rc-closed{background:#1e293b}
+tr.rc-dim td{opacity:.5}
+</style>`);
+
+</script>
 </body>
 </html>
