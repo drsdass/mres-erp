@@ -5577,5 +5577,56 @@ tr.rc-dim td{opacity:.5}
 </style>`);
 
 </script>
+<script>
+/* outlookreplies.js */
+/* ================= Replies sent from Outlook show up in the ERP =================
+   Microsoft 365 sends the ERP a copy of every email sent from info@, sourcing@ and engineering@ (a mail-flow rule, see setup).
+   Those copies arrive as "emails from us". This module files each one into the conversation it answers:
+   - same subject (ignoring Re:/Fw:/回复:) and sent to the person who wrote to us → added to that thread as our reply,
+     with who sent it and "from Outlook", and the conversation moves to "Waiting on customer"
+   - no matching conversation (we emailed someone first) → kept as its own conversation, shown as sent by us
+   - the quoted history under the reply ("From: … Sent: …", "On … wrote:") is trimmed off
+   Inbox rows then say "Replied · Camden · 2 h" when our team answered last, wherever they answered from. */
+const OR_OURS=/@massrenewable\.com\s*>?\s*$/i;
+const orAddr=s=>{const m=String(s||'').match(/[^\s<>"',;]+@[^\s<>"',;]+/);return m?m[0].toLowerCase():''};
+const orAddrs=v=>[].concat(v||[]).flatMap(x=>String(x||'').split(/[,;]/)).map(orAddr).filter(Boolean);
+const orSubj=s=>String(s||'').replace(/^\s*((re|fw|fwd|aw|wg|sv|antw|回复|答复|转发)\s*(\[\d+\])?\s*[:：]\s*|\[[^\]]{1,40}\]\s*)+/gi,'').replace(/\s+/g,' ').trim().toLowerCase();
+function orTrim(body){const lines=String(body||'').replace(/\r/g,'').split('\n');const cut=lines.findIndex((l,i)=>i>0&&(/^\s*-{2,}\s*original message\s*-{2,}/i.test(l)||/^\s*_{5,}\s*$/.test(l)||/^\s*On .{5,200}wrote:\s*$/i.test(l)||(/^\s*From:\s.+/i.test(l)&&/^\s*(Sent|Date):\s/i.test(lines[i+1]||''))||/^\s*>/.test(l)&&/^\s*>/.test(lines[i+1]||'')));
+ return (cut>0?lines.slice(0,cut):lines).join('\n').replace(/\n{3,}/g,'\n\n').trim()}
+function orWho(m){const a=orAddr(m.from);const mem=(typeof MEMBERS!=='undefined'&&Array.isArray(MEMBERS)?MEMBERS:[]).find(x=>String(x.email||'').toLowerCase()===a);
+ if(mem)return mem.name||mem.email;const n=String(m.fromName||'').trim();if(n&&!/^(info|sourcing|engineering|mass renewable.*)$/i.test(n)&&!/@/.test(n))return n;return a?a.split('@')[0]+'@':'Team'}
+let orSig='';
+function orMerge(){if(!Array.isArray(S.emails))return 0;const sig=S.emails.length+'|'+S.emails.filter(m=>OR_OURS.test(orAddr(m.from))&&!m.orDone).length;if(sig===orSig)return 0;orSig=sig;
+ const copies=S.emails.filter(m=>!m.demo&&!m.orDone&&OR_OURS.test(orAddr(m.from))&&(m.thread||[]).length);if(!copies.length)return 0;
+ const drop=new Set();let merged=0,kept=0;
+ copies.forEach(c=>{const to=orAddrs([c.to,c.cc,...(c.thread||[]).flatMap(x=>[x.to,x.cc])]).filter(a=>!OR_OURS.test(a));const key=orSubj(c.subject);const last=c.thread[c.thread.length-1]||{};const t=last.t||c.received||new Date().toISOString();
+  const body=orTrim(last.body||last.text||c.body||'');let who=orWho(c);
+  if(/@$/.test(who)){/* shared mailbox: take the name from the sign-off */const tail=body.split('\n').slice(-5).join(' ');const names=[...new Set([...(typeof TEAM!=='undefined'?TEAM:[]),...((typeof MEMBERS!=='undefined'&&Array.isArray(MEMBERS))?MEMBERS.map(x=>x.name):[])].filter(Boolean))];const hit=names.find(n=>new RegExp('\\b'+String(n).split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g,'')+'\\b','i').test(tail));if(hit)who=hit;else who=who.replace(/@$/,'@ mailbox')}
+  const cands=S.emails.filter(o=>o!==c&&!drop.has(o.id)&&!OR_OURS.test(orAddr(o.from))&&key&&orSubj(o.subject)===key&&(to.includes(orAddr(o.from))||(o.thread||[]).some(x=>to.includes(orAddr(x.from)))||(to.length===0)));
+  const o=cands.sort((a,b)=>String((b.thread[b.thread.length-1]||{}).t||b.received||'')<String((a.thread[a.thread.length-1]||{}).t||a.received||'')?-1:1)[0];
+  if(o){const dup=(o.thread||[]).some(x=>x.dir==='out'&&Math.abs(Date.parse(x.t||0)-Date.parse(t))<120000&&String(x.body||'').slice(0,60)===body.slice(0,60));
+   if(!dup){o.thread.push({dir:'out',by:who,t,body:body||'(reply sent from Outlook)',outlook:true,from:orAddr(c.from),to:to.join(', ')});o.thread.sort((a,b)=>String(a.t||'')<String(b.t||'')?-1:1);
+    if(o.status!=='Closed')o.status='Waiting on customer';if(!o.owner&&who&&!/@$/.test(who))o.owner=who;o.read=true}
+   drop.add(c.id);merged++}
+  else{/* we wrote first: show it as a conversation with the person we wrote to */
+   const first=to[0]||'';c.orDone=true;c.sentByUs=true;c.thread=c.thread.map((x,i)=>i===c.thread.length-1?{...x,dir:'out',by:who,body,outlook:true,from:orAddr(c.from),to:to.join(', ')}:x);
+   if(first){c.ourFrom=orAddr(c.from);c.from=first;c.fromName=c.toName||first}c.status=c.status==='Closed'?'Closed':'Waiting on customer';c.read=true;kept++}});
+ if(drop.size)S.emails=S.emails.filter(m=>!drop.has(m.id));
+ if(merged||kept){log(`Filed ${merged} reply${merged===1?'':'ies'} sent from Outlook into ${merged===1?'its conversation':'their conversations'}${kept?`, and ${kept} new email${kept===1?'':'s'} we sent first`:''}`);save();return merged+kept}return 0}
+/* inbox rows: who on our team answered last */
+const _renderOr=render;render=function(k){_renderOr(k);try{if(parse().r!=='inbox')return;const v=$('#view');if(!v)return;
+ v.querySelectorAll('.ilist a.im').forEach(a=>{if(a.dataset.or)return;a.dataset.or='1';const m=byId(S.emails,(a.getAttribute('href')||'').split('/').pop());if(!m||!(m.thread||[]).length)return;const last=m.thread[m.thread.length-1];if(last.dir!=='out')return;
+  const r1=a.querySelector('.r1');const who=last.by||'us';const h=typeof hrsTxt==='function'?hrsTxt((Date.now()-new Date(last.t))/36e5):'';
+  (a.querySelector('.sn-who')||r1).insertAdjacentHTML('afterend',`<div class="or-rep">↩ Replied · ${esc(who)}${last.outlook?' (Outlook)':''}${h?` · ${esc(h)} ago`:''}</div>`)});
+ /* thread view: label replies sent from Outlook */
+ v.querySelectorAll('.msg.out, .bubble.out, [data-dir="out"]').forEach(el=>{if(el.dataset.or)return;el.dataset.or='1'});
+ }catch(e){}};
+function orTick(){try{if(orMerge()&&typeof rerender==='function')rerender()}catch(e){}}
+setTimeout(orTick,2500);setInterval(orTick,20000);
+document.head.insertAdjacentHTML('beforeend',`<style>
+.or-rep{font-size:12px;color:#047857;font-weight:600;margin-top:1px}[data-theme=dark] .or-rep{color:#6ee7b7}
+</style>`);
+
+</script>
 </body>
 </html>
