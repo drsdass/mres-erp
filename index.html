@@ -5628,5 +5628,185 @@ document.head.insertAdjacentHTML('beforeend',`<style>
 </style>`);
 
 </script>
+<script>/* flow.js */
+/* ================= Orders: the whole job on one page, start to finish =================
+   The flow:  1 Estimate → 2 Customer PO → 3 Sales order → 4 Get the parts (stock, local vendor PO, or Alibaba RFQ)
+              → 5 Ship with packing slip + invoice → 6 Paid.
+   #/flow   one tab per step, each job shows where it is and the ONE next thing to do, with the button for it.
+   #/sent   everything we've sent out, in one list: estimates, RFQs, purchase orders, packing slips, invoices,
+            with what's still open (not accepted, not received, not paid) and the money on each.
+   New here: invoice PDF and purchase-order PDF on the letterhead, emailed from the ERP; "Alibaba RFQ" for one order line;
+   a simpler sidebar (the flow first, everything else under More). Existing pieces are reused: estimate PDF/email,
+   Won → sales order, draft POs for missing parts, Ship (packing slip), Invoice, Record payment. */
+const FL_ADDR=['1830 S Alma School Rd, Ste 134','Mesa, AZ 85210'];
+/* ---------- where is an order? ---------- */
+const flPo=c=>c?(/^p\.?\s?o(?![a-z])/i.test(c)?c:'PO '+c):'';
+const flDesc=sku=>{const it=item(sku)||{};const d=String(it.desc||it.name||'').trim();return d&&d.toLowerCase()!==String(sku).toLowerCase()?d:''};
+const flInv=o=>o.invoice?byId(S.invoices||[],o.invoice):null;
+let flA=null,flAt=0;
+function flAlloc(){if(flA&&Date.now()-flAt<400)return flA;const left={},m={};(S.items||[]).forEach(i=>left[i.sku]=Math.max(0,+i.onhand||0));
+ (S.orders||[]).filter(o=>!o.demo&&isOpen(o)&&!o.invoice).sort((a,b)=>String(a.expected||a.date||'9')<String(b.expected||b.date||'9')?-1:1).forEach(o=>o.lines.forEach((l,i)=>{const r=rem(l);const g=Math.min(r,left[l.sku]||0);left[l.sku]=(left[l.sku]||0)-g;m[o.id+'|'+i]=g}));
+ flA=m;flAt=Date.now();return m}
+function flLine(o,l){const it=item(l.sku)||{};const need=rem(l);if(need<=0)return{k:'shipped',need};
+ const al=flAlloc()[o.id+'|'+o.lines.indexOf(l)];const on=al!=null?al:Math.max(0,+it.onhand||0);if(on>=need)return{k:'stock',need,on};
+ const pos=(S.pos||[]).filter(p=>poOpen(p)&&p.lines.some(x=>x.sku===l.sku&&(x.qty-(x.received||0))>0));
+ const rfq=(S.srcReqs||[]).find(r=>r.status==='Open'&&(r.order===o.id||r.fromOrder===o.id)&&(r.sku===l.sku||!r.sku));
+ if(pos.length)return{k:'po',need,on,pos};if(rfq)return{k:'rfq',need,on,rfq};return{k:'buy',need,on}}
+function flStage(o){const inv=flInv(o);if(o.status==='Completed'||(inv&&invStatus(inv)==='Paid'))return'done';if(inv)return'pay';
+ const L=o.lines.map(l=>flLine(o,l));if(L.every(x=>x.k==='shipped'))return'ready';if(L.every(x=>x.k==='shipped'||x.k==='stock'))return'ready';
+ if(L.some(x=>x.k==='buy'))return'need';return'coming'}
+const FL_TABS=[['est','1 · Estimates','Waiting for the customer’s PO'],['need','2 · Get the parts','Order is in, parts not bought yet'],['coming','3 · Parts coming','On a PO or an RFQ'],['ready','4 · Ship & invoice','Parts in stock: ship it'],['pay','5 · Waiting for payment','Invoiced, not paid'],['done','6 · Done','Paid']];
+const flEst=()=>(S.quotes||[]).filter(q=>!q.demo&&['Draft','Sent'].includes(q.status)&&!q.so);
+const flOrders=()=>(S.orders||[]).filter(o=>!o.demo);
+/* ---------- the page ---------- */
+VIEWS.flow=()=>{const os=flOrders();const by={est:[],need:[],coming:[],ready:[],pay:[],done:[]};os.forEach(o=>by[flStage(o)].push(o));
+ by.done=by.done.filter(o=>{const i=flInv(o);const d=(i&&i.paidOn)||o.dates&&o.dates.Completed||o.date;return !d||dd(d)>-60});
+ const est=flEst();const cnt={est:est.length,...Object.fromEntries(Object.entries(by).filter(([k])=>k!=='est').map(([k,v])=>[k,v.length]))};
+ const val={est:sum(est,qTot),need:sum(by.need,oRev),coming:sum(by.coming,oRev),ready:sum(by.ready,oRev),pay:sum(by.pay,o=>{const i=flInv(o);return i?i.amount-i.paid:0}),done:sum(by.done,oRev)};
+ let tab=ui.flowTab;if(!tab||!FL_TABS.some(t=>t[0]===tab))tab=['ready','need','coming','pay','est'].find(k=>cnt[k])||'est';
+ const q=String(ui.flowQ||'').toLowerCase();const hit=t=>!q||t.toLowerCase().includes(q);
+ const steps=`<div class="fl-steps" role="tablist">${FL_TABS.map(([k,l,h])=>`<button type="button" role="tab" aria-selected="${k===tab}" class="fl-step ${k===tab?'on':''} ${k==='pay'&&by.pay.some(o=>invStatus(flInv(o))==='Overdue')?'warn':''}" data-action="fl-tab" data-k="${k}"><b>${cnt[k]||0}</b><span>${l}</span><small>${val[k]?$f(val[k]):h}</small></button>`).join('<i class="fl-arr" aria-hidden="true">›</i>')}</div>`;
+ let body='';
+ if(tab==='est')body=est.filter(e=>hit([e.id,aname(e.acct),e.cpo,...e.lines.map(l=>l.sku)].join(' '))).sort((a,b)=>String(b.date)<String(a.date)?-1:1).map(flEstCard).join('')||`<div class="empty">No open estimates. ${btn(ic('plus',14)+' New estimate','fl-new-est',{},'primary')}</div>`;
+ else body=by[tab].filter(o=>hit([o.so,o.cpo,o.endPo,aname(o.acct),o.shipTo,...o.lines.map(l=>l.sku+' '+((item(l.sku)||{}).desc||''))].join(' '))).sort((a,b)=>String(a.expected||'9')<String(b.expected||'9')?-1:1).map(flCard).join('')||`<div class="empty">Nothing here right now.</div>`;
+ return `${phead('Orders','Every job from estimate to payment. Each one shows the next thing to do.',btn(ic('plus',15)+' Estimate','fl-new-est',{},'')+btn(ic('plus',15)+' Customer PO → sales order','fl-new-so',{},'primary'))}
+  ${steps}<div class="toolbar"><input class="fl-q" id="fl-q" value="${esc(ui.flowQ||'')}" placeholder="Find a customer, PO, SO or part" aria-label="Find an order"><span class="grow"></span><span class="sm muted">${esc((FL_TABS.find(t=>t[0]===tab)||[])[2]||'')}</span></div>${body}`};
+A['fl-tab']=d=>{ui.flowTab=d.k;rerender()};
+document.addEventListener('input',e=>{if(e.target&&e.target.id==='fl-q'){ui.flowQ=e.target.value;const p=e.target.selectionStart;rerender();const n=$('#fl-q');if(n){n.focus();try{n.setSelectionRange(p,p)}catch(x){}}}});
+A['fl-new-est']=()=>M.newQuote({});A['fl-new-so']=()=>M.newQuote({order:true});
+/* ---------- one estimate ---------- */
+function flEstCard(e){const c=acct(e.acct)||{};const sent=e.status==='Sent';const age=e.sentOn?-dd(e.sentOn):null;
+ return `<section class="fl-card"><div class="fl-top"><div><div class="fl-k">Estimate ${esc(e.id)} · ${esc(c.name||'Customer')}</div><div class="fl-what">${e.lines.map(l=>`${num(l.qty)} × ${esc(l.sku)}`).join(', ')}</div></div><div class="fl-amt">${$f(qTot(e))}</div></div>
+  <div class="fl-now ${sent&&age>14?'warn':''}">${sent?`Sent ${e.sentOn?fds(e.sentOn):''}${e.sentTo?` to ${esc(e.sentTo)}`:''}${age!=null?` · ${age} day${age===1?'':'s'} ago`:''}. Waiting for their PO.`:'Draft: not sent to the customer yet.'}</div>
+  <div class="fl-acts">${sent?btn('They sent a PO → sales order','quote-won',{id:e.id},'primary')+btn('Follow up','quote-fu',{id:e.id},'')+btn('Resend','quote-email',{id:e.id},''):btn(ic('mail',14)+' Send estimate','quote-email',{id:e.id},'primary')}${btn('PDF','quote-pdf',{id:e.id},'')}${btn('Open','fl-quote',{id:e.id},'ghost')}${btn('Lost','fl-lost',{id:e.id},'ghost')}</div></section>`}
+A['fl-lost']=d=>{const q=byId(S.quotes,d.id);if(!q)return;const was=q.status;q.status='Lost';log(`Estimate ${q.id} for ${aname(q.acct)} marked lost`,stCh(was,'Lost'));save();rerender()};
+A['fl-quote']=d=>M.quote(d.id);
+/* ---------- one sales order ---------- */
+function flCard(o){const st=flStage(o);const inv=flInv(o);const L=o.lines.map(l=>({l,s:flLine(o,l)}));const it=sku=>item(sku)||{};
+ const late=o.expected&&dd(o.expected)<0&&st!=='done'&&st!=='pay'&&o.lines.some(l=>rem(l)>0);
+ const lineRow=({l,s})=>{let what='',acts='';
+  if(s.k==='shipped')what='<span class="chip ok">Shipped</span>';
+  else if(s.k==='stock')what=`<span class="chip ok">In stock (${num(s.on)})</span>`;
+  else if(s.k==='po')what=s.pos.map(p=>`<a class="link" href="#/lookup/${encodeURIComponent(p.id)}">${esc(p.id)}</a> ${esc(vend(p.vendor).name)} · ${p.status==='Draft'?'<span class="chip warn">draft, not sent</span>':lateP(p)?`<span class="chip alert">${-dd(p.exp)} d late</span>`:p.exp?`due ${fds(p.exp)}`:p.status}`).join('<br>');
+  else if(s.k==='rfq'){const qs=reqQuotes(s.rfq.id).filter(liveQ);what=`<a class="link" href="#/sourcing/${encodeURIComponent(s.rfq.id)}">${esc(s.rfq.no||s.rfq.id)}</a> · ${qs.length?`${qs.length} quote${qs.length===1?'':'s'}`:'no quotes yet'}`}
+  else{const v=it(l.sku).vendor;what=`<span class="chip alert">Need ${num(s.need-s.on)}</span>${s.on?` <span class="sm muted">${num(s.on)} on hand</span>`:''}`;
+   acts=`${v?btn(`Order from ${esc(vend(v).name)}`,'so-po',{id:o.id},'sm primary'):btn('Draft a PO','so-po',{id:o.id},'sm primary')}${btn('Alibaba RFQ','fl-rfq',{id:o.id,sku:l.sku},'sm')}`}
+  return `<tr><td><b>${esc(l.sku)}</b>${flDesc(l.sku)?`<div class="sm muted">${esc(flDesc(l.sku))}</div>`:''}</td><td class="n">${num(l.qty)}</td><td class="n">${num(rem(l))}</td><td>${what}</td><td class="fl-la">${acts}</td></tr>`};
+ /* the one next step */
+ let now='',acts='';const drafts=L.flatMap(x=>x.s.pos||[]).filter(p=>p.status==='Draft').filter((p,i,a)=>a.indexOf(p)===i);
+ if(st==='need'){now='Parts aren’t bought yet. Order from a local vendor, or ask Alibaba suppliers for quotes.'}
+ else if(st==='coming'){now=drafts.length?`${drafts.map(p=>p.id).join(', ')} ${drafts.length===1?'is a draft':'are drafts'}: send ${drafts.length===1?'it':'them'} to the vendor.`:'Waiting for the parts to arrive. Receive them when they come in.';
+  acts=drafts.map(p=>btn(ic('mail',14)+` Email ${p.id} to ${vend(p.vendor).name}`,'po-email',{id:p.id},'primary')).join('')+L.flatMap(x=>(x.s.pos||[]).filter(p=>p.status!=='Draft')).filter((p,i,a)=>a.indexOf(p)===i).map(p=>btn(`Receive ${p.id}`,'po-receive',{id:p.id},'')).join('')}
+ else if(st==='ready'){const toShip=L.some(x=>x.s.k==='stock');now=toShip?'Everything is in stock. Ship it with a packing slip, then invoice.':'Shipped. Create the invoice and email it.';
+  acts=toShip?btn(ic('box',14)+' Ship + packing slip','ship',{id:o.id},'primary'):btn('Create invoice','so-invoice',{id:o.id},'primary')}
+ else if(st==='pay'){const s=invStatus(inv),bal=inv.amount-inv.paid;now=`Invoice ${inv.id}: ${$f(bal)} due ${fds(inv.due)}${s==='Overdue'?`, <b>${-dd(inv.due)} days overdue</b>`:''}.${inv.sentOn?` Emailed ${fds(inv.sentOn)}.`:' Not emailed from the ERP yet.'}`;
+  acts=btn(ic('mail',14)+(inv.sentOn?' Email again':' Email invoice'),'inv-email',{id:inv.id},inv.sentOn?'':'primary')+btn('Payment received','so-paid',{id:o.id},inv.sentOn?'primary':'')+btn('Invoice PDF','inv-pdf',{id:inv.id},'')}
+ else now=`Paid${inv&&inv.paidOn?' '+fds(inv.paidOn):''}. Done.`;
+ const step=['need','coming','ready','pay','done'].indexOf(st);const shipped=o.lines.every(l=>rem(l)===0);
+ const bar=[['Estimate',!!(S.quotes||[]).find(q=>q.so===o.id)||!!o.cpo],['Customer PO',!!o.cpo],['Sales order',true],['Parts',step>=2||shipped],['Shipped',shipped],['Invoiced',!!inv],['Paid',st==='done']];
+ return `<section class="fl-card ${late?'late':''}"><div class="fl-top"><div><div class="fl-k">${esc(aname(o.acct))}${o.cpo?` · ${esc(/^p\.?\s?o(?![a-z])/i.test(o.cpo)?o.cpo:'PO '+o.cpo)}`:''} · ${esc(oLabel(o))}${o.shipTo?` · ${esc(o.shipTo)}`:''}</div>
+   <div class="fl-what">${o.lines.map(l=>`${num(l.qty)} × ${esc((item(l.sku)||{}).desc||l.sku)}`).join(', ')}</div></div><div class="fl-amt">${$f(oRev(o))}<small>${o.expected?`${late?'<b>':''}due ${fds(o.expected)}${late?` · ${-dd(o.expected)} d late</b>`:''}`:''}</small></div></div>
+  <ol class="fl-bar">${bar.map(([n,d])=>`<li class="${d?'done':''}">${n}</li>`).join('')}</ol>
+  ${st!=='done'&&st!=='pay'?`<div class="tbl-wrap"><table class="fl-t"><thead><tr><th>Part</th><th class="n">Qty</th><th class="n">To ship</th><th>Where it comes from</th><th></th></tr></thead><tbody>${L.map(lineRow).join('')}</tbody></table></div>`:''}
+  <div class="fl-now">${now}</div><div class="fl-acts">${acts}<a class="btn ghost" href="${oHref(o)}">Open order</a>${o.lines.some(l=>l.shipped>0)?btn('Packing slip','slip',{id:o.id},'ghost'):''}</div></section>`}
+/* ---------- step 4: Alibaba RFQ for one line ---------- */
+A['fl-rfq']=d=>{const o=byId(S.orders,d.id);const l=o&&o.lines.find(x=>x.sku===d.sku);if(!l)return;const it=item(l.sku)||{};const s=flLine(o,l);const qty=Math.max(1,s.need-(s.on||0));
+ const id=nextId(S.srcReqs,'SR-'),no=nextRfqNo();S.srcReqs.push({id,no,title:flDesc(l.sku)?`${flDesc(l.sku)} (${l.sku})`:l.sku,sku:l.sku,partNo:l.sku,qty,unit:'pcs',status:'Open',created:TODAY,owner:USER.name,order:o.id,fromOrder:o.id,sellEach:l.price||null,notes:`For ${aname(o.acct)} ${o.cpo?'PO '+o.cpo:''} (${oLabel(o)})${o.expected?', due '+fds(o.expected):''}.`,posted:null,emailedTo:[]});
+ log(`Started ${no} on Alibaba for ${num(qty)} × ${l.sku} (${oLabel(o)}, ${aname(o.acct)})`);save();toast(`${no} created. Post it on Alibaba from its page.`);location.hash='#/sourcing/'+id};
+/* ---------- invoice and PO PDFs on the letterhead ---------- */
+async function flDoc(kind,o){const {jsPDF}=await loadPDF();const doc=new jsPDF({unit:'pt',format:'letter'});const W=612,M=48;
+ const navy=[15,42,61],teal=[11,127,171],grey=[107,114,128],ink=[31,41,55],line=[229,231,235];
+ const T=(t,x,y,f={})=>{doc.setFont('helvetica',f.b?'bold':'normal');doc.setFontSize(f.s||10);doc.setTextColor(...(f.c||ink));doc.text(String(t??''),x,y,f.a?{align:f.a}:undefined)};
+ doc.setFillColor(...teal);doc.rect(0,0,W,6,'F');T('MASS RENEWABLE',M,52,{b:1,s:17,c:navy});T('ENERGY SOLUTIONS',M,66,{b:1,s:8.5,c:teal});
+ T(FL_ADDR.join(', '),M,82,{s:8.5,c:grey});T([CO.phone,CO.email,CO.web].join('  ·  '),M,94,{s:8.5,c:grey});
+ T(o.title,W-M,52,{b:1,s:20,c:navy,a:'right'});T(o.no,W-M,70,{b:1,s:11,c:teal,a:'right'});o.meta.forEach((m,i)=>T(m,W-M,86+i*13,{s:9,c:grey,a:'right'}));
+ doc.setDrawColor(...line);doc.setLineWidth(1);doc.line(M,124,W-M,124);
+ let y=146;T(o.leftH,M,y,{b:1,s:8,c:teal});T('DETAILS',330,y,{b:1,s:8,c:teal});y+=16;
+ o.left.forEach((t,i)=>T(t,M,y+i*14,{b:i===0,s:i===0?11:9.5}));o.right.forEach(([k,v],i)=>{T(k,330,y+i*14,{s:9,c:grey});T(v,430,y+i*14,{s:9.5})});
+ y+=Math.max(o.left.length,o.right.length)*14+18;
+ const cols=[[M,'#'],[M+22,'PART'],[M+150,'DESCRIPTION'],[W-M-170,'QTY','right'],[W-M-85,o.priceH,'right'],[W-M,'AMOUNT','right']];
+ doc.setFillColor(243,244,246);doc.rect(M-6,y-12,W-2*M+12,20,'F');cols.forEach(([x,h,a])=>T(h,x,y+2,{b:1,s:8,c:grey,a}));y+=22;let sub=0;
+ o.lines.forEach((l,i)=>{const it=item(l.sku)||{};doc.setFontSize(9);const desc=doc.splitTextToSize(flDesc(l.sku),W-M-170-(M+150)-40);const h=Math.max(1,desc.length)*12+8;if(y+h>690){doc.addPage();y=60}
+  const amt=(+l.qty||0)*(+l.price||0);sub+=amt;T(i+1,M,y,{s:9,c:grey});T(l.sku,M+22,y,{b:1,s:9.5});desc.forEach((t,j)=>T(t,M+150,y+j*12,{s:9}));T(num(l.qty),W-M-170,y,{s:9.5,a:'right'});T(usd(l.price),W-M-85,y,{s:9.5,a:'right'});T(usd(amt),W-M,y,{s:9.5,a:'right'});y+=h;doc.setDrawColor(...line);doc.line(M-6,y-8,W-M+6,y-8)});
+ y+=8;const rows=[['Subtotal',usd(sub)],...(o.extra||[]).map(([k,v])=>[k,usd(v)])];rows.forEach(([k,v])=>{T(k,W-M-110,y,{s:9.5,c:grey});T(v,W-M,y,{s:9.5,a:'right'});y+=16});
+ const total=o.total!=null?o.total:sub+sum(o.extra||[],x=>x[1]);doc.setFillColor(...navy);doc.rect(W-M-180,y-10,186,26,'F');T(o.totalH,W-M-170,y+7,{b:1,s:9.5,c:[255,255,255]});T(usd(total),W-M,y+7,{b:1,s:12,c:[255,255,255],a:'right'});y+=44;
+ if(y>640){doc.addPage();y=60}T(o.termsH||'TERMS',M,y,{b:1,s:8,c:teal});y+=14;o.terms.forEach(t=>{doc.setFontSize(9);doc.splitTextToSize('•  '+t,W-2*M).forEach(x=>{T(x,M,y,{s:9});y+=12});y+=1});
+ const pages=doc.getNumberOfPages();for(let p=1;p<=pages;p++){doc.setPage(p);doc.setDrawColor(...line);doc.line(M,750,W-M,750);T(`${CO.name}  ·  ${FL_ADDR.join(', ')}  ·  ${CO.phone}  ·  ${CO.email}`,W/2,764,{s:7.5,c:grey,a:'center'});if(pages>1)T(`Page ${p} of ${pages}`,W-M,764,{s:8,c:grey,a:'right'})}
+ return doc}
+function flInvSpec(i){const o=byId(S.orders,i.ref)||{lines:[]};const c=acct(i.acct)||{};const lines=o.lines.filter(l=>(l.shipped||0)>0).map(l=>({sku:l.sku,qty:l.shipped,price:l.price}));const L=lines.length?lines:o.lines.map(l=>({sku:l.sku,qty:l.qty,price:l.price}));
+ const bal=i.amount-(i.paid||0);
+ return{title:'INVOICE',no:'Invoice '+i.id,meta:[`Date: ${longDate(i.issued)}`,`Due: ${longDate(i.due)}`],leftH:'BILL TO',left:[c.name||'Customer',c.contact||'',c.email||'',o.shipTo?'Ship to: '+o.shipTo:''].filter(Boolean),
+  right:[['Customer PO',o.cpo||'–'],['End customer PO',o.endPo||'–'],['Our SO #',o.so||'–'],['Terms',c.terms||`Net ${Math.max(0,Math.round((pd(i.due)-pd(i.issued))/864e5))}`]],priceH:'UNIT PRICE',lines:L,
+  extra:[...(o.freight?[['Freight',+o.freight]]:[])],total:i.amount,totalH:i.paid?'BALANCE DUE':'TOTAL DUE',...(i.paid?{total:bal}:{}),
+  termsH:'PAYMENT',terms:[`Please pay by ${longDate(i.due)} and reference invoice ${i.id}${o.cpo?' and '+flPo(o.cpo):''}.`,`Make checks payable to ${CO.name} LLC, ${FL_ADDR.join(', ')}. For ACH or wire details, email ${CO.email}.`,...(i.paid?[`Received so far: ${usd(i.paid)} of ${usd(i.amount)}.`]:[]),'Thank you for your business.']}}
+function flPoSpec(p){const v=vend(p.vendor)||{};const o=p.order&&byId(S.orders,p.order);const drop=p.dropTo||(o&&p.drop?o.shipTo:'');
+ return{title:'PURCHASE ORDER',no:p.id,meta:[`Date: ${longDate(p.date||TODAY)}`,...(p.exp?[`Needed by: ${longDate(p.exp)}`]:[])],leftH:'VENDOR',left:[v.name||'Vendor',v.contact||'',v.email||'',v.phone||''].filter(Boolean),
+  right:[['Ship to',drop||'Mass Renewable, Mesa AZ'],['Ship via',p.shipVia||'Best way'],['Payment',p.terms||v.terms||'Per agreement'],['Buyer',signName(USER.name)]],priceH:'UNIT COST',lines:p.lines.map(l=>({sku:l.sku,qty:l.qty,price:l.cost||0})),extra:[],totalH:'PO TOTAL',
+  terms:['Please confirm price and ship date by reply to this email.',`Show ${p.id} on your invoice, packing list and every box.`,drop?`Ship directly to: ${drop}.`:`Ship to: ${CO.name}, ${FL_ADDR.join(', ')}.`,'Do not substitute parts or change quantities without written approval.']}}
+const flFile=(doc,name)=>new File([doc.output('blob')],name,{type:'application/pdf'});
+A['inv-pdf']=async d=>{const i=byId(S.invoices,d.id);if(!i)return;try{const doc=await flDoc('inv',flInvSpec(i));doc.save(`Invoice ${i.id} ${aname(i.acct).replace(/[^\w\- ]+/g,'')}.pdf`)}catch(e){toast(e.message,true)}};
+A['po-pdf']=async d=>{const p=byId(S.pos,d.id);if(!p)return;try{const doc=await flDoc('po',flPoSpec(p));doc.save(`${p.id} ${vend(p.vendor).name.replace(/[^\w\- ]+/g,'')}.pdf`)}catch(e){toast(e.message,true)}};
+A['inv-email']=async d=>{const i=byId(S.invoices,d.id);if(!i)return;const c=acct(i.acct)||{};const o=byId(S.orders,i.ref)||{};let file;try{file=flFile(await flDoc('inv',flInvSpec(i)),`Invoice ${i.id}.pdf`)}catch(e){return toast(e.message,true)}
+ const first=(c.contact||'').split(/\s+/)[0];closeModal();
+ cpOpen({fresh:true,title:`Email invoice ${i.id}`,acct:i.acct||null,files:[file],to:c.email?[c.email.toLowerCase()]:[],subject:`Invoice ${i.id}${o.cpo?' for '+flPo(o.cpo):''} from Mass Renewable Energy Solutions`,
+  body:`Hi${first?' '+first:''},\n\nAttached is invoice ${i.id}${o.cpo?` for ${flPo(o.cpo)}`:''}, ${usd(i.amount-(i.paid||0))}, due ${longDate(i.due)}.\n\nThank you for your business. Let me know if you have any questions.\n\nThank you,`,
+  onSent:(data,body)=>{i.sentOn=TODAY;i.sentTo=body.to[0];i.sentBy=USER.name;log(`Emailed invoice ${i.id} to ${body.to[0]}`);if(data&&data.conversationId&&typeof rowQ!=='undefined')rowQ.add(data.conversationId);save();rerender()}})};
+A['po-email']=async d=>{const p=byId(S.pos,d.id);if(!p)return;const v=vend(p.vendor)||{};let file;try{file=flFile(await flDoc('po',flPoSpec(p)),`${p.id}.pdf`)}catch(e){return toast(e.message,true)}closeModal();
+ cpOpen({fresh:true,title:`Email ${p.id} to ${v.name||'vendor'}`,files:[file],to:v.email?[v.email.toLowerCase()]:[],subject:`Purchase order ${p.id} from Mass Renewable Energy Solutions`,
+  body:`Hello${v.contact?' '+String(v.contact).split(/\s+/)[0]:''},\n\nPlease find attached purchase order ${p.id} for ${p.lines.map(l=>`${num(l.qty)} × ${l.sku}`).join(', ')}.\n\nPlease confirm the price and ship date by reply.\n\nThank you,`,
+  onSent:(data,body)=>{if(p.status==='Draft'&&typeof A['po-send']==='function')A['po-send']({id:p.id});p.sentOn=TODAY;p.sentTo=body.to[0];log(`Emailed ${p.id} to ${body.to[0]}`);save();rerender()}})};
+/* ---------- #/sent: everything that went out ---------- */
+function flSentRows(){const R=[];
+ (S.quotes||[]).filter(q=>!q.demo&&q.status!=='Draft').forEach(q=>R.push({t:'Estimate',no:q.id,to:aname(q.acct),date:q.sentOn||q.date,amt:qTot(q),st:q.so||q.status==='Won'?'Accepted':q.status==='Lost'?'Lost':'Waiting for PO',open:!(q.so||q.status==='Won'||q.status==='Lost'),go:`href="javascript:void 0" data-action="fl-quote" data-id="${esc(q.id)}"`}));
+ (S.srcReqs||[]).filter(r=>!r.demo).forEach(r=>{const n=reqQuotes(r.id).filter(liveQ).length;R.push({t:'RFQ',no:r.no||r.id,to:r.posted?'Alibaba':(r.emailedTo||[]).length?(r.emailedTo||[]).map(x=>x.name).slice(0,2).join(', '):'Not sent yet',date:r.posted||r.created,amt:null,st:r.status==='Open'?(n?`${n} quote${n===1?'':'s'} in`:'Waiting for quotes'):r.status,open:r.status==='Open',go:`href="#/sourcing/${encodeURIComponent(r.id)}"`})});
+ (S.pos||[]).filter(p=>p.status!=='Draft').forEach(p=>R.push({t:'Purchase order',no:p.id,to:vend(p.vendor).name,date:p.sentOn||p.date,amt:poTot(p),st:lateP(p)?`Late, due ${fds(p.exp)}`:poOpen(p)?(p.exp?`Due ${fds(p.exp)}`:p.status):p.status,open:poOpen(p),bad:lateP(p),go:`href="#/lookup/${encodeURIComponent(p.id)}"`}));
+ (S.shipments||[]).forEach(s=>{const o=byId(S.orders,s.order);if(!o||o.demo)return;R.push({t:'Packing slip',no:oLabel(o),to:aname(o.acct),date:s.date,amt:null,st:s.tracking?`Shipped · ${s.tracking}`:'Shipped',open:false,go:`href="${oHref(o)}"`})});
+ (S.invoices||[]).forEach(i=>{const s=invStatus(i);R.push({t:'Invoice',no:i.id,to:aname(i.acct),date:i.sentOn||i.issued,amt:i.amount,st:s==='Paid'?'Paid':s==='Overdue'?`Overdue ${-dd(i.due)} d · ${$f(i.amount-i.paid)} due`:`Open · ${$f(i.amount-i.paid)} due ${fds(i.due)}`,open:s!=='Paid',bad:s==='Overdue',go:`href="#/lookup/${encodeURIComponent(i.id)}"`,inv:i})});
+ return R.sort((a,b)=>String(b.date||'')<String(a.date||'')?-1:1)}
+VIEWS.sent=()=>{if(!ui.sentF)ui.sentF='Open';const R=flSentRows();const f=ui.sentF;const ty=ui.sentT||'All';const q=String(ui.sentQ||'').toLowerCase();
+ const rows=R.filter(r=>(f==='All'||(f==='Open'?r.open:!r.open))&&(ty==='All'||r.t===ty)&&(!q||[r.no,r.to,r.st].join(' ').toLowerCase().includes(q)));
+ const tile=(t,n,s,c='')=>`<button type="button" class="fl-tile ${c} ${ty===t?'on':''}" data-action="sent-t" data-t="${t}"><span>${t==='Estimate'?'Estimates out':t==='RFQ'?'RFQs open':t==='Purchase order'?'POs out':t==='Invoice'?'Invoices unpaid':'Packing slips'}</span><b>${n}</b><small>${s}</small></button>`;
+ const op=t=>R.filter(r=>r.t===t&&r.open);const inv=op('Invoice'),od=inv.filter(r=>r.bad);
+ return `${phead('Sent','Everything we’ve sent out, and what’s still waiting on someone.')}
+  <div class="fl-tiles">${tile('Estimate',op('Estimate').length,$f(sum(op('Estimate'),r=>r.amt||0))+' quoted')}${tile('RFQ',op('RFQ').length,`${sum(op('RFQ'),r=>/quote/.test(r.st)&&!/Waiting/.test(r.st)?1:0)} with quotes`)}${tile('Purchase order',op('Purchase order').length,$f(sum(op('Purchase order'),r=>r.amt||0))+(op('Purchase order').some(r=>r.bad)?` · ${op('Purchase order').filter(r=>r.bad).length} late`:''),op('Purchase order').some(r=>r.bad)?'warn':'')}${tile('Invoice',inv.length,$f(sum(inv,r=>r.inv.amount-r.inv.paid))+(od.length?` · ${od.length} overdue`:''),od.length?'alert':'')}${tile('Packing slip',R.filter(r=>r.t==='Packing slip'&&r.date&&dd(r.date)>-30).length,'last 30 days')}</div>
+  <div class="toolbar">${seg('sentF',['Open','Done','All'])}${ty!=='All'?`<button type="button" class="chip plain" data-action="sent-t" data-t="All">${esc(ty)} ×</button>`:''}<input class="fl-q" id="sent-q" value="${esc(ui.sentQ||'')}" placeholder="Find a number, customer or vendor"><span class="grow"></span><span class="sm muted">${rows.length} shown</span></div>
+  <section class="panel"><div class="tbl-wrap"><table class="fl-t sent"><thead><tr><th>Type</th><th>Number</th><th>To</th><th>Sent</th><th class="n">Amount</th><th>Status</th><th></th></tr></thead><tbody>
+  ${rows.slice(0,400).map(r=>`<tr class="${r.bad?'bad':''}"><td><span class="chip fl-ty t-${r.t.replace(/\s/g,'')}">${esc(r.t)}</span></td><td><b>${esc(r.no)}</b></td><td>${esc(r.to||'')}</td><td class="nowrap">${r.date?fds(r.date):'–'}</td><td class="n">${r.amt!=null?$f(r.amt):''}</td><td>${esc(r.st)}</td><td class="n"><a class="link" ${r.go}>Open</a>${r.inv&&r.open?` · <button type="button" class="link" data-action="inv-email" data-id="${esc(r.inv.id)}">${r.inv.sentOn?'Email again':'Email'}</button>`:''}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Nothing here.</td></tr>'}</tbody></table></div></section>`};
+A['sent-t']=d=>{ui.sentT=ui.sentT===d.t?'All':d.t;rerender()};
+document.addEventListener('input',e=>{if(e.target&&e.target.id==='sent-q'){ui.sentQ=e.target.value;const p=e.target.selectionStart;rerender();const n=$('#sent-q');if(n){n.focus();try{n.setSelectionRange(p,p)}catch(x){}}}});
+/* invoice and PO buttons wherever those records already show */
+const _invFl=M.invoice;M.invoice=id=>{_invFl(id);const f=$('#mform');if(f&&!f.dataset.fl){f.dataset.fl='1';f.addEventListener('submit',()=>setTimeout(()=>{const o=byId(S.orders,id);if(o&&o.invoice&&byId(S.invoices,o.invoice)){toast(`Invoice ${o.invoice} created. Email it from Orders → Waiting for payment, or now.`);setTimeout(()=>A['inv-email']({id:o.invoice}),300)}},50))}};
+/* ---------- a simpler sidebar: the flow first, the rest under More ---------- */
+(function(){try{if(typeof NAV==='undefined')return;const all=new Map(NAV.flatMap(([g,items])=>items).map(x=>[x[0],x]));
+ all.set('flow',['flow','Orders','tag']);all.set('sent',['sent','Sent','mail']);
+ const plan=[['Work',['mywork','inbox','flow','sent']],['Buying',['sourcing','quotes','purchasing']],['Records',['crm','sales','items','finance','lookup']]];const used=new Set(plan.flatMap(x=>x[1]));
+ const groups=plan.map(([g,ks])=>[g,ks.filter(k=>all.has(k)).map(k=>{const x=[...all.get(k)];if(k==='sales')x[1]='Sales orders';if(k==='purchasing')x[1]='Purchase orders';if(k==='sourcing')x[1]='RFQs (Sourcing)';if(k==='finance')x[1]='Invoices & money';if(k==='items')x[1]='Stock (items)';return x})]);
+ const more=[...all.values()].filter(x=>!used.has(x[0]));if(more.length)groups.push(['More',more]);
+ NAV.length=0;groups.forEach(g=>NAV.push(g));
+ if(typeof NAV_COLOR==='object'){NAV_COLOR.Work='#22b8d6';NAV_COLOR.Buying='#f59e0b';NAV_COLOR.Records='#10b981';NAV_COLOR.More='#94a3b8'}
+ if(typeof NAV_HINT==='object'){NAV_HINT.Work='The flow: estimates to payment';NAV_HINT.More='Everything else'}
+ try{const k='mres-navfold2';if(!localStorage.getItem(k)){const f=JSON.parse(localStorage.getItem('mres-navfold')||'[]');if(!f.includes('More'))f.push('More');localStorage.setItem('mres-navfold',JSON.stringify(f));localStorage.setItem(k,'1')}}catch(e){}
+}catch(e){}})();
+if(typeof TIP_NAV!=='undefined'){TIP_NAV.flow='Every job from estimate to payment, with the next step for each.';TIP_NAV.sent='Estimates, RFQs, POs, packing slips and invoices we sent, and what’s still open.'}
+const _navCountsFl=navCounts;navCounts=function(){const c=_navCountsFl();try{const os=flOrders();c.flow=os.filter(o=>{const s=flStage(o);return s==='need'||s==='ready'}).length;c.sent=(S.invoices||[]).filter(i=>invStatus(i)==='Overdue').length+(S.pos||[]).filter(lateP).length}catch(e){}return c};
+/* open on Orders */
+if(!location.hash||location.hash==='#'||location.hash==='#/'||location.hash==='#/dashboard'&&!sessionStorage.getItem('mres-flow-home')){try{sessionStorage.setItem('mres-flow-home','1')}catch(e){}location.hash='#/flow'}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.fl-steps{display:flex;align-items:stretch;gap:4px;margin:0 0 14px;overflow-x:auto;padding-bottom:4px}.fl-arr{align-self:center;color:var(--ink-3);font-style:normal;font-size:20px}
+.fl-step{flex:1;min-width:120px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer;font:inherit;color:inherit;display:flex;flex-direction:column;gap:1px}.fl-step b{font-size:22px;line-height:1.1}.fl-step span{font-weight:600;font-size:13px}.fl-step small{color:var(--ink-3);font-size:11.5px}
+.fl-step.on{border-color:#22b8d6;box-shadow:0 0 0 2px #22b8d6;background:rgba(34,184,214,.06)}.fl-step.warn b{color:var(--alert,#dc2626)}
+.fl-q{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);min-width:260px}
+.fl-card{background:var(--surface);border:1px solid var(--line);border-left:4px solid #22b8d6;border-radius:12px;padding:14px 16px;margin:0 0 12px}.fl-card.late{border-left-color:var(--alert,#dc2626)}
+.fl-top{display:flex;justify-content:space-between;gap:12px}.fl-k{font-size:12.5px;color:var(--ink-3);font-weight:600}.fl-what{font-weight:600;font-size:15px;margin-top:2px}.fl-amt{text-align:right;font-weight:700;font-size:17px;white-space:nowrap}.fl-amt small{display:block;font-weight:400;font-size:12px;color:var(--ink-3)}.fl-amt small b{color:var(--alert,#dc2626)}
+.fl-bar{display:flex;list-style:none;padding:0;margin:10px 0;gap:3px}.fl-bar li{flex:1;text-align:center;font-size:11px;padding:4px 2px;border-radius:4px;background:var(--surface-2,#f1f5f9);color:var(--ink-3)}.fl-bar li.done{background:#d1fae5;color:#065f46;font-weight:600}
+[data-theme=dark] .fl-bar li.done{background:#064e3b;color:#a7f3d0}
+.fl-t{width:100%;border-collapse:collapse;font-size:13.5px}.fl-t th{text-align:left;font-size:11.5px;color:var(--ink-3);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}.fl-t td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}.fl-t .n{text-align:right}.fl-la{text-align:right;white-space:nowrap}.fl-la .btn{margin-left:4px}
+.fl-now{margin:10px 0 8px;font-size:14px}.fl-now.warn{color:#b45309}.fl-acts{display:flex;gap:6px;flex-wrap:wrap}
+.fl-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:0 0 14px}.fl-tile{text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;font:inherit;color:inherit;display:flex;flex-direction:column}.fl-tile span{font-size:12.5px;color:var(--ink-3);font-weight:600}.fl-tile b{font-size:24px}.fl-tile small{font-size:12px;color:var(--ink-3)}.fl-tile.on{box-shadow:0 0 0 2px #22b8d6}.fl-tile.alert b{color:var(--alert,#dc2626)}.fl-tile.warn b{color:#b45309}
+.fl-t.sent tr.bad td{background:rgba(239,68,68,.05)}.fl-ty{font-size:11px}.fl-ty.t-Estimate{background:#e0f2fe;color:#075985}.fl-ty.t-RFQ{background:#ede9fe;color:#5b21b6}.fl-ty.t-Purchaseorder{background:#fef3c7;color:#92400e}.fl-ty.t-Packingslip{background:#f1f5f9;color:#334155}.fl-ty.t-Invoice{background:#dcfce7;color:#166534}
+@media(max-width:760px){.fl-top{flex-direction:column}.fl-amt{text-align:left}.fl-bar li{font-size:9.5px}.fl-q{min-width:0;flex:1}.fl-t.sent thead{display:none}.fl-t.sent tr{display:block;border-bottom:1px solid var(--line);padding:6px 0}.fl-t.sent td{display:inline-block;border:0;padding:2px 6px}}
+</style>`);
+
+</script>
 </body>
 </html>
