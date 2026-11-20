@@ -6129,5 +6129,97 @@ const _qbrecBk=A['bk-qbrec'];A['bk-qbrec']=d=>{const dt=($('#bk-qbrd')||{}).valu
 document.head.insertAdjacentHTML('beforeend',`<style>.bk-audit{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}.bk-audit div{display:flex;flex-direction:column}.bk-audit b{font-size:20px}.bk-audit span{font-size:13px;font-weight:600}.bk-audit small{font-size:12px;color:var(--ink-3)}@media(max-width:700px){.bk-audit{grid-template-columns:1fr}}</style>`);
 
 </script>
+<script>/* statements.js */
+/* ================= Bank statements (PDF) straight into the books =================
+   Banking → "Upload bank statements (PDF)": drop the monthly Wells Fargo statements in (several at once).
+   Each one is read in the browser: beginning and ending balance, every transaction, and a check that the
+   lines add up to the bank's own totals. Transactions go into Bank lines (no duplicates), the statement is
+   kept, and each bank line gets a suggested account (vendor wires → parts purchases, fees → bank fees,
+   transfers from the partners → owners' equity...). Customer deposits get "Apply to invoices", which opens
+   Receive payment already filled in. When every line of a month is in the books, "Reconcile" closes it. */
+function stLoadPDF(){return window.pdfjsLib?Promise.resolve(window.pdfjsLib):new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+ s.onload=()=>{try{window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'}catch(e){}res(window.pdfjsLib)};s.onerror=()=>rej(new Error('Could not load the PDF reader. Check the internet connection.'));document.head.appendChild(s)})}
+const ST_AMT=/^\$?-?\d{1,3}(?:,\d{3})*\.\d{2}$/;
+async function stReadLines(file){const L=await stLoadPDF();const pdf=await L.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;const pages=[];
+ for(let n=1;n<=pdf.numPages;n++){const pg=await pdf.getPage(n);const tc=await pg.getTextContent();const rows=[];
+  tc.items.forEach(it=>{const s=String(it.str||'');if(!s.trim())return;const x=it.transform[4],y=it.transform[5],w=it.width||0;let r=rows.find(r=>Math.abs(r.y-y)<2.5);if(!r){r={y,items:[]};rows.push(r)}r.items.push({s:s.trim(),x,r:x+w})});
+  rows.sort((a,b)=>b.y-a.y).forEach(r=>{r.items.sort((a,b)=>a.x-b.x);r.text=r.items.map(i=>i.s).join(' ')});pages.push(rows)}return pages}
+function stParse(pages,name){const all=pages.flat();const txt=all.map(r=>r.text).join('\n');const num=s=>+String(s).replace(/[$,\s]/g,'');
+ const g=re=>{const m=txt.match(re);return m?m:null};
+ const bm=g(/Beginning balance on (\d{1,2})\/(\d{1,2})\s+\$?(-?[\d,]+\.\d\d)/),em=g(/Ending balance on (\d{1,2})\/(\d{1,2})\s+\$?(-?[\d,]+\.\d\d)/),cm=g(/Deposits\/Credits\s+\$?([\d,]+\.\d\d)/),dm=g(/Withdrawals\/Debits\s+-\s*\$?([\d,]+\.\d\d)/);
+ const ym=g(/(January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, (\d{4})/);const acct=(g(/Account number:\s*(\d{4,})/)||[])[1]||'';
+ if(!bm||!em)throw new Error(`${name}: couldn’t find the beginning and ending balance. Is this a bank statement?`);
+ const yr=+ym[2],endM=+em[1],begM=+bm[1];const d=(m,dd)=>`${m>endM?yr-1:yr}-${String(m).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+ const lines=[];let cols=null,inside=false,cur=null;
+ pages.forEach(rows=>{rows.forEach(r=>{const t=r.text;
+  if(/Date\b.*Description/.test(t)&&/Credits|Deposits/i.test(t)){inside=true;cur=null;const it=r.items;const f=re=>{const x=it.find(i=>re.test(i.s));return x?x.r:null};cols={c:f(/Credits/),d:f(/Debits/),b:f(/balance/i)};
+   if(cols.c==null||cols.d==null){/* header split across rows: look at the row above */}return}
+  if(/Credits/.test(t)&&/Debits/.test(t)&&/balance/i.test(t)&&!inside){const it=r.items;const f=re=>{const x=it.find(i=>re.test(i.s));return x?x.r:null};cols={c:f(/Credits/),d:f(/Debits/),b:f(/balance/i)};inside=true;cur=null;return}
+  if(!inside)return;if(/^Totals\b/.test(t)||/Ending Daily Balance does not/.test(t)){inside=false;cur=null;return}
+  const first=r.items[0];const dm2=first&&first.s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if(dm2&&cols){let c=0,db=0;const words=[];let check='';r.items.slice(1).forEach((i,k)=>{if(ST_AMT.test(i.s)&&cols.c!=null){const v=num(i.s);const ds=[['c',Math.abs(i.r-cols.c)],['d',Math.abs(i.r-cols.d)],['b',cols.b!=null?Math.abs(i.r-cols.b):1e9]].sort((a,b)=>a[1]-b[1]);if(ds[0][0]==='c')c=v;else if(ds[0][0]==='d')db=v;return}
+    if(k===0&&/^\d{3,6}$/.test(i.s)){check=i.s;return}words.push(i.s)});
+   cur={date:d(+dm2[1],+dm2[2]),desc:(check?`Check ${check} `:'')+words.join(' ').replace(/^Check\s*/,check?'':'Check ').trim(),amt:r2(c-db),check};if(!cur.desc)cur.desc=check?`Check ${check}`:'Bank transaction';lines.push(cur);return}
+  if(cur&&!/Page \d+ of|Transaction History \(continued\)|^Check\b.*Deposits|Date\b.*Number/.test(t)&&!ST_AMT.test(t))cur.desc=(cur.desc+' '+t).replace(/\s+/g,' ').trim()})});
+ lines.forEach(l=>{l.desc=l.desc.replace(/^Check (\d+) Check$/,'Check $1')});
+ const beg=num(bm[3]),end=num(em[3]),cr=cm?num(cm[1]):null,dr=dm?num(dm[1]):null;const pc=r2(sum(lines.filter(l=>l.amt>0),l=>l.amt)),pd2=r2(-sum(lines.filter(l=>l.amt<0),l=>l.amt));
+ return{file:name,acct:acct.slice(-4),begin:beg,end,credits:cr,debits:dr,from:d(begM,+bm[2]),to:d(endM,+em[2]),lines,readCredits:pc,readDebits:pd2,ok:(cr==null||Math.abs(pc-cr)<0.005)&&(dr==null||Math.abs(pd2-dr)<0.005)&&Math.abs(beg+pc-pd2-end)<0.005}}
+async function stImport(files){ensureGL();S.gl.stmts=S.gl.stmts||[];const res=[];
+ for(const f of files){try{const s=stParse(await stReadLines(f),f.name);res.push(s)}catch(e){res.push({file:f.name,err:e.message})}}
+ let added=0,dup=0;const good=res.filter(s=>!s.err);
+ good.sort((a,b)=>a.to<b.to?-1:1).forEach(s=>{s.lines.forEach(l=>{if(S.gl.bank.some(b=>b.date===l.date&&Math.abs(b.amt-l.amt)<0.005&&b.desc===l.desc)){dup++;return}S.gl.bank.push({id:'BL-'+(S.gl.bank.length+1)+'-'+Math.random().toString(36).slice(2,7),date:l.date,desc:l.desc,amt:l.amt,status:'Unmatched',stmt:s.to,acct4:s.acct});added++});
+  const old=S.gl.stmts.findIndex(x=>x.to===s.to&&x.acct===s.acct);const rec={file:s.file,acct:s.acct,from:s.from,to:s.to,begin:s.begin,end:s.end,credits:s.credits,debits:s.debits,n:s.lines.length,ok:s.ok,by:USER.name,at:new Date().toISOString()};if(old>=0)S.gl.stmts[old]=rec;else S.gl.stmts.push(rec)});
+ const bad=res.filter(s=>s.err||!s.ok);log(`Read ${good.length} bank statement${good.length===1?'':'s'} (${good.map(s=>fds(s.to)).join(', ')}): ${added} transactions added${dup?`, ${dup} already there`:''}`);
+ toast(`${good.length} statement${good.length===1?'':'s'} read, ${added} transactions added${bad.length?`. Check: ${bad.map(s=>s.file).join(', ')}`:''}`,!!bad.length);ui.stRes=res.map(s=>({file:s.file,err:s.err,ok:s.ok,to:s.to,n:s.lines&&s.lines.length}));save();rerender()}
+/* ---------- suggested accounts for bank lines ---------- */
+const ST_RULES=[[/interest payment/i,'4200','Interest earned'],[/wire trans svc|direct pay monthly|service charge|monthly service fee|overdraft/i,'6400','Bank fee'],[/intuit|qbooks/i,'6200','QuickBooks subscription'],
+ [/casillas|partner contribution/i,'3000','Money from a partner'],[/harrington|dellner|stockton|hi-?tech|qingdao|jianqing|titan fittings|sendcutsend|alibaba/i,'2050','Parts purchase'],[/tforce|ups|fedex|dhl|freight/i,'5100','Freight on parts'],
+ [/zoro|grainger|mcmaster|officemax|office depot|amazon/i,'6900','Supplies'],[/prime ?storage/i,'6100','Storage rent'],[/zelle to/i,'6000','Pay to a person (check if contractor: 1099)'],[/indio|misc gov|serv fee|city of|county of/i,'6900','City fee or license'],[/lytespeed|learning|training/i,'6900','Training']];
+function stCust(desc){const d=String(desc).toLowerCase();return (S.accounts||[]).find(a=>{const w=String(a.name||'').toLowerCase().replace(/[^a-z0-9 ]/g,'').split(/\s+/).filter(x=>x.length>2);return w.length&&(d.includes(w.slice(0,2).join(' '))||d.includes(w[0])&&w[0].length>=4)})}
+function stSuggest(bl){if(bl.amt>0){const c=stCust(bl.desc);if(c)return{cust:c.id,label:`Payment from ${c.name}`}}const r=ST_RULES.find(([re])=>re.test(bl.desc));return r?{acct:r[1],label:r[2]}:null}
+A['st-add']=d=>{const bl=S.gl.bank.find(x=>x.id===d.id);if(!bl)return;stAddAs(bl,d.acct);save();rerender()};
+function stAddAs(bl,acc){if(acc==='4200')bkEnsureAcct('4200','Interest income','Income');if(locked(bl.date)||bl.date<S.gl.start)return false;const n=bkNo(),a=Math.abs(bl.amt);
+ const e={id:'JE-'+n,no:n,date:bl.date,src:'Bank line',ref:`JE ${n}`,memo:bl.desc,payee:stPayee(bl.desc),lines:bl.amt<0?[{acct:acc,dr:a,cr:0,memo:bl.desc},{acct:'1000',dr:0,cr:a,memo:bl.desc}]:[{acct:'1000',dr:a,cr:0,memo:bl.desc},{acct:acc,dr:0,cr:a,memo:bl.desc}],by:USER.name,created:new Date().toISOString()};S.gl.manual.push(e);
+ const key=cashKey(e,bl.amt<0?1:0);S.gl.cleared[key]=true;bl.status='Added';bl.entry=e.id;bl.match=key;bl.note=aLabel(acc);return true}
+function stPayee(desc){const m=String(desc).match(/Bnf=([^/]+?)(?: Srf#|$)/i)||String(desc).match(/authorized on \d\d\/\d\d (.+?)(?: \d{3}-|\s+S\d{6,}| [A-Z]{2} S\d)/)||String(desc).match(/^(?:Zelle to|Zelle From) (.+?) on/);return m?m[1].trim():String(desc).split(/\s{2,}| Ref| Srf/)[0].slice(0,40)}
+A['st-addall']=()=>{let n=0,skip=0;S.gl.bank.filter(b=>b.status==='Unmatched').forEach(bl=>{const s=stSuggest(bl);if(s&&s.acct){if(stAddAs(bl,s.acct))n++;else skip++}});
+ log(`Added ${n} bank lines to the books with their suggested accounts`);toast(`${n} added${skip?`, ${skip} skipped (before the books start or locked)`:''}. Customer payments and the ones without a suggestion are left for you.`);save();rerender()};
+A['st-apply']=d=>{const bl=S.gl.bank.find(x=>x.id===d.id);if(!bl)return;ui.stApply=bl.id;M.recv({acct:d.cust});setTimeout(()=>{const f=$('#mform');if(!f)return;const a=$('#bk-amt',f);if(a){a.value=bl.amt.toFixed(2);bkAlloc()}const dt=f.querySelector('[name=date]');if(dt)dt.value=bl.date;const m=f.querySelector('[name=method]');if(m)m.value=/WT |wire/i.test(bl.desc)?'Wire':'ACH';const r=f.querySelector('[name=ref]');if(r)r.value=(bl.desc.match(/Trn#(\d+)|(\d{6,}\/\d+)/)||[])[0]||''},30)};
+/* after Receive payment is saved from a bank line, tie the two together */
+const _recvSt=M.recv;M.recv=o=>{_recvSt(o);const f=$('#mform');if(!f||!ui.stApply)return;const id=ui.stApply;f.addEventListener('submit',()=>setTimeout(()=>{const bl=S.gl.bank.find(x=>x.id===id);ui.stApply=null;if(!bl)return;
+ const E=ledger().E;const e=E.filter(e=>/^RCPT:/.test(e.id)&&e.date===bl.date).sort((a,b)=>a.id<b.id?1:-1).find(e=>Math.abs(sum(e.lines.filter(l=>coa(l.acct).type==='Bank'),l=>l.dr-l.cr)-bl.amt)<0.01);
+ if(e){const k=cashKey(e,e.lines.findIndex(l=>coa(l.acct).type==='Bank'));bl.status='Matched';bl.match=k;bl.note=e.ref;S.gl.cleared[k]=true;save();rerender()}},0),{capture:true})};
+const _closeSt=closeModal;closeModal=function(){_closeSt();setTimeout(()=>{if(!$('#mform'))ui.stApply=null},0)};
+/* ---------- reconcile a statement in one click ---------- */
+function stState(s,E){const cl=cashLines(E).filter(c=>c.acct==='1000');const lines=S.gl.bank.filter(b=>b.stmt===s.to&&(!s.acct||!b.acct4||b.acct4===s.acct));const open=lines.filter(b=>b.status==='Unmatched');
+ const rec=S.gl.recs.find(r=>r.date===s.to);const prev=S.gl.recs.filter(r=>r.date<s.to).sort((a,b)=>a.date<b.date?1:-1)[0];return{lines,open,rec,prev,cl}}
+A['st-rec']=d=>{const s=(S.gl.stmts||[]).find(x=>x.to===d.to);if(!s)return;const E=ledger().E;const st=stState(s,E);if(st.open.length)return fail(`${st.open.length} bank line${st.open.length===1?' is':'s are'} still not in the books for this statement.`);
+ const begin=st.prev?st.prev.end:0;if(Math.abs(begin-s.begin)>0.004&&!(typeof confirmBox==='function'?confirmBox:confirm)(`The last reconciliation ended at ${$m(begin)}, but this statement starts at ${$m(s.begin)}. Reconcile anyway?`))return;
+ const keys=new Set(st.lines.map(b=>b.match).filter(Boolean));const items=st.cl.filter(c=>keys.has(c.key));const diff=r2(s.end-s.begin-sum(items,c=>c.amt));
+ if(Math.abs(diff)>0.004)return fail(`Off by ${$m(diff)}: the bank lines and the books don’t agree for this statement. Check the matched amounts.`);
+ items.forEach(c=>S.gl.cleared[c.key]=true);S.gl.recs.push({date:s.to,end:s.end,begin:s.begin,n:items.length,by:USER.name,at:new Date().toISOString(),stmt:s.file});log(`Reconciled the ${fd(s.to)} bank statement: ${items.length} items, ending balance ${$m(s.end)}`);toast(`${fds(s.to)} statement reconciled`);save();rerender()};
+A['st-unrec']=d=>{const r=S.gl.recs.find(x=>x.date===d.to);if(!r)return;if(locked(r.date))return fail('That period is locked.');S.gl.recs=S.gl.recs.filter(x=>x!==r);log(`Undid the ${fd(d.to)} reconciliation`);save();rerender()};
+/* ---------- the Banking tab ---------- */
+const _bankViewSt=bankingView;bankingView=function(E){let h=_bankViewSt(E);S.gl.stmts=S.gl.stmts||[];const ss=S.gl.stmts.slice().sort((a,b)=>a.to<b.to?-1:1);
+ const um=S.gl.bank.filter(b=>b.status==='Unmatched');const sug=um.filter(b=>{const s=stSuggest(b);return s&&s.acct}).length;
+ const panel=`<section class="panel mb"><div class="ph"><h3>Bank statements</h3><span class="muted sm">Wells Fargo PDF statements, read straight in. Several at once is fine.</span></div><div class="pb">
+  <label class="bk-drop">${ic('upload',18)} <b>Upload bank statements (PDF)</b> <span class="muted sm">monthly statements as downloaded from the bank</span><input type="file" id="st-files" accept=".pdf,application/pdf" multiple hidden></label>
+  ${(ui.stRes||[]).filter(r=>r.err||!r.ok).map(r=>`<p class="sm" style="color:var(--alert)">${esc(r.file)}: ${esc(r.err||'the lines didn’t add up to the bank’s totals; check this statement’s lines below')}</p>`).join('')}
+  ${ss.length?`<div class="st-chart">${stChart(ss)}</div>`+table('stm',['Statement','Account','#Starting','#Money in','#Money out','#Ending','Lines','Status',''],ss.map(s=>{const st=stState(s,E);const done=!!st.rec;
+   return `<tr><td><b>${fd(s.to)}</b><div class="muted sm">${fds(s.from)} to ${fds(s.to)}</div></td><td class="sm">…${esc(s.acct||'')}</td><td class="n">${$m(s.begin)}</td><td class="n" style="color:var(--ok)">${$m(s.credits??0)}</td><td class="n">${$m(-(s.debits??0))}</td><td class="n"><b>${$m(s.end)}</b></td><td class="sm">${s.n}${s.ok?' '+chip('adds up','ok'):' '+chip('check','alert')}</td><td>${done?chip('Reconciled','ok'):st.open.length?chip(`${st.open.length} not in books`,'warn'):chip('Ready','plain')}</td><td class="n nowrap">${done?btn('Undo','st-unrec',{to:s.to},'sm ghost'):btn('Reconcile','st-rec',{to:s.to},'sm'+(st.open.length?'':' primary'))}</td></tr>`})):''}
+  </div>${um.length?`<div class="pager"><span>${um.length} bank line${um.length===1?'':'s'} not in the books yet${sug?`; ${sug} have a suggested account`:''}.</span>${sug?btn(ic('check',14)+` Add the ${sug} suggested`,'st-addall',{},'sm primary'):''}</div>`:''}</section>`;
+ h=h.replace('<section class="panel mb"><div class="ph"><h3>Bring in bank activity</h3>',panel+'<section class="panel mb"><div class="ph"><h3>Bring in bank activity</h3>');
+ /* each unmatched line: suggestion button */
+ const t=document.createElement('template');t.innerHTML=h;t.content.querySelectorAll('select[data-bankacct]').forEach(sel=>{const bl=S.gl.bank.find(x=>x.id===sel.dataset.bankacct);if(!bl)return;const s=stSuggest(bl);if(!s)return;
+  sel.insertAdjacentHTML('beforebegin',s.cust?btn(`Apply to ${esc(aname(s.cust))} invoices`,'st-apply',{id:bl.id,cust:s.cust},'sm primary')+' ':btn(`${esc(s.label)} → ${esc(coa(s.acct).name||s.acct)}`,'st-add',{id:bl.id,acct:s.acct},'sm')+' ')});
+ return t.innerHTML};
+function stChart(ss){const W=640,H=170,L=56,B=22,T=8;const vals=ss.flatMap(s=>[s.credits||0,s.debits||0,s.end]);const mx=Math.max(1,...vals)*1.1;const gw=(W-L-6)/ss.length,bw=Math.min(22,gw/3-4);
+ let g='';for(let k=0;k<=3;k++){const v=mx*k/3,y=T+(H-T-B)*(1-k/3);g+=`<line x1="${L}" x2="${W-6}" y1="${y}" y2="${y}" style="stroke:var(--line)"/><text x="${L-6}" y="${y+4}" text-anchor="end" font-size="11" style="fill:var(--ink-3)">${$c(v)}</text>`}
+ const y=v=>T+(H-T-B)*(1-v/mx);let pts='';ss.forEach((s,i)=>{const cx=L+gw*i+gw/2;g+=`<rect x="${cx-bw-1}" y="${y(s.credits||0)}" width="${bw}" height="${H-B-y(s.credits||0)}" rx="2" style="fill:var(--ok,#10b981)"><title>${fds(s.to)} money in ${$m(s.credits||0)}</title></rect><rect x="${cx+1}" y="${y(s.debits||0)}" width="${bw}" height="${H-B-y(s.debits||0)}" rx="2" style="fill:var(--sun,#f59e0b)"><title>${fds(s.to)} money out ${$m(s.debits||0)}</title></rect><text x="${cx}" y="${H-6}" text-anchor="middle" font-size="11" style="fill:var(--ink-3)">${fdm(s.to).split(' ')[0]}</text>`;pts+=`${i?'L':'M'}${cx},${y(s.end)}`});
+ return `<div class="legend sm" style="display:flex;gap:14px;margin:0 0 4px"><span><i class="st-k" style="background:var(--ok,#10b981)"></i>Money in</span><span><i class="st-k" style="background:var(--sun,#f59e0b)"></i>Money out</span><span><i class="st-k" style="background:#0b7fab;height:3px"></i>Ending balance</span></div><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Money in, money out and ending balance by statement">${g}<path d="${pts}" fill="none" stroke="#0b7fab" stroke-width="2.5"/>${ss.map((s,i)=>`<circle cx="${L+gw*i+gw/2}" cy="${y(s.end)}" r="3.5" fill="#0b7fab"><title>Ending ${$m(s.end)}</title></circle>`).join('')}</svg>`}
+document.addEventListener('change',e=>{const t=e.target;if(t.id==='st-files'&&t.files&&t.files.length){toast(`Reading ${t.files.length} statement${t.files.length===1?'':'s'}…`);stImport([...t.files]);t.value=''}});
+document.head.insertAdjacentHTML('beforeend',`<style>.st-chart{margin:4px 0 12px}.st-k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}</style>`);
+
+</script>
 </body>
 </html>
