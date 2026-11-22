@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment received · Mass Renewable</title><link rel="icon" href="/favicon.svg">
+<style>:root{--ink:#0f2a3d;--mut:#64748b;--teal:#0b7fab;--bg:#f4f7f9;--card:#fff}@media(prefers-color-scheme:dark){:root{--ink:#e2e8f0;--mut:#94a3b8;--bg:#0b1620;--card:#132231}}
+body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);display:grid;place-items:center;min-height:100vh;padding:16px;box-sizing:border-box}
+.c{background:var(--card);border-radius:16px;padding:32px 28px;max-width:460px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,.08);border-top:6px solid var(--teal);text-align:center}
+.ok{width:56px;height:56px;border-radius:50%;background:#d1fae5;color:#047857;display:grid;place-items:center;margin:0 auto 12px;font-size:30px}h1{font-size:22px;margin:0 0 6px}p{color:var(--mut);margin:6px 0}b{color:var(--ink)}.f{margin-top:20px;font-size:13px}</style></head>
+<body><main class="c"><div class="ok" aria-hidden="true">✓</div><h1>Thank you, your payment went through</h1><p id="inv"></p><p>A receipt is on its way to your email. Bank (ACH) payments can take a few business days to clear.</p>
+<p class="f"><b>Mass Renewable Energy Solutions</b><br>(855) 742-4612 · info@massrenewable.com</p></main>
+<script>var i=new URLSearchParams(location.search).get('inv');if(i)document.getElementById('inv').textContent='Invoice '+i.replace(/[^\w\- ]/g,'');</script></body></html>

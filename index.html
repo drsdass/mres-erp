@@ -6440,5 +6440,71 @@ A['ali-seturl']=()=>modal('Set the Alibaba link',`<p class="sm muted" style="mar
 const _aqPanelAli=aqPanel;aqPanel=function(q){const h=_aqPanelAli(q);return h?h.replace('<details>',`<p class="sm muted" style="margin:0 16px 6px">Alibaba page not right? <button type="button" class="link sm" data-action="ali-seturl">Set the Alibaba link</button></p><details>`):h};
 
 </script>
+<script>/* payments.js */
+/* ================= Online payments: customers pay invoices by card or bank transfer (Stripe) =================
+   Like QuickBooks Payments. Every invoice gets a "Pay now" link (card, ACH bank transfer, Apple/Google Pay — whatever
+   is turned on in Stripe). The link is in the invoice email and printed on the invoice PDF. When the customer pays,
+   Stripe tells the ERP (stripe-webhook → erp_payments) and the payment is recorded on the invoice by itself:
+   the gross amount into 1060 Stripe balance, Stripe's fee to 6400 Bank and merchant fees, the order moves to Paid.
+   Stripe's payouts to the bank come in as bank lines and file to 1060 with one click.
+   Setup: Accounting → Money in → Online payments (shows whether Stripe is connected). */
+const PAYF='pay-link';
+function pyAcct(){bkEnsureAcct('1060','Stripe balance','Bank');bkEnsureAcct('6400','Bank and merchant fees','Expense')}
+const pyOn=()=>!!(S.gl&&S.gl.payOnline);
+async function pyLink(i,force){const bal=bkBal(i);if(!(bal>=0.5))return null;if(!force&&i.payLink&&Math.abs(i.payLink.amount-bal)<0.005&&i.payLink.url)return i.payLink;
+ const {data,error}=await CLOUD.functions.invoke(PAYF,{body:{invoice:i.id,amount:bal,customer:aname(i.acct),replace:i.payLink&&i.payLink.id,site:location.origin}});
+ if(error||!data||data.error){let msg=(data&&data.error)||(error&&error.message)||'Stripe didn’t answer';try{const c=error&&error.context&&await error.context.json();if(c&&c.error)msg=c.error}catch(e){}throw new Error(msg)}
+ i.payLink={url:data.url,id:data.id,amount:bal,at:new Date().toISOString(),by:USER.name};log(`Made a Pay now link for invoice ${i.id} (${$m(bal)})`);save();return i.payLink}
+A['py-link']=async d=>{const i=byId(S.invoices,d.id);if(!i)return;try{toast('Making the Pay now link…');const l=await pyLink(i,!!d.force);if(!l)return toast('Nothing left to pay on this invoice.');await copyText(l.url);toast('Pay now link copied. Paste it anywhere: text, email, chat.');rerender()}catch(e){toast('Pay now link: '+e.message,true)}};
+/* the invoice email: add the link */
+let pyNext=null;const _cpOpenPy=cpOpen;cpOpen=function(o){if(pyNext&&o&&typeof o.body==='string'){const u=pyNext;pyNext=null;o.body=o.body.replace(/\n\nThank you for your business\./,`\n\nPay online by card or bank transfer (ACH): ${u}\n\nThank you for your business.`);if(!o.body.includes(u))o.body+=`\n\nPay online: ${u}`}return _cpOpenPy(o)};
+const _invEmailPy=A['inv-email'];A['inv-email']=async d=>{const i=byId(S.invoices,d.id);if(i&&pyOn()&&bkBal(i)>=0.5){try{const l=await pyLink(i);if(l)pyNext=l.url}catch(e){toast('No Pay now link this time: '+e.message,true)}}return _invEmailPy(d)};
+/* the invoice PDF: print the link */
+if(typeof flInvSpec==='function'){const _fisPy=flInvSpec;flInvSpec=i=>{const s=_fisPy(i);if(i.payLink&&i.payLink.url&&bkBal(i)>0.004&&Math.abs(i.payLink.amount-bkBal(i))<0.005)s.terms=[`Pay online by card or bank transfer (ACH): ${i.payLink.url}`,...s.terms];return s}}
+const _invPdfPy=A['inv-pdf'];A['inv-pdf']=async d=>{const i=byId(S.invoices,d.id);if(i&&pyOn()&&bkBal(i)>=0.5){try{await pyLink(i)}catch(e){}}return _invPdfPy(d)};
+/* payments coming in from Stripe */
+let pyBusy=false;async function pySync(){if(pyBusy||!CLOUD||!S.invoices)return;pyBusy=true;try{const since=iso(addDays(T0,-180));const {data,error}=await CLOUD.from('erp_payments').select('*').gte('paid_at',since).order('paid_at');if(error){S.gl&&(S.gl.payErr=error.message);return}
+ ensureGL();S.gl.paySeen=S.gl.paySeen||{};let n=0,amt=0;const news=[];
+ (data||[]).forEach(r=>{if(S.gl.paySeen[r.id])return;if(r.status!=='paid'){S.gl.paySeen[r.id]='failed';log(`Online payment for invoice ${r.invoice} failed at the bank (${$m(r.amount)}${r.payer_name?', '+r.payer_name:''})`);return}
+  const i=byId(S.invoices,r.invoice);if(!i){S.gl.payOrphans=S.gl.payOrphans||{};S.gl.payOrphans[r.id]=r;return}
+  if((i.pays||[]).some(p=>p.stripe===r.id)){S.gl.paySeen[r.id]=true;return}pyAcct();const d=String(r.paid_at||'').slice(0,10)||TODAY;const a=r2(Math.min(+r.amount,bkBal(i)+0.004)||+r.amount);
+  bkApplyPay(i,{date:locked(d)?TODAY:d,amt:a,method:r.method==='us_bank_account'?'Online (ACH)':r.method==='card'?'Online (card)':'Online',ref:'Stripe '+String(r.stripe_pi||r.id).slice(-8),acct:'1060',fee:r2(r.fee||0),stripe:r.id,payer:r.payer_name||r.payer_email||'',by:'Stripe'});
+  if(i.payLink&&bkBal(i)<0.005)i.payLink.paid=true;S.gl.paySeen[r.id]=true;n++;amt+=a;news.push(`${aname(i.acct)} paid invoice ${i.id} online: ${$m(a)}`)});
+ if(n){news.forEach(t=>log(t));save();toast(n===1?news[0]:`${n} online payments received, ${$m(amt)}`);if(typeof rerender==='function')rerender()}}catch(e){}finally{pyBusy=false}}
+setTimeout(pySync,4000);setInterval(pySync,60000);
+/* Stripe's fee on each online payment */
+const _ledgerPy=ledger;ledger=function(){const R=_ledgerPy();const st=S.gl.start;S.invoices.forEach(i=>(i.pays||[]).forEach((p,k)=>{if(!(p.fee>0)||!p.date||p.date<st)return;
+ R.E.push({id:`FEE:${i.id}:${k}`,auto:true,date:p.date,src:'Card / ACH fee',ref:`Invoice ${i.id}`,memo:`Stripe fee on ${aname(i.acct)}’s payment`,payee:'Stripe',lines:[{acct:'6400',dr:r2(p.fee),cr:0,memo:'Stripe fee'},{acct:p.acct||'1060',dr:0,cr:r2(p.fee),memo:'Stripe fee'}]})}));R.E.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);return R};
+/* Stripe payouts in the bank file to 1060 */
+if(typeof ST_RULES!=='undefined')ST_RULES.unshift([/stripe/i,'1060','Stripe payout']);
+/* Money in: the Online payments panel */
+A['py-toggle']=()=>{ensureGL();S.gl.payOnline=!S.gl.payOnline;if(S.gl.payOnline)pyAcct();log(`${S.gl.payOnline?'Turned on':'Turned off'} Pay now links on invoices`);save();rerender()};
+A['py-check']=async()=>{try{toast('Checking Stripe…');const {data,error}=await CLOUD.functions.invoke(PAYF,{body:{action:'status'}});if(error||!data||data.error){let msg=(data&&data.error)||(error&&error.message);try{const c=error&&error.context&&await error.context.json();if(c&&c.error)msg=c.error}catch(e){}throw new Error(msg||'no answer')}
+ ensureGL();S.gl.payStatus={ok:true,live:data.live,name:data.name,charges:data.charges,at:new Date().toISOString()};save();toast(`Stripe connected${data.name?': '+data.name:''} (${data.live?'live':'test mode'})`);rerender()}catch(e){ensureGL();S.gl.payStatus={ok:false,err:e.message,at:new Date().toISOString()};save();toast('Stripe: '+e.message,true);rerender()}};
+const _inViewPy=bkInView;bkInView=function(E){const h=_inViewPy(E);const st=(S.gl&&S.gl.payStatus)||null;const on=pyOn();const y0=TODAY.slice(0,4)+'-01-01';
+ const online=S.invoices.flatMap(i=>(i.pays||[]).filter(p=>p.stripe).map(p=>({i,p})));const ytd=online.filter(x=>x.p.date>=y0);const orph=Object.values((S.gl&&S.gl.payOrphans)||{});
+ const panel=`<section class="panel mb py-panel"><div class="ph"><h3>${ic('dollar',16)} Online payments (card and bank transfer)</h3><span class="grow"></span>${st&&st.ok?chip(st.live?'Stripe connected':'Stripe test mode',st.live?'ok':'warn'):chip('Not connected','plain')}</div><div class="pb">
+  <div class="py-row"><label class="check-inline"><input type="checkbox" data-action="py-toggle" ${on?'checked':''}> Put a <b>Pay now</b> link on every invoice email and invoice PDF</label>${btn(st&&st.ok?'Check again':'Check the Stripe connection','py-check',{},'sm')}</div>
+  ${st&&!st.ok?`<p class="sm" style="color:var(--alert)">Stripe: ${esc(st.err||'')}. See the setup steps in Settings, or ask Satish.</p>`:''}
+  ${online.length?`<div class="py-kpis"><div><b>${ytd.length}</b><span>paid online this year</span></div><div><b>${$m(sum(ytd,x=>x.p.amt))}</b><span>collected</span></div><div><b>${$m(sum(ytd,x=>x.p.fee||0))}</b><span>Stripe fees</span></div><div><b>${$m(balances(TODAY,null,E)['1060']||0)}</b><span>in Stripe, not paid out yet</span></div></div>`:''}
+  ${orph.length?`<p class="sm" style="color:var(--alert)">${orph.length} online payment${orph.length===1?'':'s'} for an invoice number the ERP doesn’t have: ${esc(orph.map(r=>`${r.invoice||'?'} ${$m(r.amount)} ${r.payer_name||''}`).join('; '))}. Record ${orph.length===1?'it':'them'} with Receive payment (deposit to 1060).</p>`:''}
+  <p class="sm muted" style="margin:6px 0 0">Customers pay from the link; the payment lands on the invoice by itself, usually within a minute. Bank transfers (ACH) take a few business days to clear and show up when they do.</p></div></section>`;
+ return panel+h};
+/* Pay now link button on each open invoice row */
+const _tableRowsPy=bkInView;bkInView=function(E){let h=_tableRowsPy(E);if(!pyOn())return h;S.invoices.filter(i=>bkBal(i)>=0.5).forEach(i=>{const k=`data-action="bk-credit" data-id="${esc(i.id)}"`;const j=h.indexOf(k);if(j<0)return;const s=h.lastIndexOf('<button',j);h=h.slice(0,s)+`<button type="button" class="btn sm ghost" data-action="py-link" data-id="${esc(i.id)}" title="Copy a Pay now link for this invoice">Pay link</button> `+h.slice(s)});return h};
+/* Orders → Waiting for payment: say whether the customer has a Pay now link */
+const _flCardPy=flCard;flCard=function(o){let h=_flCardPy(o);const i=o.invoice&&byId(S.invoices,o.invoice);if(!i||!pyOn()||bkBal(i)<0.5)return h;const paidOnline=(i.pays||[]).some(p=>p.stripe);
+ return h.replace('<div class="fl-acts">',`<div class="sm" style="margin:-4px 0 8px">${i.payLink&&i.payLink.url?`Pay now link sent ${fds(String(i.payLink.at).slice(0,10))} · <button type="button" class="link" data-action="py-link" data-id="${esc(i.id)}">copy link</button>`:`<button type="button" class="link" data-action="py-link" data-id="${esc(i.id)}">Copy a Pay now link</button> to text or email it`}${paidOnline?' · part paid online':''}</div><div class="fl-acts">`)};
+/* Settings: how to connect Stripe */
+const _setPy=glSettingsView;glSettingsView=function(...a){return _setPy(...a)+`<section class="panel" style="margin-top:14px;max-width:860px"><div class="ph"><h3>Connect Stripe for online payments</h3></div><div class="pb sm"><ol class="py-steps">
+ <li>Open a free account at stripe.com as Mass Renewable Energy Solutions LLC and add the bank account payouts go to. In Settings → Payment methods, turn on Cards and ACH Direct Debit (US bank account).</li>
+ <li>Supabase → SQL Editor: run <code>mres-payments.sql</code> once.</li>
+ <li>Supabase → Edge Functions: deploy <code>pay-link</code> (Verify JWT <b>on</b>) and <code>stripe-webhook</code> (Verify JWT <b>off</b>).</li>
+ <li>Stripe → Developers → API keys: copy the Secret key. Supabase → Edge Functions → Secrets: add <code>STRIPE_SECRET_KEY</code>.</li>
+ <li>Stripe → Developers → Webhooks → Add endpoint: <code>https://ttjardwybyezgtccdath.supabase.co/functions/v1/stripe-webhook</code>, events <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, <code>checkout.session.async_payment_failed</code>. Copy its Signing secret into Supabase as <code>STRIPE_WEBHOOK_SECRET</code>.</li>
+ <li>Accounting → Money in → Online payments: Check the Stripe connection, then turn on Pay now links.</li></ol><p class="muted">Use Stripe’s test keys (sk_test_…) first and pay an invoice with card 4242 4242 4242 4242 to see it land; then switch to the live keys.</p></div></section>`};
+document.head.insertAdjacentHTML('beforeend',`<style>.py-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}.py-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 4px}.py-kpis div{display:flex;flex-direction:column;background:var(--surface-2,#f1f5f9);border-radius:10px;padding:10px 12px}.py-kpis b{font-size:19px}.py-kpis span{font-size:12px;color:var(--ink-3)}@media(max-width:700px){.py-kpis{grid-template-columns:repeat(2,1fr)}}.py-steps{margin:0;padding-left:20px}.py-steps li{margin:0 0 6px}</style>`);
+
+</script>
 </body>
 </html>
