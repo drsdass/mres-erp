@@ -1,0 +1,32 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Pay by bank transfer · Mass Renewable</title><link rel="icon" href="/favicon.svg">
+<style>:root{--ink:#0f2a3d;--mut:#64748b;--teal:#0b7fab;--bg:#f4f7f9;--card:#fff;--line:#e5e7eb;--chip:#f1f5f9}@media(prefers-color-scheme:dark){:root{--ink:#e2e8f0;--mut:#94a3b8;--bg:#0b1620;--card:#132231;--line:#22384b;--chip:#1b2f42}}
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);padding:24px 16px}
+.c{background:var(--card);border-radius:16px;max-width:560px;margin:0 auto;box-shadow:0 10px 30px rgba(0,0,0,.08);border-top:6px solid var(--teal);overflow:hidden}
+.h{padding:22px 24px 6px}.brand{font-weight:800;letter-spacing:.02em}.brand small{display:block;color:var(--teal);font-size:11px;letter-spacing:.12em}
+.amt{padding:6px 24px 18px;border-bottom:1px solid var(--line)}.amt b{font-size:34px;display:block}.amt span{color:var(--mut)}
+.steps{padding:16px 24px;color:var(--mut);font-size:14.5px}.steps b{color:var(--ink)}
+.rows{padding:0 24px 8px}.row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}
+.k{flex:0 0 132px;color:var(--mut);font-size:13.5px}.v{flex:1;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15.5px;overflow-wrap:anywhere}
+button{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:6px 11px;cursor:pointer;min-width:70px}button.ok{background:#d1fae5;color:#047857;border-color:#a7f3d0}
+.all{padding:6px 24px 18px;display:flex;gap:10px;flex-wrap:wrap}.all button{padding:10px 14px;font-size:14px}.primary{background:var(--teal);color:#fff;border-color:var(--teal)}
+.alt{padding:14px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--mut)}.alt a{color:var(--teal);font-weight:600}
+.f{padding:14px 24px 20px;border-top:1px solid var(--line);font-size:13px;color:var(--mut)}.err{padding:24px}
+@media(max-width:480px){.row{flex-wrap:wrap}.k{flex-basis:100%}}</style></head>
+<body><main class="c" id="app"><div class="err">This payment link is incomplete. Please use the link from your invoice email, or call (855) 742-4612.</div></main>
+<script>
+(function(){var d;try{var h=location.hash.replace(/^#d=/,'');h=h.replace(/-/g,'+').replace(/_/g,'/');d=JSON.parse(decodeURIComponent(escape(atob(h))))}catch(e){return}
+if(!d||!d.r||!d.a)return;function e(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+var money=function(n){return Number(n).toLocaleString('en-US',{style:'currency',currency:'USD'})};
+var rows=[['Amount',d.amt!=null?Number(d.amt).toFixed(2):'','$'+money(d.amt).replace('$','')],['Bank',d.b],['Account name',d.n],['Routing (ACH)',d.r],['Account number',d.a],['Account type',d.t],['Wire routing',d.w&&d.w!==d.r?d.w:''],['SWIFT (international)',d.s],['Memo / reference','Invoice '+d.i+(d.p?' / PO '+d.p:'')]].filter(function(x){return x[1]});
+var html='<div class="h"><div class="brand">MASS RENEWABLE<small>ENERGY SOLUTIONS</small></div></div><div class="amt"><span>Invoice '+e(d.i)+(d.c?' · '+e(d.c):'')+'</span><b>'+e(money(d.amt))+'</b><span>'+(d.due?'Due '+e(d.due):'')+'</span></div>'
++'<div class="steps"><b>Pay by bank transfer.</b> In your bank’s online banking, add us as a payee (or start an ACH or wire) and copy these details in. Please put the invoice number in the memo.</div><div class="rows">'
++rows.map(function(x,k){var v=x[2]||x[1];return '<div class="row"><div class="k">'+e(x[0])+'</div><div class="v">'+e(v)+'</div><button type="button" data-k="'+k+'">Copy</button></div>'}).join('')+'</div>'
++'<div class="all"><button type="button" class="primary" id="cpall">Copy all details</button></div>'
++(d.u?'<div class="alt">Prefer to pay right now online from your bank account? <a href="'+e(d.u)+'" rel="noopener">Pay instantly online</a></div>':'')
++'<div class="f">Questions? '+e(d.co||'Mass Renewable Energy Solutions')+' · (855) 742-4612 · info@massrenewable.com<br>Only send money to these details if they match your invoice. Call us before paying if anything looks different.</div>';
+document.getElementById('app').innerHTML=html;
+function cp(t,b){var done=function(){var o=b.textContent;b.textContent='Copied';b.classList.add('ok');setTimeout(function(){b.textContent=o;b.classList.remove('ok')},1500)};if(navigator.clipboard)navigator.clipboard.writeText(t).then(done,function(){fb(t);done()});else{fb(t);done()}}
+function fb(t){var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(x){}a.remove()}
+document.addEventListener('click',function(ev){var b=ev.target.closest('button[data-k]');if(b){cp(rows[+b.dataset.k][1],b);return}if(ev.target.id==='cpall')cp(rows.map(function(x){return x[0]+': '+(x[2]||x[1])}).join('\n'),ev.target)});
+})();
+</script></body></html>
