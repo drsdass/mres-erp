@@ -6649,6 +6649,9 @@ const _setPl=glSettingsView;glSettingsView=function(...a){return _setPl(...a)+`<
  <li>Supabase → SQL Editor: run <code>mres-plaid.sql</code>. Edge Functions: deploy <code>plaid</code> (Verify JWT <b>on</b>).</li>
  <li>Supabase → Secrets: <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code> (the Production secret) and <code>PLAID_ENV</code> = <code>production</code> (use <code>sandbox</code> to try it first).</li>
  <li>Plaid → Developers → API → Allowed redirect URIs is not needed. In the ERP: Accounting → Banking → Connect a bank, sign in to Wells Fargo in Plaid’s window, and pick which ERP account each bank account goes to.</li></ol></div></section>`};
+/* Denzil McKissic's deposits are capital contributions: suggested to 3010 Capital: Denzil McKissic */
+if(typeof ST_RULES!=='undefined')ST_RULES.unshift([/mckissic|denzil/i,'3010','Capital contribution: Denzil McKissic']);
+const _stAddCap=stAddAs;stAddAs=function(bl,acc){if(acc==='3010')bkEnsureAcct('3010','Capital: Denzil McKissic','Equity');return _stAddCap(bl,acc)};
 
 </script>
 </body>
