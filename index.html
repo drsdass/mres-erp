@@ -6482,7 +6482,7 @@ const _invEmailPy=A['inv-email'];A['inv-email']=async d=>{const i=byId(S.invoice
 if(typeof flInvSpec==='function'){const _fisPy=flInvSpec;flInvSpec=i=>{const s=_fisPy(i);if(i.payLink&&i.payLink.url&&bkBal(i)>0.004&&Math.abs(i.payLink.amount-bkBal(i))<0.005)s.terms=[`Review and pay online${i.payLink.bankOnly?' (bank transfer)':' (bank transfer or card)'}: ${i.payLink.url}`,...s.terms];return s}}
 const _invPdfPy=A['inv-pdf'];A['inv-pdf']=async d=>{const i=byId(S.invoices,d.id);if(i&&pyOn()&&bkBal(i)>=0.5){try{await pyLink(i)}catch(e){}}return _invPdfPy(d)};
 /* payments coming in from Stripe */
-let pyBusy=false;async function pySync(){if(pyBusy||!CLOUD||!S.invoices)return;pyBusy=true;try{const since=iso(addDays(T0,-180));const {data,error}=await CLOUD.from('erp_payments').select('*').gte('paid_at',since).order('paid_at');if(error){S.gl&&(S.gl.payErr=error.message);return}
+let pyBusy=false;async function pySync(){if(typeof glStaff==='function'&&glStaff())return;if(pyBusy||!CLOUD||!S.invoices)return;pyBusy=true;try{const since=iso(addDays(T0,-180));const {data,error}=await CLOUD.from('erp_payments').select('*').gte('paid_at',since).order('paid_at');if(error){S.gl&&(S.gl.payErr=error.message);return}
  ensureGL();S.gl.paySeen=S.gl.paySeen||{};let n=0,amt=0;const news=[];
  (data||[]).forEach(r=>{if(S.gl.paySeen[r.id])return;if(r.status!=='paid'){S.gl.paySeen[r.id]='failed';log(`Online payment for invoice ${r.invoice} failed at the bank (${$m(r.amount)}${r.payer_name?', '+r.payer_name:''})`);return}
   const i=byId(S.invoices,r.invoice);if(!i){S.gl.payOrphans=S.gl.payOrphans||{};S.gl.payOrphans[r.id]=r;return}
@@ -6679,6 +6679,27 @@ if(typeof ST_RULES!=='undefined')ST_RULES.unshift([/mckissic|denzil/i,'3010','Ca
 const _stAddCap=stAddAs;stAddAs=function(bl,acc){if(acc==='3010')bkEnsureAcct('3010','Capital: Denzil McKissic','Equity');return _stAddCap(bl,acc)};
 /* make sure 3010 exists before the Banking tab draws, so the button names it and the "Add as" list has it */
 const _bankViewCap=bankingView;bankingView=function(E){try{if(S.gl&&(S.gl.bank||[]).some(b=>/mckissic|denzil/i.test(b.desc||'')))bkEnsureAcct('3010','Capital: Denzil McKissic','Equity')}catch(e){}return _bankViewCap(E)};
+
+</script>
+<script>/* secure.js */
+/* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
+   Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
+   Staff browsers get a small public copy (S.glpub) with what invoices need: bank details for payment, online-pay settings, tax rate, closed periods. */
+const GL_PUB=['remit','payOnline','payCardMax','taxRate','lock','start','official','officialOn','threshold'];
+function glPubOf(g){const o={};GL_PUB.forEach(k=>{if(g&&g[k]!==undefined)o[k]=g[k]});return o}
+const glStaff=()=>!!(typeof CLOUD!=='undefined'&&CLOUD&&typeof ME!=='undefined'&&ME&&!isOwner());
+/* staff: replace whatever books are in this browser (old cache, or the empty default) with the public copy, and never send it */
+function glStaffCopy(){if(!glStaff())return;const pub=S.glpub||{};const sig=J(pub);
+ if(!S.gl||!S.gl._pub||S.gl._pub!==sig){delete S.gl;ensureGL();Object.assign(S.gl,JSON.parse(sig),{_pub:sig})}
+ base.gl=J(S.gl);delete ver.gl}
+/* owners: keep the public copy current */
+function glOwnerPub(){if(!S.gl||glStaff()||S.gl._pub)return false;if(typeof ME==='undefined'||!ME)return false;const p=glPubOf(S.gl);if(J(p)===J(S.glpub))return false;S.glpub=p;return true}
+const _pushKeySec=pushKey;pushKey=async function(k,depth){if(k==='gl'&&glStaff()){base.gl=J(S.gl);return}return _pushKeySec(k,depth)};
+const _saveSec=save;save=function(){if(glStaff())glStaffCopy();else glOwnerPub();return _saveSec.apply(this,arguments)};
+const _renderSec=render;render=function(keep){if(glStaff())glStaffCopy();else if(glOwnerPub())setTimeout(()=>save(),0);return _renderSec(keep)};
+/* bank feed, Mercury and online-payment syncs run only in owners' browsers */
+{const g=f=>function(){if(glStaff())return;return f.apply(this,arguments)};
+ if(typeof plSync==='function')plSync=g(plSync);if(typeof mqSync==='function')mqSync=g(mqSync);if(typeof pySync==='function')pySync=g(pySync)}
 
 </script>
 </body>
