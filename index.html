@@ -6652,6 +6652,8 @@ const _setPl=glSettingsView;glSettingsView=function(...a){return _setPl(...a)+`<
 /* Denzil McKissic's deposits are capital contributions: suggested to 3010 Capital: Denzil McKissic */
 if(typeof ST_RULES!=='undefined')ST_RULES.unshift([/mckissic|denzil/i,'3010','Capital contribution: Denzil McKissic']);
 const _stAddCap=stAddAs;stAddAs=function(bl,acc){if(acc==='3010')bkEnsureAcct('3010','Capital: Denzil McKissic','Equity');return _stAddCap(bl,acc)};
+/* make sure 3010 exists before the Banking tab draws, so the button names it and the "Add as" list has it */
+const _bankViewCap=bankingView;bankingView=function(E){try{if(S.gl&&(S.gl.bank||[]).some(b=>/mckissic|denzil/i.test(b.desc||'')))bkEnsureAcct('3010','Capital: Denzil McKissic','Equity')}catch(e){}return _bankViewCap(E)};
 
 </script>
 </body>
