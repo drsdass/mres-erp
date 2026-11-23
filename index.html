@@ -6002,6 +6002,23 @@ function bkGuess(name){const n=String(name).toLowerCase(),leaf=n.split(':').pop(
 function bkMap(q){return (S.gl.qbMap&&S.gl.qbMap[q])||bkGuess(q)||'6900'}
 function bkRows(wb){const X=window.XLSX;const sh=wb.Sheets[wb.SheetNames[0]];return X.utils.sheet_to_json(sh,{header:1,raw:false,defval:''}).map(r=>r.map(c=>String(c).trim()))}
 function bkHeader(rows,need){for(let i=0;i<Math.min(rows.length,40);i++){const low=rows[i].map(c=>c.toLowerCase());if(need.every(n=>low.some(c=>n.test(c))))return i}return -1}
+/* QuickBooks reports saved as PDF: rebuild the table from where each piece of text sits on the page */
+async function bkPdfRows(file){const L=await stLoadPDF();const pdf=await L.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;const out=[];let cols=null;
+ for(let n=1;n<=pdf.numPages;n++){const pg=await pdf.getPage(n);const tc=await pg.getTextContent();const rows=[];
+  tc.items.forEach(it=>{const s=String(it.str||'').trim();if(!s)return;const x=it.transform[4],y=it.transform[5],w=it.width||0;let r=rows.find(r=>Math.abs(r.y-y)<2.5);if(!r){r={y,items:[]};rows.push(r)}r.items.push({s,x,r:x+w})});
+  rows.sort((a,b)=>b.y-a.y);const gaps=rows.slice(1).map((r,k)=>rows[k].y-r.y).filter(g=>g>0).sort((a,b)=>a-b);const med=gaps.length?gaps[Math.floor(gaps.length/2)]:12;let py=null;
+  rows.forEach(r=>{const gap=py==null?99:py-r.y;py=r.y;r.items.sort((a,b)=>a.x-b.x);const txt=r.items.map(i=>i.s.toLowerCase());
+   if(txt.some(t=>/^debit$/.test(t))&&txt.some(t=>/^credit$/.test(t))){cols=r.items.map(i=>({h:i.s,x:i.x,r:i.r,num:/^(debit|credit|amount|balance)$/i.test(i.s)}));if(!cols[0].num&&cols[0].x<120){}else cols.unshift({h:'',x:0,r:0,num:false});out.push(cols.map(c=>c.h));return}
+   if(!cols){out.push([r.items.map(i=>i.s).join(' ')]);return}
+   const cells=cols.map(()=>[]);r.items.forEach(i=>{const isNum=/^\(?-?\$?[\d,]+\.\d{2}\)?$/.test(i.s);let best=0,bd=1e9;cols.forEach((c,k)=>{const d=isNum&&c.num?Math.abs(i.r-c.r):!isNum&&!c.num?(i.x>=c.x-6?i.x-c.x:1e6+c.x-i.x):1e7;if(d<bd){bd=d;best=k}});cells[best].push(i.s)});
+   const row=cells.map(c=>c.join(' '));
+   /* a wrapped line (no amounts, no date) belongs to the row above */
+   const prev=out[out.length-1];const hasNum=cols.some((c,k)=>c.num&&row[k]);const dateK=cols.findIndex(c=>/date/i.test(c.h));
+   const textOnly=!hasNum&&!(dateK>=0&&row[dateK])&&row.filter(Boolean).length<=2&&!/^total/i.test(row.join(' ').trim());
+   if(hasNum&&gap<med*0.85&&prev&&prev.__lead){out.pop();prev.forEach((v,k)=>{if(v)row[k]=v+(row[k]?' '+row[k]:'')})}
+   else if(textOnly&&gap<med*0.85&&prev&&prev.length===row.length&&!prev.__lead){row.forEach((v,k)=>{if(v)prev[k]=(prev[k]?prev[k]+' ':'')+v});return}
+   if(textOnly)row.__lead=true;out.push(row)})}
+ return out}
 function bkParseJournal(rows){const h=bkHeader(rows,[/^(transaction )?date$/,/debit/,/credit/,/account/]);if(h<0)return null;const H=rows[h].map(c=>c.toLowerCase());const col=re=>H.findIndex(c=>re.test(c));
  const cD=col(/^(transaction )?date$/),cT=col(/^(transaction )?type$/),cN=col(/^(num|no\.?|#|ref.*)$/),cNm=col(/^name$/),cM=col(/memo|description/),cTr=col(/^trans\s?#$/),cDr=col(/debit/),cCr=col(/credit/);
  let cA=H.findIndex(c=>/^account( full name| name)?$/.test(c));if(cA<0)cA=H.findIndex(c=>/account/.test(c)&&!/#|number/.test(c));if(cA<0)cA=col(/account/);
@@ -6022,7 +6039,7 @@ const BK_STD={'1050':['Undeposited funds','Other asset'],'6050':['Payroll taxes'
 function bkAutoMap(names){names.forEach(q=>{if(S.gl.qbMap[q])return;let a=bkGuess(q);if(BK_STD[a])bkEnsureAcct(a,...BK_STD[a]);
   if(!a||!S.gl.coa.some(x=>x.no===a)){const leaf=q.split(':').pop().replace(/^\d{3,5}\s+/,'').trim();const ty=/income|revenue|sales/i.test(q)?'Income':/cost|cogs/i.test(q)?'Cost of goods sold':/loan|note payable|liab/i.test(q)?'Other liability':/asset|deposit/i.test(q)?'Other asset':'Expense';a=bkNewAcctNo(ty);S.gl.coa.push({no:a,name:leaf||q,type:ty,active:true,fromQB:true})}
   S.gl.qbMap[q]=a})}
-async function bkQBFile(kind,file){try{toast('Reading '+file.name+'…');const X=await loadXLSX();const buf=await file.arrayBuffer();const wb=/\.csv$|\.txt$/i.test(file.name)?X.read(new TextDecoder().decode(buf),{type:'string',raw:false}):X.read(buf,{type:'array'});const rows=bkRows(wb);bkX();
+async function bkQBFile(kind,file){try{toast('Reading '+file.name+'…');let rows;if(/\.pdf$/i.test(file.name)||file.type==='application/pdf')rows=await bkPdfRows(file);else{const X=await loadXLSX();const buf=await file.arrayBuffer();const wb=/\.csv$|\.txt$/i.test(file.name)?X.read(new TextDecoder().decode(buf),{type:'string',raw:false}):X.read(buf,{type:'array'});rows=bkRows(wb)}bkX();
  if(kind==='journal'){const tx=bkParseJournal(rows);if(!tx||!tx.length)return fail('That doesn’t look like the QuickBooks Journal report. It needs Date, Account, Debit and Credit columns.');
   bkAutoMap([...new Set(tx.flatMap(t=>t.lines.map(l=>l.q)))]);const ds=tx.map(t=>t.date).sort();
   S.gl.qb={file:file.name,imported:new Date().toISOString(),by:USER.name,from:ds[0],to:ds[ds.length-1],through:ds[ds.length-1],txns:tx.map((t,k)=>({id:'QB:'+(k+1),...t}))};
@@ -6034,7 +6051,7 @@ async function bkQBFile(kind,file){try{toast('Reading '+file.name+'…');const X
  save();rerender()}catch(e){fail('Could not read that file: '+e.message)}}
 function bkQBView(E){const qb=S.gl.qb,tb=S.gl.qbTB,ck=S.gl.qbCheck;const y=String(T0.getFullYear());
  const step=(n,done,t,body)=>`<section class="panel mb bk-step ${done?'done':''}"><div class="ph"><h3><span class="bk-n">${done?ic('check',14):n}</span> ${t}</h3></div><div class="pb">${body}</div></section>`;
- const file=(k,label)=>`<label class="bk-drop">${ic('upload',18)} <b>${label}</b> <span class="muted sm">.xlsx or .csv</span><input type="file" data-qbfile="${k}" accept=".xlsx,.xls,.csv" hidden></label>`;
+ const file=(k,label)=>`<label class="bk-drop">${ic('upload',18)} <b>${label}</b> <span class="muted sm">Excel, CSV or PDF</span><input type="file" data-qbfile="${k}" accept=".xlsx,.xls,.csv,.pdf" hidden></label>`;
  const qn=[...new Set([...(qb?qb.txns.flatMap(t=>t.lines.map(l=>l.q)):[]),...(tb?tb.lines.map(l=>l.q):[])])];
  const stats={};if(qb)qb.txns.forEach(t=>t.lines.forEach(l=>{const s=stats[l.q]=stats[l.q]||{n:0,dr:0,cr:0};s.n++;s.dr+=l.dr;s.cr+=l.cr}));
  const unb=qb?qb.txns.filter(t=>Math.abs(sum(t.lines,l=>l.dr-l.cr))>0.01):[];const types={};if(qb)qb.txns.forEach(t=>types[t.type||'Other']=(types[t.type||'Other']||0)+1);
