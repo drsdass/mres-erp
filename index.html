@@ -6681,6 +6681,38 @@ const _stAddCap=stAddAs;stAddAs=function(bl,acc){if(acc==='3010')bkEnsureAcct('3
 const _bankViewCap=bankingView;bankingView=function(E){try{if(S.gl&&(S.gl.bank||[]).some(b=>/mckissic|denzil/i.test(b.desc||'')))bkEnsureAcct('3010','Capital: Denzil McKissic','Equity')}catch(e){}return _bankViewCap(E)};
 
 </script>
+<script>/* paytest.js */
+/* paytest.js: "Send myself a $1 test" in the Online payments panel.
+   Makes a $1 Stripe link that isn't tied to any invoice, opens it, and watches for the payment to come back
+   through the webhook. Nothing touches the books. */
+function ptTest(){ensureGL();return S.gl.payTest||null}
+A['py-test']=async()=>{const w=window.open('about:blank','_blank');
+ try{toast('Making a $1 test link…');const inv='TEST-'+Date.now().toString(36).toUpperCase();
+  const {data,error}=await CLOUD.functions.invoke(PAYF,{body:{invoice:inv,amount:1,customer:'Test payment (not an invoice)',site:location.origin,methods:['card']}});
+  if(error||!data||data.error){let msg=(data&&data.error)||(error&&error.message);try{const c=error&&error.context&&await error.context.json();if(c&&c.error)msg=c.error}catch(e){}throw new Error(msg||'no answer')}
+  ensureGL();S.gl.payTest={inv,url:data.url,at:new Date().toISOString(),status:'waiting'};save();rerender();
+  if(w)w.location=data.url;else window.open(data.url,'_blank');
+  toast('Pay the $1 in the Stripe tab. This page will say when it comes back.');ptPoll()}
+ catch(e){if(w)w.close();toast('Test link: '+e.message,true)}};
+A['py-test-clear']=()=>{ensureGL();delete S.gl.payTest;save();rerender()};
+let ptT=null;async function ptPoll(){clearTimeout(ptT);const t=ptTest();if(!t||t.status!=='waiting'||!CLOUD)return;
+ try{const {data}=await CLOUD.from('erp_payments').select('*').eq('invoice',t.inv);const r=(data||[])[0];
+  if(r){S.gl.paySeen=S.gl.paySeen||{};S.gl.paySeen[r.id]=true;if(S.gl.payOrphans)delete S.gl.payOrphans[r.id];
+   Object.assign(t,{status:r.status==='paid'?'received':'failed',amount:+r.amount,fee:+r.fee||0,method:r.method||'',id:r.id,got:new Date().toISOString()});save();rerender();
+   return toast(r.status==='paid'?`Test payment came back: ${$m(r.amount)}, Stripe fee ${$m(r.fee||0)}. Online payments work. Refund it in Stripe.`:'The test payment failed at Stripe.',r.status!=='paid')}}catch(e){}
+ if(Date.now()-new Date(t.at)<2*3600e3)ptT=setTimeout(ptPoll,10000)}
+setTimeout(ptPoll,5000);
+const _inViewPt=bkInView;bkInView=function(E){let h=_inViewPt(E);const i=h.indexOf('data-action="py-check"');if(i<0)return h;const j=h.indexOf('</button>',i);if(j<0)return h;
+ const t=ptTest();let st='';
+ if(t&&t.status==='waiting')st=`<div class="sm" style="margin-top:8px">⏳ Waiting for the $1 test payment… <a href="${esc(t.url)}" target="_blank" rel="noopener">open the Stripe page</a> · ${btn('Cancel','py-test-clear',{},'sm ghost')}</div>`;
+ else if(t&&t.status==='received')st=`<div class="sm" style="margin-top:8px;color:var(--ok,#15803d)">✓ Test payment came back ${ago(t.got)}: ${$m(t.amount)}, Stripe fee ${$m(t.fee)}. Customers' online payments will mark invoices paid by themselves. Refund the $1 in Stripe (Payments → the $1.00 payment → Refund). ${btn('Hide','py-test-clear',{},'sm ghost')}</div>`;
+ else if(t&&t.status==='failed')st=`<div class="sm" style="margin-top:8px;color:var(--alert)">The test payment failed at Stripe. ${btn('Hide','py-test-clear',{},'sm ghost')}</div>`;
+ const b=' '+btn(t&&t.status==='received'?'Test again':'Send myself a $1 test','py-test',{},'sm');
+ h=h.slice(0,j+9)+b+h.slice(j+9);
+ if(st){const k=h.indexOf('</section>',j);if(k>0)h=h.slice(0,k)+`<div class="pb" style="padding-top:0">${st}</div>`+h.slice(k)}
+ return h};
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
@@ -6689,11 +6721,11 @@ const GL_PUB=['remit','payOnline','payCardMax','taxRate','lock','start','officia
 function glPubOf(g){const o={};GL_PUB.forEach(k=>{if(g&&g[k]!==undefined)o[k]=g[k]});return o}
 const glStaff=()=>!!(typeof CLOUD!=='undefined'&&CLOUD&&typeof ME!=='undefined'&&ME&&!isOwner());
 /* staff: replace whatever books are in this browser (old cache, or the empty default) with the public copy, and never send it */
-function glStaffCopy(){if(!glStaff())return;const pub=S.glpub||{};const sig=J(pub);
+function glStaffCopy(){if(!glStaff()||typeof S==='undefined'||!S)return;const pub=S.glpub||{};const sig=J(pub);
  if(!S.gl||!S.gl._pub||S.gl._pub!==sig){delete S.gl;ensureGL();Object.assign(S.gl,JSON.parse(sig),{_pub:sig})}
  base.gl=J(S.gl);delete ver.gl}
 /* owners: keep the public copy current */
-function glOwnerPub(){if(!S.gl||glStaff()||S.gl._pub)return false;if(typeof ME==='undefined'||!ME)return false;const p=glPubOf(S.gl);if(J(p)===J(S.glpub))return false;S.glpub=p;return true}
+function glOwnerPub(){if(typeof S==='undefined'||!S||!S.gl||glStaff()||S.gl._pub)return false;if(typeof ME==='undefined'||!ME)return false;const p=glPubOf(S.gl);if(J(p)===J(S.glpub))return false;S.glpub=p;return true}
 const _pushKeySec=pushKey;pushKey=async function(k,depth){if(k==='gl'&&glStaff()){base.gl=J(S.gl);return}return _pushKeySec(k,depth)};
 const _saveSec=save;save=function(){if(glStaff())glStaffCopy();else glOwnerPub();return _saveSec.apply(this,arguments)};
 const _renderSec=render;render=function(keep){if(glStaff())glStaffCopy();else if(glOwnerPub())setTimeout(()=>save(),0);return _renderSec(keep)};
