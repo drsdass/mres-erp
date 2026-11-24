@@ -6796,11 +6796,11 @@ const _editOrderLf=M.editOrder;M.editOrder=id=>{_editOrderLf(id);const o=byId(S.
 const lfTxt=i=>`${i.sku}, ${i.desc||i.name}`;
 function lfOpts(sel,q,keepBlank){const k=String(q||'').toLowerCase().split(/\s+/).filter(Boolean);const cur=sel.value;
  const hit=S.items.filter(i=>{const t=(i.sku+' '+(i.name||'')+' '+(i.desc||'')).toLowerCase();return k.every(w=>t.includes(w))||(i.sku===cur&&!k.length)});
- sel.innerHTML=(keepBlank?'<option value="">Choose a part…</option>':'')+hit.slice(0,300).map(i=>opt(i.sku,lfTxt(i),i.sku===cur)).join('')+'<option value="__newpart">+ New part (not in the list)…</option>';
+ sel.innerHTML=(keepBlank?'<option value="">Choose a part…</option>':'')+(k.length?hit.slice(0,300):hit).map(i=>opt(i.sku,lfTxt(i),i.sku===cur)).join('')+'<option value="__newpart">+ New part (not in the list)…</option>';
  if(k.length&&hit.length&&!hit.some(i=>i.sku===cur))sel.value=hit[0].sku;else if(hit.some(i=>i.sku===cur))sel.value=cur;return hit.length}
 function lfEnhance(sel){if(sel.dataset.ps||sel.disabled)return;sel.dataset.ps='1';const blank=!!sel.querySelector('option[value=""]');
  const box=document.createElement('div');box.innerHTML=`<input type="search" class="input lf-q" placeholder="Type to find a part: number, name or word (e.g. W2E200, fan)" style="margin-bottom:4px"><div class="lf-n sm muted"></div>`;sel.parentNode.insertBefore(box,sel);
- const q=box.querySelector('.lf-q'),n=box.querySelector('.lf-n');
+ const q=box.querySelector('.lf-q'),n=box.querySelector('.lf-n');lfOpts(sel,'',blank);
  q.addEventListener('input',()=>{const c=lfOpts(sel,q.value,blank);n.textContent=q.value?(c?`${c} match${c>1?'es':''}${c>300?' (showing 300)':''}`:'No match. Pick “+ New part” in the list to add it.'):'';sel.dispatchEvent(new Event('change',{bubbles:true}))});
  q.addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault()});
  sel.addEventListener('change',()=>{if(sel.value!=='__newpart')return;const sku=prompt('New part number (SKU)',q.value||'');if(!sku||!sku.trim()){sel.selectedIndex=0;return}
@@ -6984,7 +6984,7 @@ const HELP_GUIDE=[
 ['Orders flow','orders flow stages estimate needs parts coming ready ship invoice paid','**Orders** shows every customer order as a card moving through stages: Estimate, Customer PO, Sales order, Parts, Shipped, Invoiced, Paid. Tabs filter by stage (needs parts, on the way, ready to ship, waiting for payment, done). Each card has the next step as a button: **Order parts**, **Pick and pack**, **Ship**, **Create invoice**, **Record payment**. Stock on hand goes to the oldest orders first.'],
 ['Sales orders and editing an order','sales order edit change part quantity price delete duplicate so number','**Sales orders** lists customer orders (filter Open, Your move, Waiting, Completed, All). Open one to see it. **Edit order** changes SO #, dates, customer PO, end-customer PO, delivery location, lead time, ship method, quantities, prices and each line\'s part (type in the search box above **Line 1 part** to find a part; you can\'t change the part after it is packed or shipped). Owners also see a red **Delete order** in Edit order for orders made by mistake (only if nothing is packed, shipped or invoiced). The order page also has **Packing slip** and the next step button.'],
 ['Finding a part in a dropdown','part dropdown find search list cant find new part','Above every part dropdown there is a search box: type part of the number or a word (e.g. W2E200 or fan) and the list narrows. If it isn\'t there, choose **+ New part (not in the list)…** at the bottom of the dropdown to add it.'],
-['Quotes and estimates','quote estimate price request customer quote won','Customer quotes: **+ New → Customer quote**, or **Orders → Estimate**, or from an email **Turn this into → Quote**. Under **Sales orders → Quotes and price requests**. When the customer accepts, open the quote and click **Won, create order**.'],
+['Quotes and estimates','quote estimate price request customer quote won markup freight cost send email pdf','Send a customer a quote: **+ New → Customer quote** (or **Orders → Estimate**, or from their email **Turn this into → Quote**). Pick the customer, add each part (search box above the dropdown; **+ New part** if it isn\'t listed), the qty, and under the price type **Our cost** (from the supplier\'s quote). Set **Markup %** (default 30) and click **Apply markup to prices**. Enter **Freight to charge ($)**. Subtotal, freight and total show in the box. Click **Save quote**, then open the quote and click **Email** (sends the PDF quote on our letterhead from the ERP) or **PDF** to download. Quotes are under **Sales orders → Quotes and price requests** and **Quotes**; use **Follow up** if they go quiet. When the customer sends a PO, open the quote and click **Won, create order** (or **They sent a PO → sales order**): the lines, prices and freight carry into the sales order. **Lost** closes it.'],
 ['Part requests','part request find a part ask the team','To ask the team to find a part (instead of texting): **+ New → Part request**. Say what, how many, what it is for, needed by, urgency, who should look, specs and files, and optionally a **Preferred or suggested vendor** (pick from the list or **+ Add a preferred vendor…**). Everyone gets an email. Questions and answers stay on the request. From a request you can **Start an RFQ from this**.'],
 ['Buying parts and vendor POs','buy order parts purchase order vendor po mcmaster local vendor reorder','Open the order and click **Order parts**, or on the order card choose **Order from <vendor>** (local vendor PO) or **Alibaba RFQ**. **Purchase orders** lists our POs to vendors; **+ New → Purchase order** makes one. On a PO, **PO PDF** / **Email PO** sends it on our letterhead. Vendor order confirmation emails (e.g. McMaster-Carr) that arrive at info@ show under **Purchase orders → Vendor orders to file**; one click files them as a PO. You can also paste or upload a vendor order confirmation.'],
 ['RFQs and Alibaba','rfq alibaba sourcing supplier quotes compare','**RFQs (Sourcing)** is for finding new suppliers. **+ New → RFQ to suppliers**. On an RFQ: supplier quotes, a best-deal comparison (landed cost), conversation, follow-ups, and **Preferred vendors** (+ Add a preferred vendor). **Post on Alibaba** opens Alibaba in a new tab; paste the Manage RFQ link back with **Mark as posted**. Supplier quotes: **+ New → Supplier quote** (paste their message).'],
@@ -7038,6 +7038,43 @@ A['help-st']=d=>{const i=helpS().ideas.find(x=>x.id===d.id);if(!i)return;i.statu
 A['help-reply']=d=>{const i=helpS().ideas.find(x=>x.id===d.id);if(!i)return;const r=prompt(`Reply to ${i.by} (they see it under Help → Suggest a change)`,i.reply||'');if(r==null)return;i.reply=r.trim();save();M.help('list')};
 /* the Help button in the top bar */
 const _shellHelp=renderShell;renderShell=function(){_shellHelp();const g=$('#top [data-action="glossary"]')||$('#top [data-action="bell"]');if(g&&!$('#top [data-action="help"]'))g.insertAdjacentHTML('beforebegin',`<button type="button" class="btn sm" data-action="help" data-tip="Ask how to do something or where to find it, or suggest a change" style="margin-right:6px">Help</button>`)};
+
+</script>
+<script>/* quotetools.js */
+/* quotetools.js: pricing on customer quotes and sales orders.
+   - "Our cost" under each line's price (from the part, or typed in from a supplier quote)
+   - Markup %: one click sets every price = cost + markup
+   - Freight to charge the customer (shows on the quote PDF, the email and carries into the order and invoice) */
+const qtR2=n=>Math.round(n*100)/100;
+function qtCostRow(r){if(r.querySelector('.qt-cost'))return;const pc=r.querySelector('[name=price]');if(!pc)return;const s=r.querySelector('[name=sku]');const it=s&&item(s.value);
+ pc.insertAdjacentHTML('afterend',`<input class="input qt-cost" name="lcost" type="number" min="0" step="0.01" placeholder="Our cost" aria-label="Our cost each" title="Our cost each (from the part, or type it from the supplier's quote)" style="margin-top:4px;font-size:12px;height:30px" value="${it&&it.cost!=null?it.cost:''}">`);
+ if(s)s.addEventListener('change',()=>{const i2=item(s.value);const c=r.querySelector('.qt-cost');if(c)c.value=i2&&i2.cost!=null?i2.cost:''})}
+new MutationObserver(()=>{if(!$('#mform .qt-box'))return;$$('#mform tr.qline[data-kind=sell]').forEach(qtCostRow)}).observe(document.getElementById('modal-root'),{childList:true,subtree:true});
+let qtCarry=null;
+const _newQuoteQt=M.newQuote;M.newQuote=(pre={})=>{_newQuoteQt(pre);const f=$('#mform');if(!f||f.querySelector('.qt-box'))return;const lines=f.querySelector('table.lines');const at=lines&&lines.closest('.f');if(!at)return;
+ const carry=qtCarry;qtCarry=null;const fr=pre.freight??(carry&&carry.freight)??'';
+ at.insertAdjacentHTML('afterend',`<div class="f full qt-box" style="border:1px solid var(--line);border-radius:10px;padding:10px 12px"><div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+  <label class="f" style="margin:0;min-width:120px">Markup %<input class="input" id="qt-mk" type="number" step="1" min="0" value="${esc(String(S.quoteMarkup??30))}"></label>
+  <button type="button" class="btn sm" data-action="qt-markup" title="Sets each line's price to Our cost + markup">Apply markup to prices</button>
+  <label class="f" style="margin:0;min-width:160px">Freight to charge ($)<input class="input" name="qFreight" type="number" min="0" step="0.01" value="${esc(String(fr))}" placeholder="0.00"></label>
+  <label class="f" style="margin:0;min-width:160px">Our freight cost ($) <span class="muted sm">optional</span><input class="input" name="qFreightCost" type="number" min="0" step="0.01" value="${esc(String(carry&&carry.freightCost||''))}"></label>
+  <div class="sm" style="margin-left:auto;text-align:right">Subtotal <b class="qt-sub">–</b><br>Freight <b class="qt-fr">–</b><br>Total <b class="qt-tot">–</b></div></div>
+  <div class="sm muted" style="margin-top:6px">Type “Our cost” under each price (from the supplier’s quote), set the markup, click Apply. Freight shows as its own line on the quote and invoice.</div></div>`);
+ $$('tr.qline[data-kind=sell]',f).forEach(qtCostRow);qtTotals(f);
+ f.addEventListener('input',()=>setTimeout(()=>qtTotals(f),0));
+ const beforeQ=new Set((S.quotes||[]).map(q=>q.id)),beforeO=new Set(S.orders.map(o=>o.id));
+ f.addEventListener('submit',()=>{const frv=+f.qFreight.value||0,frc=+f.qFreightCost.value||0;const costs=$$('tr.qline[data-kind=sell]',f).map(r=>({sku:(r.querySelector('[name=sku]')||{}).value,cost:r.querySelector('.qt-cost')&&r.querySelector('.qt-cost').value!==''?+r.querySelector('.qt-cost').value:null}));const mk=+($('#qt-mk')||{}).value;
+  setTimeout(()=>{const rec=(S.quotes||[]).find(q=>!beforeQ.has(q.id))||S.orders.find(o=>!beforeO.has(o.id));if(!rec)return;
+   rec.freight=frv;if(frc)rec.freightCost=frc;
+   costs.forEach(c=>{if(c.cost==null||!c.sku)return;const it=item(c.sku);if(it&&(it.cost==null||it.cost===''))it.cost=c.cost;const l=rec.lines.find(x=>x.sku===c.sku);if(l)l.cost=c.cost});
+   if(!isNaN(mk))S.quoteMarkup=mk;save();rerender()},0)},true)};
+function qtTotals(f){const rows=$$('tr.qline[data-kind=sell]',f);const sub=rows.reduce((a,r)=>a+(+(r.querySelector('[name=qty]')||{}).value||0)*(+(r.querySelector('[name=price]')||{}).value||0),0);const fr=+((f.qFreight||{}).value)||0;
+ const set=(c,v)=>{const el=f.querySelector(c);if(el)el.textContent=$m(v)};set('.qt-sub',sub);set('.qt-fr',fr);set('.qt-tot',sub+fr);const t=f.querySelector('#qtotal');if(t&&fr)t.textContent=$f(sub+fr)}
+A['qt-markup']=()=>{const f=$('#mform');if(!f)return;const mk=+$('#qt-mk').value||0;let n=0,miss=0;
+ $$('tr.qline[data-kind=sell]',f).forEach(r=>{const c=r.querySelector('.qt-cost');const p=r.querySelector('[name=price]');if(!c||!p)return;if(c.value===''){miss++;return}p.value=qtR2(+c.value*(1+mk/100)).toFixed(2);p.dispatchEvent(new Event('input',{bubbles:true}));n++});
+ qtTotals(f);toast(n?`Prices set to cost + ${mk}%${miss?`. ${miss} line${miss>1?'s have':' has'} no cost yet`:''}`:'Type “Our cost” under each price first.',!n)};
+/* a won quote carries its freight into the order */
+const _quoteWonQt=A['quote-won'];A['quote-won']=d=>{const q=byId(S.quotes,d.id);qtCarry=q?{freight:q.freight||0,freightCost:q.freightCost||0}:null;return _quoteWonQt(d)};
 
 </script>
 <script>/* secure.js */
