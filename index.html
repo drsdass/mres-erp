@@ -6773,6 +6773,103 @@ A['pv-rfq-edit']=d=>{const q=sreq(d.id);if(!q)return;modal('Preferred vendors',`
 document.addEventListener('keydown',e=>{if(e.key!=='Enter')return;const n=e.target.closest&&e.target.closest('.pv-new');if(!n)return;e.preventDefault();const b=n.querySelector('[data-pv-create]');b&&b.click()},true);
 
 </script>
+<script>/* custpo.js */
+/* custpo.js: a customer's PO arrives as a PDF attachment (WECS and others).
+   "Turn this into → Sales order" now reads the PDF: PO numbers, lines, ship-to, ship contact, shipping account and where invoices go,
+   and fills the sales order form. Parts not in Stock (items) yet are added. */
+/* text pieces with their positions, page by page */
+async function cpPages(blob){const L=await stLoadPDF();const pdf=await L.getDocument({data:new Uint8Array(await blob.arrayBuffer())}).promise;const pages=[];
+ for(let n=1;n<=Math.min(pdf.numPages,8);n++){const pg=await pdf.getPage(n);const tc=await pg.getTextContent();pages.push(tc.items.filter(i=>String(i.str||'').trim()).map(i=>({s:String(i.str).trim(),x:i.transform[4],y:i.transform[5]})))}return pages}
+const cpMoney=s=>{const m=String(s).replace(/[$,\s]/g,'').match(/^-?\d+(\.\d+)?$/);return m?+m[0]:null};
+/* join wrapped pieces: no space after a hyphen, or inside an email or a long code broken mid-way */
+function cpJoin(parts){return parts.reduce((a,p)=>{if(!a)return p;if(/[-\/@.]$/.test(a)||(/@/.test(a)&&!/\s/.test(a)&&/^[a-z.]{1,4}$/i.test(p)))return a+p;return a+' '+p},'')}
+function cpBelow(P,lab,dx=40,dy=30){const c=P.filter(t=>t!==lab&&Math.abs(t.x-lab.x)<dx&&t.y<lab.y-1&&t.y>lab.y-dy).sort((a,b)=>b.y-a.y);return c[0]?c[0].s:''}
+function cpParse(pages){const all=pages.flat();const text=pages.map(P=>P.slice().sort((a,b)=>b.y-a.y||a.x-b.x).map(t=>t.s).join('\n')).join('\n');const P1=pages[0]||[];
+ const find=(P,re)=>P.find(t=>re.test(t.s));const out={lines:[],shipTo:'',contact:{},notes:[]};
+ /* header numbers */
+ const lPO=find(P1,/^(PO|P\.O\.)\s*(#|No\.?|Number)?:?$/i)||find(P1,/^Purchase Order\s*(#|No\.?)?:?$/i);if(lPO)out.po=cpBelow(P1,lPO);
+ if(!out.po){const m=text.match(/\bPO\s*#?:?\s*(PO\s?\d{4,}|\d{5,})/i);if(m)out.po=m[1]}
+ if(out.po)out.po=out.po.replace(/\s/g,'').toUpperCase();
+ const lC=find(P1,/^CUSTOMER\s*PO\s*#?:?$/i)||find(P1,/^(END\s*CUSTOMER|YOUR CUSTOMER)\s*PO/i);if(lC)out.endPo=cpBelow(P1,lC);
+ const lD=find(P1,/^(PO\s*)?DATE:?$/i);if(lD)out.date=cpBelow(P1,lD);
+ /* ship to: the block under SHIP TO */
+ const lS=find(P1,/^SHIP\s*TO:?$/i);if(lS){const blk=P1.filter(t=>Math.abs(t.x-lS.x)<12&&t.y<lS.y-1&&t.y>lS.y-90).sort((a,b)=>b.y-a.y);const rows=[];let last=lS.y;for(const t of blk){if(last-t.y>22)break;rows.push(t.s);last=t.y}out.shipTo=rows.filter(r=>!/^United States( of America)?$|^USA$/i.test(r)).join(', ')}
+ /* the shipping info row: column headers, values underneath */
+ const lR=find(P1,/^Requested$/i)||find(P1,/^Terms$/i);if(lR){const hy=lR.y;const heads=P1.filter(t=>Math.abs(t.y-hy)<16&&t.x>=20);const cols=[...new Set(heads.map(h=>Math.round(h.x/10)*10))].sort((a,b)=>a-b);
+  const label=cx=>P1.filter(t=>Math.abs(t.y-hy)<16&&Math.abs(Math.round(t.x/10)*10-cx)<1).sort((a,b)=>b.y-a.y).map(t=>t.s).join(' ');
+  const vals=P1.filter(t=>t.y<hy-14&&t.y>hy-80);const tbl=find(P1,/^(Item|Description|Qty|Quantity)$/i);
+  cols.forEach((cx,i)=>{const nx=cols[i+1]??9999;const v=cpJoin(vals.filter(t=>t.x>=cx-14&&t.x<nx-14&&(!tbl||t.y>tbl.y+8)).sort((a,b)=>b.y-a.y||a.x-b.x).map(t=>t.s));const lb=label(cx);if(!v)return;
+   if(/Requested/i.test(lb))out.reqShip=v;else if(/Contact.*Name/i.test(lb))out.contact.name=v;else if(/Contact.*Email/i.test(lb))out.contact.email=v.replace(/\s/g,'');else if(/Contact.*Phone/i.test(lb))out.contact.phone=v;
+   else if(/^Terms/i.test(lb))out.terms=v;else if(/Shipping\s*Method|Ship\s*Via/i.test(lb))out.shipMethod=v;else if(/Account/i.test(lb))out.shipAcct=v;else if(/Freight/i.test(lb))out.freightBy=v;else if(/Duty/i.test(lb))out.duty=v})}
+ const acm=(out.shipAcct||text).match(/account\s*#?:?\s*\(?([A-Z0-9]{5,10})\)?/i);if(acm)out.acctNo=acm[1];
+ const car=((out.shipAcct||'')+' '+(out.shipMethod||'')+' '+text).match(/\b(UPS|FedEx|USPS|DHL|Estes|XPO|R\+L|Saia|Old Dominion)\b/i);if(car)out.carrier=car[1].toUpperCase()==='FEDEX'?'FedEx':car[1].toUpperCase();
+ if(/collect/i.test((out.shipMethod||'')+(out.shipAcct||'')+(out.freightBy||'')))out.collect=true;
+ const ap=text.match(/invoices?[^\n@]{0,60}?\b([\w.+-]+@[\w-]+\.[\w.]+)/i);if(ap)out.apEmail=ap[1].toLowerCase();
+ const oa=text.match(/(?:OAs?|acknowledg\w*)[^\n@]{0,40}?\b([\w.+-]+@[\w-]+\.[\w.]+)/i);if(oa)out.ackEmail=oa[1].toLowerCase();
+ /* line items: header row with Item / Description / Qty / Rate / Amount, one row per amount */
+ let cols=null;
+ pages.forEach(P=>{const hItem=find(P,/^(Item|Part|Part\s*#|Item\s*#|SKU)$/i),hQty=find(P,/^(Qty|Quantity)$/i),hAmt=find(P,/^(Amount|Ext\.?\s*Price|Extended|Total)$/i);
+  if(hItem&&hQty&&hAmt&&Math.abs(hItem.y-hQty.y)<10){const hDesc=find(P,/^Description$/i),hRate=find(P,/^(Rate|Unit\s*Price|Price)$/i);const others=P.filter(t=>Math.abs(t.y-hItem.y)<10&&t.x>(hDesc?hDesc.x:hItem.x)+10).sort((a,b)=>a.x-b.x);
+   cols={y:hItem.y,item:hItem.x,desc:hDesc?hDesc.x:null,descEnd:(others[0]||hQty).x-6,qty:hQty.x,rate:hRate?hRate.x:null,amt:hAmt.x,top:hItem.y-4}}
+  else if(cols)cols={...cols,top:Math.max(...P.map(t=>t.y))+1};
+  if(!cols)return;const C=cols;
+  const amts=P.filter(t=>t.y<C.top&&Math.abs(t.x-C.amt)<45&&/^\$?[\d,]+\.\d{2}$/.test(t.s)&&!P.some(o=>Math.abs(o.y-t.y)<3&&/^(sub)?total|tax|freight|shipping/i.test(o.s))).sort((a,b)=>b.y-a.y);
+  amts.forEach((a,k)=>{const lo=amts[k+1]?amts[k+1].y+8:-1e9,hi=a.y+8;const band=P.filter(t=>t.y<=hi&&t.y>lo&&t.y<C.top&&!/^\d+ of \d+$/.test(t.s));
+   const itemTxt=band.filter(t=>t.x>=C.item-30&&t.x<(C.desc||C.descEnd)-4).sort((p,q)=>q.y-p.y).map(t=>t.s);
+   const descTxt=C.desc!=null?band.filter(t=>t.x>=C.desc-4&&t.x<C.descEnd).sort((p,q)=>q.y-p.y||p.x-q.x).map(t=>t.s):[];
+   const qtyT=band.filter(t=>Math.abs(t.x-C.qty)<30&&/^[\d,]+(\.\d+)?$/.test(t.s))[0];const rateT=C.rate!=null?band.filter(t=>Math.abs(t.x-C.rate)<35&&/^\$?[\d,]+\.\d{2,4}$/.test(t.s))[0]:null;
+   const unitT=band.find(t=>/^(ea|each|pc|pcs|ft|set|sets|lb|lbs|box|kit|m)$/i.test(t.s));
+   let sku=cpJoin(itemTxt).replace(/\s+/g,'');let desc=cpJoin(descTxt);const d0=(descTxt[0]||'').replace(/,$/,'');
+   if(d0&&d0.replace(/\s/g,'').toUpperCase().startsWith(sku.toUpperCase().replace(/-$/,''))&&d0.length>=sku.length)sku=d0.replace(/\s+/g,'');
+   desc=desc.replace(new RegExp('^'+sku.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+',?\\s*','i'),'').trim();
+   const qty=qtyT?cpMoney(qtyT.s):null,amount=cpMoney(a.s),rate=rateT?cpMoney(rateT.s):(qty?Math.round(amount/qty*100)/100:null);
+   if(sku||desc)out.lines.push({sku:sku||desc,desc,qty:qty||1,unit:unitT?unitT.s:'',price:rate,amount})})});
+ const tot=text.match(/\bTOTAL\s*\$?([\d,]+\.\d{2})/i);if(tot)out.total=cpMoney(tot[1]);out.text=text;
+ return out}
+/* find the part in Stock (items), or add it */
+const cpNorm=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+function cpItem(l,add){const k=cpNorm(l.sku);if(!k)return null;const its=S.items||[];
+ let it=its.find(i=>cpNorm(i.sku)===k)||its.filter(i=>[i.sku,i.name,i.desc].some(v=>cpNorm(v).startsWith(k))).sort((a,b)=>String(a.sku).length-String(b.sku).length)[0]||its.find(i=>[i.sku,i.name,i.desc].some(v=>cpNorm(v).includes(k)&&k.length>=6));
+ if(it||!add)return it||null;
+ it={sku:l.sku,id:l.sku,name:l.desc?`${l.sku}, ${l.desc}`:l.sku,desc:l.desc?`${l.sku}, ${l.desc}`:l.sku,cat:'Uncategorized',type:'Inventory',vendor:null,cost:null,price:l.price,lead:null,min:0,max:0,onhand:0,alloc:0,loc:'',moq:null,url:'',usedIn:[],flags:[],row:null,src:[]};
+ if(typeof itemFlags==='function')itemFlags(it);S.items.push(it);log(`Added part ${l.sku} from a customer PO`);return it}
+/* read the email's PDF */
+async function cpFromEmail(m){const atts=(m.thread||[]).flatMap(x=>x.att||[]).filter(a=>a.path&&/\.pdf$/i.test(a.name||''));if(!atts.length||!CLOUD)return null;
+ const pick=atts.find(a=>/p\.?o\.?|purchase|order/i.test(a.name))||atts[0];const {data,error}=await CLOUD.storage.from('erp-mail').download(pick.path);if(error)throw error;
+ const p=cpParse(await cpPages(data));p.file=pick.name;return p}
+/* open the sales order form filled from a read PO */
+function cpOpenOrder(p,pre){
+ if(p.po&&S.orders.some(o=>cpNorm(o.cpo)===cpNorm(p.po))){const o=S.orders.find(o=>cpNorm(o.cpo)===cpNorm(p.po));toast(`PO ${p.po} is already ${oLabel(o)}. Opening it.`);const m=pre.email&&byId(S.emails,pre.email);if(m)try{m.links=m.links||[];linkEmail(m,'order',o.id)}catch(e){}closeModal();location.hash=oHref(o);return}
+ const added=[];const lines=p.lines.map(l=>{const had=cpItem(l,false);const it=had||cpItem(l,true);if(!had)added.push(it.sku);return{sku:it.sku,qty:l.qty,price:l.price??it.price}});
+ closeModal();M.newQuote({...pre,order:true,cpo:p.po||'',lines,_cp:true});
+ const f=$('#mform');if(!f)return;const set=(n,v)=>{const el=f.querySelector(`[name=${n}]`);if(el&&v){el.value=v;el.classList.add('tp-filled')}};set('endPo',p.endPo);set('shipTo',p.shipTo);
+ if(pre.acct){const sel=f.querySelector('[name=acct]');if(sel)sel.value=pre.acct}
+ const info=[p.carrier||p.shipMethod?`Ship via ${p.carrier||p.shipMethod}${p.collect&&p.acctNo?`, collect on their account ${p.acctNo} (don’t add freight to the invoice)`:p.collect?', collect':''}`:'',p.contact.name||p.contact.email?`Ship contact: ${[p.contact.name,p.contact.email,p.contact.phone].filter(Boolean).join(', ')}`:'',p.reqShip?`Requested ship date: ${p.reqShip}`:'',p.terms?`Terms: ${p.terms}`:'',p.apEmail?`Invoices and tracking to ${p.apEmail}`:'',p.ackEmail?`Order acknowledgement to ${p.ackEmail}`:''].filter(Boolean);
+ f.querySelector('.fg').insertAdjacentHTML('beforebegin',`<div class="pb sm" style="background:var(--ok-soft,#ecfdf5);border:1px solid var(--line);border-radius:10px;margin-bottom:12px"><b>Read from ${esc(p.file)}:</b> PO ${esc(p.po||'–')}${p.endPo?`, end-customer PO ${esc(p.endPo)}`:''}, ${p.lines.length} line${p.lines.length>1?'s':''}${p.total?`, total ${$f(p.total)}`:''}. Check it, then Create order.${added.length?`<div style="margin-top:4px">New in Stock (items): ${added.map(esc).join(', ')}. Add the cost and vendor there later.</div>`:''}${info.length?`<ul style="margin:6px 0 0 18px;padding:0">${info.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:''}</div>`);
+ const before=new Set(S.orders.map(o=>o.id));
+ f.addEventListener('submit',()=>setTimeout(()=>{const o=S.orders.find(x=>!before.has(x.id));if(!o)return;
+  if(p.carrier)o.shipMethod=p.carrier+(p.collect?' (collect)':'');if(p.acctNo)o.shipAcct=p.acctNo;if(p.contact.name||p.contact.email)o.shipContact=p.contact;if(p.reqShip)o.reqShip=p.reqShip;if(p.terms)o.terms=p.terms;
+  info.forEach(t=>o.notes.push(`${fds(TODAY)}: ${t}`));
+  const c=acct(o.acct);if(c&&c.id){if(p.apEmail&&!c.apEmail)c.apEmail=p.apEmail;if(p.ackEmail&&!c.ackEmail)c.ackEmail=p.ackEmail}
+  save();rerender()},0),true)}
+/* the customer named in the PDF */
+function cpGuessAcct(p){const t=cpNorm(p.text||'');let best=null,at=1e9;(S.accounts||[]).forEach(a=>{const k=cpNorm(a.name);if(k.length<3)return;const i=t.indexOf(k);if(i>=0&&i<at){at=i;best=a}});return best&&best.id}
+/* from the inbox: the email's PDF */
+const _emOrderCp=A['em-order'];A['em-order']=async d=>{const m=byId(S.emails,d.id);if(!m)return;let p=null;
+ const hasPdf=(m.thread||[]).some(x=>(x.att||[]).some(a=>a.path&&/\.pdf$/i.test(a.name||'')));
+ if(hasPdf){toast('Reading the PO attachment…');try{p=await cpFromEmail(m)}catch(e){toast('Couldn’t read the PDF ('+e.message+'). Fill the order in by hand.',true)}}
+ if(!p||!p.lines.length)return _emOrderCp(d);
+ cpOpenOrder(p,{email:m.id,acct:m.acct||cpGuessAcct(p),newCo:m.acct?null:(m.company||m.fromName)})};
+/* from Orders → Customer PO → sales order: upload the PDF */
+const _newQuoteCp=M.newQuote;M.newQuote=(pre={})=>{_newQuoteCp(pre);if(!pre.order||pre.email||pre._cp)return;const f=$('#mform');if(!f)return;
+ f.querySelector('.fg').insertAdjacentHTML('beforebegin',`<label class="pb sm" style="display:block;border:1px dashed var(--line);border-radius:10px;margin-bottom:12px;cursor:pointer"><b>Have the customer’s PO as a PDF?</b> Upload it and the ERP fills this in. <input type="file" accept="application/pdf,.pdf" id="cp-file" style="display:block;margin-top:6px"></label>`);
+ $('#cp-file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;toast('Reading '+file.name+'…');
+  try{const p=cpParse(await cpPages(file));p.file=file.name;if(!p.lines.length)return toast('Couldn’t find the line items in that PDF. Fill the order in by hand.',true);cpOpenOrder(p,{acct:cpGuessAcct(p)})}
+  catch(err){toast('Couldn’t read the PDF ('+err.message+').',true)}})};
+/* invoices go to the customer's AP address when there is one */
+const _invEmailCp=A['inv-email'];A['inv-email']=async d=>{const i=byId(S.invoices,d.id);const c=i&&acct(i.acct);if(!c||!c.apEmail)return _invEmailCp(d);const was=c.email;c.email=c.apEmail;try{await _invEmailCp(d)}finally{c.email=was}};
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
