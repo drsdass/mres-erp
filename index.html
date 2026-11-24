@@ -6773,6 +6773,27 @@ A['pv-rfq-edit']=d=>{const q=sreq(d.id);if(!q)return;modal('Preferred vendors',`
 document.addEventListener('keydown',e=>{if(e.key!=='Enter')return;const n=e.target.closest&&e.target.closest('.pv-new');if(!n)return;e.preventDefault();const b=n.querySelector('[data-pv-create]');b&&b.click()},true);
 
 </script>
+<script>/* linefix.js */
+/* linefix.js
+   1. A new order/quote line starts on "Choose a part…" instead of silently picking the first part in the list.
+   2. Edit order lets you change which part a line is (only while nothing on that line has shipped). */
+const _sellRowLf=sellRow;sellRow=function(sku,q,price){if(sku)return _sellRowLf(sku,q,price);
+ return _sellRowLf(S.items[0].sku,q,'').replace(/ selected>/g,'>').replace('<select name="sku" aria-label="Part">','<select name="sku" aria-label="Part"><option value="" selected>Choose a part…</option>')};
+const _linesBlockLf=linesBlock;linesBlock=function(kind,lines){if(kind==='sell'&&!(lines&&lines.length))return _linesBlockLf(kind,[{sku:'',qty:1}]);return _linesBlockLf(kind,lines)};
+const _readSellLf=readSell;readSell=function(f){const blank=$$('.qline[data-kind=sell]',f).filter(r=>!$('[name=sku]',r).value&&+$('[name=qty]',r).value>0);if(blank.length){toast('Choose the part on every line.',true);return[]}return _readSellLf(f)};
+/* new lines added with "+ Add line" also start blank */
+document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-action="add-line"][data-kind="sell"]');if(!b)return;setTimeout(()=>{const rows=$$('.qline[data-kind=sell]',b.closest('form')||document);const r=rows[rows.length-1];if(!r)return;const s=$('[name=sku]',r);if(s&&!s.querySelector('option[value=""]')){s.insertAdjacentHTML('afterbegin','<option value="">Choose a part…</option>');s.value='';const p=$('[name=price]',r);if(p)p.value=''}},0)},true);
+/* Edit order: change the part on a line */
+const _editOrderLf=M.editOrder;M.editOrder=id=>{_editOrderLf(id);const o=byId(S.orders,id);const f=$('#mform');if(!o||!f)return;
+ o.lines.forEach((l,i)=>{const q=f.querySelector(`[name=q${i}]`);const at=q&&q.closest('label.f');if(!at)return;const locked=(l.shipped||0)>0||['Packed','Shipped','Invoiced','Paid','Completed'].includes(o.status);
+  at.insertAdjacentHTML('beforebegin',`<label class="f full">Line ${i+1} part${locked?' <span class="muted sm">(can’t change after it’s packed or shipped)</span>':''}<select name="s${i}" ${locked?'disabled':''}>${itemOpts(l.sku)}</select></label>`)});
+ f.addEventListener('submit',()=>{const pick=o.lines.map((l,i)=>{const s=f.querySelector(`[name=s${i}]`);return s&&!s.disabled?s.value:null});
+  setTimeout(()=>{let ch=[];o.lines.forEach((l,i)=>{const n=pick[i];if(!n||n===l.sku)return;const old=item(l.sku),it=item(n);if(!it)return;
+    if(o.status==='Ready to pick'&&old){old.alloc=Math.max(0,(old.alloc||0)-rem(l));o.status='New';o.dates.New=o.dates.New||TODAY}
+    ch.push({f:`Line ${i+1} part`,from:l.sku,to:n});l.sku=n;l.cost=costOf(n);l.vendor=it.vendor;l.fulfil=asmOf(n)?'Build':'Buy-in';if(!l.price&&it.price)l.price=it.price});
+   if(ch.length){log(`Changed parts on ${oLabel(o)}`,ch);checkReady();save();rerender();toast('Part changed')}},0)},true)};
+
+</script>
 <script>/* custpo.js */
 /* custpo.js: a customer's PO arrives as a PDF attachment (WECS and others).
    "Turn this into → Sales order" now reads the PDF: PO numbers, lines, ship-to, ship contact, shipping account and where invoices go,
