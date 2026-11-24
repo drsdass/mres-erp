@@ -6808,6 +6808,18 @@ function lfEnhance(sel){if(sel.dataset.ps||sel.disabled)return;sel.dataset.ps='1
    it={sku:s,id:s,name,desc:name,cat:'Uncategorized',type:'Inventory',vendor:null,cost:null,price:pr===''||pr==null?null:+pr,lead:null,min:0,max:0,onhand:0,alloc:0,loc:'',moq:null,url:'',usedIn:[],flags:[],row:null,src:[]};if(typeof itemFlags==='function')itemFlags(it);S.items.push(it);log(`Added part ${s}`);save();toast(`${s} added to Stock (items)`)}
   q.value=s;lfOpts(sel,'',blank);sel.value=it.sku;const row=sel.closest('tr');const p=row&&row.querySelector('[name=price]');if(p&&!p.value&&it.price!=null)p.value=it.price;sel.dispatchEvent(new Event('change',{bubbles:true}))})}
 new MutationObserver(()=>{$$('#modal-root select[name=sku], #modal-root select[data-lfpart]').forEach(lfEnhance)}).observe(document.getElementById('modal-root'),{childList:true,subtree:true});
+/* delete an order made by mistake (owners only, nothing shipped or invoiced yet) */
+A['order-del']=d=>{const o=byId(S.orders,d.id);if(!o)return;if(!isOwner())return toast('Only owners can delete orders.',true);
+ if(o.invoice||o.lines.some(l=>(l.shipped||0)>0)||['Packed','Shipped','Invoiced','Paid','Completed'].includes(o.status))return toast('This order has been packed, shipped or invoiced, so it can’t be deleted. Edit it instead.',true);
+ const name=oLabel(o);const ask=typeof confirmBox==='function'?confirmBox:confirm;if(!ask(`Delete ${name} (PO ${o.cpo||'none'}, ${aname(o.acct)})? This can’t be undone.`))return;
+ if(o.status==='Ready to pick')o.lines.forEach(l=>{const it=item(l.sku);if(it)it.alloc=Math.max(0,(it.alloc||0)-rem(l))});
+ S.orders=S.orders.filter(x=>x!==o);(S.emails||[]).forEach(m=>{if(m.links)m.links=m.links.filter(k=>!(k.t==='order'&&k.id===o.id))});
+ const pos=(S.pos||[]).filter(p=>String(p.forOrders||'').includes(o.id));
+ log(`${USER.name} deleted ${name} (PO ${o.cpo||'none'}, ${aname(o.acct)}, ${o.lines.map(l=>`${num(l.qty)} × ${l.sku}`).join(', ')})`);closeModal();save();location.hash='#/sales';rerender();
+ toast(`${name} deleted${pos.length?`. Check ${pos.map(p=>p.id).join(', ')}: it was bought for this order`:''}`)};
+const _editOrderDel=M.editOrder;M.editOrder=id=>{_editOrderDel(id);const o=byId(S.orders,id);const f=$('#mform');if(!o||!f||!isOwner())return;const ft=f.querySelector('footer');if(!ft||ft.querySelector('[data-action="order-del"]'))return;
+ const ok=!o.invoice&&!o.lines.some(l=>(l.shipped||0)>0)&&!['Packed','Shipped','Invoiced','Paid','Completed'].includes(o.status);
+ if(ok)ft.insertAdjacentHTML('afterbegin',`<button type="button" class="btn ghost" data-action="order-del" data-id="${esc(o.id)}" style="margin-right:auto;color:var(--alert)">Delete order</button>`)};
 
 </script>
 <script>/* custpo.js */
