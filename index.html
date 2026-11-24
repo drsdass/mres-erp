@@ -6919,6 +6919,27 @@ const _newQuoteCp=M.newQuote;M.newQuote=(pre={})=>{_newQuoteCp(pre);if(!pre.orde
 const _invEmailCp=A['inv-email'];A['inv-email']=async d=>{const i=byId(S.invoices,d.id);const c=i&&acct(i.acct);if(!c||!c.apEmail)return _invEmailCp(d);const was=c.email;c.email=c.apEmail;try{await _invEmailCp(d)}finally{c.email=was}};
 
 </script>
+<script>/* neworder.js */
+/* neworder.js: when a customer PO becomes a sales order, the team gets an email right away:
+   what was ordered, what's in stock, what has to be bought and from whom, with a link to the order. */
+const noBoot=new Set();let noReady=false;
+function noLines(o){return o.lines.map(l=>{const it=item(l.sku)||{};const need=rem(l),have=Math.max(0,typeof avail==='function'?avail(it):(it.onhand||0)-(it.alloc||0));const v=it.vendor?vend(it.vendor).name:'';
+ return `• ${num(l.qty)} × ${l.sku}${it.desc&&it.desc!==l.sku?` (${it.desc})`:''} at ${$m(l.price||0)}: ${have>=need?`IN STOCK (${num(have)} free), ready to pick`:have>0?`only ${num(have)} in stock, BUY ${num(need-have)}${v?` (usual vendor ${v})`:''}`:`NOT IN STOCK, BUY ${num(need)}${v?` (usual vendor ${v}${it.cost?`, last cost ${$m(it.cost)}`:''})`:' (no vendor on file)'}`}`}).join('\n')}
+async function noSend(o){if(typeof CLOUD==='undefined'||!CLOUD)return;const url=(location.origin+location.pathname).replace(/index\.html$/,'')+'#'+oHref(o).replace(/^#/,'');
+ const buy=o.lines.some(l=>{const it=item(l.sku)||{};return (typeof avail==='function'?avail(it):(it.onhand||0))<rem(l)});
+ const text=[`New customer order from ${aname(o.acct)}, entered by ${USER.name}.`,'',`${oLabel(o)} · Customer PO ${o.cpo||'–'}${o.endPo?` · End PO ${o.endPo}`:''}`,`Total: ${$m(oRev(o))}`,o.shipTo?`Ship to: ${o.shipTo}`:'',o.lead?`Lead time quoted: ${o.lead}`:'','',noLines(o),'',
+  buy?'Next: order the missing parts (open the order and use Order parts, or start an RFQ).':'Next: everything is in stock, so it is on the pick list. Pick, pack and ship.',
+  o.notes&&o.notes.length?'\nNotes:\n'+o.notes.map(n=>'• '+n).join('\n'):'','',`Open it in the ERP: ${url}`].join('\n').replace(/\n{3,}/g,'\n\n');
+ try{await CLOUD.functions.invoke('mail-send',{body:{action:'notify',subject:`New order: ${aname(o.acct)} PO ${o.cpo||oLabel(o)}, ${o.lines.map(l=>`${num(l.qty)} × ${l.sku}`).join(', ').slice(0,80)}${buy?' (parts to buy)':' (in stock)'}`,text}})}catch(e){}}
+function noCheck(){if(!noReady||!S.orders)return;const fresh=S.orders.filter(o=>!noBoot.has(o.id)&&!o.notified);if(!fresh.length)return;
+ /* wait a moment so notes and details added right after creating are in the email */
+ fresh.forEach(o=>{noBoot.add(o.id);setTimeout(()=>{if(!byId(S.orders,o.id))return;o.notified=new Date().toISOString();noSend(o);_saveNo()},2500)})}
+const _saveNo=save;save=function(){const r=_saveNo.apply(this,arguments);try{noCheck()}catch(e){}return r};
+/* orders already there when this browser opened (or that arrive from other people) aren't announced */
+const _boot2No=boot2;boot2=function(){const r=_boot2No.apply(this,arguments);(S.orders||[]).forEach(o=>noBoot.add(o.id));noReady=true;return r};
+const _applyNo=typeof applyRemote==='function'?applyRemote:null;if(_applyNo)applyRemote=function(row){const r=_applyNo(row);if(row&&row.key==='orders'&&S.orders)S.orders.forEach(o=>noBoot.add(o.id));return r};
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
