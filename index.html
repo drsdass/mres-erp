@@ -6713,6 +6713,66 @@ const _inViewPt=bkInView;bkInView=function(E){let h=_inViewPt(E);const i=h.index
  return h};
 
 </script>
+<script>/* prefvendor.js */
+/* prefvendor.js: suggested / preferred vendors on part requests and RFQs.
+   Pick from the vendor list, or "+ Add a preferred vendor" to create one on the spot.
+   Stored as ids on the request (prefVendors); shown on the request and the RFQ, and carried from a part request into its RFQ. */
+const pvList=ids=>(ids||[]).map(id=>byId(S.vendors,id)).filter(Boolean);
+const pvSorted=()=>(S.vendors||[]).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+function pvChips(ids){return (ids||[]).map(id=>{const v=byId(S.vendors,id);return v?`<span class="chip" style="display:inline-flex;align-items:center;gap:4px;margin:0 6px 6px 0">${esc(v.name)}<button type="button" class="link sm" data-pv-rm="${esc(id)}" aria-label="Remove ${esc(v.name)}" style="padding:0 2px">✕</button></span>`:''}).join('')}
+function pvPicker(ids){ids=(ids||[]).filter(id=>byId(S.vendors,id));
+ return `<div class="f full pv-box"><span>Preferred or suggested vendor <span class="muted sm">(optional, pick one or more)</span></span>
+  <input type="hidden" name="prefVendors" value="${esc(ids.join(','))}">
+  <div class="pv-chips" style="margin:6px 0 2px">${pvChips(ids)}</div>
+  <select class="input pv-sel" aria-label="Choose a preferred vendor"><option value="">Choose a vendor…</option>${pvSorted().filter(v=>!ids.includes(v.id)).map(v=>opt(v.id,v.name)).join('')}<option value="__add">+ Add a preferred vendor…</option></select>
+  <div class="pv-new" style="display:none;margin-top:8px;padding:10px;border:1px dashed var(--line);border-radius:10px">
+   <div class="fg" style="margin:0">${fld('Vendor name',inp('pvName','','placeholder="e.g. Grainger, McMaster-Carr, a local machine shop"'))}${fld('Email (optional)',inp('pvEmail','','type="email" placeholder="sales@vendor.com"'))}${fld('Website (optional)',inp('pvWeb','','placeholder="vendor.com"'))}${fld('Phone (optional)',inp('pvPhone',''))}</div>
+   <div style="display:flex;gap:6px;margin-top:6px"><button type="button" class="btn sm primary" data-pv-create="1">Add vendor</button><button type="button" class="btn sm ghost" data-pv-cancel="1">Cancel</button></div></div></div>`}
+function pvGet(box){const h=box.querySelector('[name=prefVendors]');return h&&h.value?h.value.split(',').filter(Boolean):[]}
+function pvSet(box,ids){const h=box.querySelector('[name=prefVendors]');h.value=ids.join(',');box.querySelector('.pv-chips').innerHTML=pvChips(ids);
+ box.querySelector('.pv-sel').innerHTML=`<option value="">Choose a vendor…</option>${pvSorted().filter(v=>!ids.includes(v.id)).map(v=>opt(v.id,v.name)).join('')}<option value="__add">+ Add a preferred vendor…</option>`}
+document.addEventListener('change',e=>{const s=e.target.closest&&e.target.closest('.pv-sel');if(!s)return;const box=s.closest('.pv-box');const v=s.value;s.value='';if(!v)return;
+ if(v==='__add'){const n=box.querySelector('.pv-new');n.style.display='';n.querySelector('[name=pvName]').focus();return}
+ const ids=pvGet(box);if(!ids.includes(v))ids.push(v);pvSet(box,ids)});
+document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('[data-pv-rm],[data-pv-create],[data-pv-cancel]');if(!t)return;const box=t.closest('.pv-box');if(!box)return;e.preventDefault();
+ if(t.dataset.pvRm){pvSet(box,pvGet(box).filter(x=>x!==t.dataset.pvRm));return}
+ const n=box.querySelector('.pv-new');const val=k=>(n.querySelector(`[name=${k}]`).value||'').trim();
+ if(t.dataset.pvCancel){n.style.display='none';return}
+ const name=val('pvName');if(!name)return toast('Add the vendor name.',true);
+ let v=(S.vendors||[]).find(x=>String(x.name).trim().toLowerCase()===name.toLowerCase());
+ if(!v){v={id:nextId(S.vendors,'V-'),name,lead:null,contact:'',email:val('pvEmail'),phone:val('pvPhone'),web:val('pvWeb').replace(/^https?:\/\//,'')};S.vendors.push(v);log(`${USER.name} added vendor ${name}`);save();toast(`${name} added to the vendor list`)}
+ const ids=pvGet(box);if(!ids.includes(v.id))ids.push(v.id);pvSet(box,ids);['pvName','pvEmail','pvWeb','pvPhone'].forEach(k=>n.querySelector(`[name=${k}]`).value='');n.style.display='none'});
+/* how a preferred vendor reads on a request: name with email, site and phone links */
+function pvLine(v){const bits=[];if(v.email)bits.push(`<a href="mailto:${esc(v.email)}">${esc(v.email)}</a>`);if(v.web)bits.push(`<a href="https://${esc(String(v.web).replace(/^https?:\/\//,''))}" target="_blank" rel="noopener">${esc(String(v.web).replace(/^https?:\/\//,''))}</a>`);if(v.phone)bits.push(`<a href="tel:${esc(v.phone)}">${esc(v.phone)}</a>`);
+ return `<div><b>${esc(v.name)}</b>${bits.length?` <span class="sm muted">· ${bits.join(' · ')}</span>`:''}</div>`}
+const pvNames=ids=>pvList(ids).map(v=>v.name).join(', ')||'none';
+/* put the picker into a form, above the specs box, and save what was picked once the form goes through */
+function pvMount(f,ids,after){if(!f||f.querySelector('.pv-box'))return;const sp=f.querySelector('[name=specs]');const at=sp&&sp.closest('label.f');if(!at)return;
+ at.insertAdjacentHTML('beforebegin',pvPicker(ids));
+ f.addEventListener('submit',()=>{const picked=pvGet(f.querySelector('.pv-box'));setTimeout(()=>after(picked),0)},true)}
+function pvApply(obj,picked,thread){const before=(obj.prefVendors||[]).join(',');if(before===picked.join(','))return false;const was=pvNames(obj.prefVendors);obj.prefVendors=picked;
+ if(thread&&obj.thread)obj.thread.push({t:new Date().toISOString(),user:USER.name,sys:true,text:`Preferred vendor: ${was} → ${pvNames(picked)}`});return true}
+
+/* part requests */
+const _frNewPv=M.frNew;M.frNew=id=>{_frNewPv(id);const r=id?fr(id):null;const t0=Date.now();const known=new Set(frs().map(x=>x.id));
+ pvMount($('#mform'),r?r.prefVendors:[],picked=>{if(r){if(pvApply(r,picked,true)){save();rerender()}return}
+  const n=frs().find(x=>!known.has(x.id));if(n&&picked.length){n.prefVendors=picked;save();rerender()}})};
+const _frPv=M.fr;M.fr=id=>{_frPv(id);const r=fr(id);if(!r)return;const tb=$('#modal-root .fr-kv tbody');if(!tb||tb.querySelector('.pv-row'))return;const vs=pvList(r.prefVendors);
+ tb.insertAdjacentHTML('beforeend',`<tr class="pv-row"><td class="muted">Preferred vendor</td><td>${vs.length?vs.map(pvLine).join(''):`<span class="muted">None suggested</span>`} <button type="button" class="link sm" data-action="fr-edit" data-id="${esc(r.id)}">${vs.length?'Change':'Add one'}</button></td></tr>`)};
+/* RFQs: picker on the form, carried over from a part request, shown on the RFQ page */
+let pvCarry=null;
+const _sreqPv=M.sreq;M.sreq=(id,pre)=>{_sreqPv(id,pre);const r=id?sreq(id):null;const known=new Set((S.srcReqs||[]).map(x=>x.id));const start=r?r.prefVendors:(pvCarry||[]);pvCarry=null;
+ pvMount($('#mform'),start,picked=>{if(r){if(pvApply(r,picked)){log(`Preferred vendor on ${r.no||r.id}: ${pvNames(picked)}`);save();rerender()}return}
+  const n=(S.srcReqs||[]).find(x=>!known.has(x.id));if(n&&picked.length){n.prefVendors=picked;save();rerender()}})};
+const _frRfqPv=A['fr-rfq'];A['fr-rfq']=d=>{const r=fr(d.id);pvCarry=r&&r.prefVendors&&r.prefVendors.length?r.prefVendors.slice():null;return _frRfqPv(d)};
+const _srcPv=VIEWS.sourcing;VIEWS.sourcing=id=>{const h=_srcPv(id);if(!id)return h;const q=typeof sreq==='function'&&sreq(id);if(!q)return h;const vs=pvList(q.prefVendors);
+ const panel=`<section class="panel mb"><div class="ph"><h3>Preferred vendors</h3><span class="grow"></span>${btn(vs.length?'Change':'+ Add a preferred vendor','pv-rfq-edit',{id},'sm')}</div><div class="pb">${vs.length?vs.map(pvLine).join(''):'<span class="muted sm">None yet. Add the vendors the team should ask first.</span>'}</div></section>`;
+ const k=h.indexOf('<div class="grid2e"><section class="panel"><div class="ph"><h3>Conversation about this request');return k>0?h.slice(0,k)+panel+h.slice(k):h+panel};
+A['pv-rfq-edit']=d=>{const q=sreq(d.id);if(!q)return;modal('Preferred vendors',`<p class="muted" style="margin-top:0">Vendors the team should ask first for ${esc(q.no||'')} ${esc(q.title)}.</p><div class="fg">${pvPicker(q.prefVendors)}</div>`,{label:'Save',submit:()=>{const box=$('#mform .pv-box');const picked=pvGet(box);if(pvApply(q,picked)){log(`Preferred vendor on ${q.no||q.id}: ${pvNames(picked)}`);toast('Saved')}else toast('No changes')}})};
+/* Enter inside the new-vendor box adds the vendor instead of sending the whole form */
+document.addEventListener('keydown',e=>{if(e.key!=='Enter')return;const n=e.target.closest&&e.target.closest('.pv-new');if(!n)return;e.preventDefault();const b=n.querySelector('[data-pv-create]');b&&b.click()},true);
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
