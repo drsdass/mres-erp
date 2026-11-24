@@ -6786,12 +6786,28 @@ document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest
 /* Edit order: change the part on a line */
 const _editOrderLf=M.editOrder;M.editOrder=id=>{_editOrderLf(id);const o=byId(S.orders,id);const f=$('#mform');if(!o||!f)return;
  o.lines.forEach((l,i)=>{const q=f.querySelector(`[name=q${i}]`);const at=q&&q.closest('label.f');if(!at)return;const locked=(l.shipped||0)>0||['Packed','Shipped','Invoiced','Paid','Completed'].includes(o.status);
-  at.insertAdjacentHTML('beforebegin',`<label class="f full">Line ${i+1} part${locked?' <span class="muted sm">(can’t change after it’s packed or shipped)</span>':''}<select name="s${i}" ${locked?'disabled':''}>${itemOpts(l.sku)}</select></label>`)});
+  at.insertAdjacentHTML('beforebegin',`<label class="f full">Line ${i+1} part${locked?' <span class="muted sm">(can’t change after it’s packed or shipped)</span>':''}<select name="s${i}" data-lfpart="1" ${locked?'disabled':''}>${itemOpts(l.sku)}</select></label>`)});
  f.addEventListener('submit',()=>{const pick=o.lines.map((l,i)=>{const s=f.querySelector(`[name=s${i}]`);return s&&!s.disabled?s.value:null});
   setTimeout(()=>{let ch=[];o.lines.forEach((l,i)=>{const n=pick[i];if(!n||n===l.sku)return;const old=item(l.sku),it=item(n);if(!it)return;
     if(o.status==='Ready to pick'&&old){old.alloc=Math.max(0,(old.alloc||0)-rem(l));o.status='New';o.dates.New=o.dates.New||TODAY}
     ch.push({f:`Line ${i+1} part`,from:l.sku,to:n});l.sku=n;l.cost=costOf(n);l.vendor=it.vendor;l.fulfil=asmOf(n)?'Build':'Buy-in';if(!l.price&&it.price)l.price=it.price});
    if(ch.length){log(`Changed parts on ${oLabel(o)}`,ch);checkReady();save();rerender();toast('Part changed')}},0)},true)};
+/* part pickers: a search box above every part dropdown (searches part number, name and description), plus "+ New part" */
+const lfTxt=i=>`${i.sku}, ${i.desc||i.name}`;
+function lfOpts(sel,q,keepBlank){const k=String(q||'').toLowerCase().split(/\s+/).filter(Boolean);const cur=sel.value;
+ const hit=S.items.filter(i=>{const t=(i.sku+' '+(i.name||'')+' '+(i.desc||'')).toLowerCase();return k.every(w=>t.includes(w))||(i.sku===cur&&!k.length)});
+ sel.innerHTML=(keepBlank?'<option value="">Choose a part…</option>':'')+hit.slice(0,300).map(i=>opt(i.sku,lfTxt(i),i.sku===cur)).join('')+'<option value="__newpart">+ New part (not in the list)…</option>';
+ if(k.length&&hit.length&&!hit.some(i=>i.sku===cur))sel.value=hit[0].sku;else if(hit.some(i=>i.sku===cur))sel.value=cur;return hit.length}
+function lfEnhance(sel){if(sel.dataset.ps||sel.disabled)return;sel.dataset.ps='1';const blank=!!sel.querySelector('option[value=""]');
+ const box=document.createElement('div');box.innerHTML=`<input type="search" class="input lf-q" placeholder="Type to find a part: number, name or word (e.g. W2E200, fan)" style="margin-bottom:4px"><div class="lf-n sm muted"></div>`;sel.parentNode.insertBefore(box,sel);
+ const q=box.querySelector('.lf-q'),n=box.querySelector('.lf-n');
+ q.addEventListener('input',()=>{const c=lfOpts(sel,q.value,blank);n.textContent=q.value?(c?`${c} match${c>1?'es':''}${c>300?' (showing 300)':''}`:'No match. Pick “+ New part” in the list to add it.'):'';sel.dispatchEvent(new Event('change',{bubbles:true}))});
+ q.addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault()});
+ sel.addEventListener('change',()=>{if(sel.value!=='__newpart')return;const sku=prompt('New part number (SKU)',q.value||'');if(!sku||!sku.trim()){sel.selectedIndex=0;return}
+  const s=sku.trim();let it=item(s);if(!it){const name=prompt('Part name / description',s)||s;const pr=prompt('Sell price each (USD, optional)','');
+   it={sku:s,id:s,name,desc:name,cat:'Uncategorized',type:'Inventory',vendor:null,cost:null,price:pr===''||pr==null?null:+pr,lead:null,min:0,max:0,onhand:0,alloc:0,loc:'',moq:null,url:'',usedIn:[],flags:[],row:null,src:[]};if(typeof itemFlags==='function')itemFlags(it);S.items.push(it);log(`Added part ${s}`);save();toast(`${s} added to Stock (items)`)}
+  q.value=s;lfOpts(sel,'',blank);sel.value=it.sku;const row=sel.closest('tr');const p=row&&row.querySelector('[name=price]');if(p&&!p.value&&it.price!=null)p.value=it.price;sel.dispatchEvent(new Event('change',{bubbles:true}))})}
+new MutationObserver(()=>{$$('#modal-root select[name=sku], #modal-root select[data-lfpart]').forEach(lfEnhance)}).observe(document.getElementById('modal-root'),{childList:true,subtree:true});
 
 </script>
 <script>/* custpo.js */
