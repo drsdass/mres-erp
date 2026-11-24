@@ -6898,7 +6898,7 @@ function cpOpenOrder(p,pre){
  const before=new Set(S.orders.map(o=>o.id));
  f.addEventListener('submit',()=>setTimeout(()=>{const o=S.orders.find(x=>!before.has(x.id));if(!o)return;
   if(p.carrier)o.shipMethod=p.carrier+(p.collect?' (collect)':'');if(p.acctNo)o.shipAcct=p.acctNo;if(p.contact.name||p.contact.email)o.shipContact=p.contact;if(p.reqShip)o.reqShip=p.reqShip;if(p.terms)o.terms=p.terms;
-  info.forEach(t=>o.notes.push(`${fds(TODAY)}: ${t}`));
+  if(p.ackEmail)o.ackEmail=p.ackEmail;if(p.apEmail)o.apEmail=p.apEmail;info.forEach(t=>o.notes.push(`${fds(TODAY)}: ${t}`));
   const c=acct(o.acct);if(c&&c.id){if(p.apEmail&&!c.apEmail)c.apEmail=p.apEmail;if(p.ackEmail&&!c.ackEmail)c.ackEmail=p.ackEmail}
   save();rerender()},0),true)}
 /* the customer named in the PDF */
@@ -6916,7 +6916,7 @@ const _newQuoteCp=M.newQuote;M.newQuote=(pre={})=>{_newQuoteCp(pre);if(!pre.orde
   try{const p=cpParse(await cpPages(file));p.file=file.name;if(!p.lines.length)return toast('Couldn’t find the line items in that PDF. Fill the order in by hand.',true);cpOpenOrder(p,{acct:cpGuessAcct(p)})}
   catch(err){toast('Couldn’t read the PDF ('+err.message+').',true)}})};
 /* invoices go to the customer's AP address when there is one */
-const _invEmailCp=A['inv-email'];A['inv-email']=async d=>{const i=byId(S.invoices,d.id);const c=i&&acct(i.acct);if(!c||!c.apEmail)return _invEmailCp(d);const was=c.email;c.email=c.apEmail;try{await _invEmailCp(d)}finally{c.email=was}};
+const _invEmailCp=A['inv-email'];A['inv-email']=async d=>{const i=byId(S.invoices,d.id);const c=i&&acct(i.acct);const o=i&&byId(S.orders,i.ref);const ap=(o&&o.apEmail)||(c&&c.apEmail);if(!c||!ap)return _invEmailCp(d);const was=c.email;c.email=ap;try{await _invEmailCp(d)}finally{c.email=was}};
 
 </script>
 <script>/* neworder.js */
@@ -6950,19 +6950,23 @@ function oaShipDate(o){const ls=o.lines.filter(l=>rem(l)>0);if(!ls.length)return
 function oaEmail(o){const em=(S.emails||[]).find(m=>(m.links||[]).some(k=>k.t==='order'&&k.id===o.id));return em||null}
 function oaBody(o,ship){const c=acct(o.acct)||{};const L=o.lines.map(l=>{const it=item(l.sku)||{};return `• ${num(l.qty)} × ${l.sku}${it.desc&&!String(l.sku).toLowerCase().includes(String(it.desc).toLowerCase().split(',').pop().trim())?` (${it.desc.replace(l.sku+', ','')})`:''} @ ${$m(l.price||0)} = ${$m((l.qty||0)*(l.price||0))}`});
  const shipBits=[o.shipMethod?`Ship via: ${o.shipMethod.replace(' (collect)','')}${o.shipAcct?`, collect on your account ${o.shipAcct}`:''}`:'',o.shipTo?`Ship to: ${o.shipTo}`:'',o.shipContact&&(o.shipContact.name||o.shipContact.email)?`Attention: ${[o.shipContact.name,o.shipContact.phone].filter(Boolean).join(', ')}`:''].filter(Boolean);
- return [`Hello,`,'',`Thank you for Purchase Order ${o.cpo||oLabel(o)}${o.endPo?` (your customer PO ${o.endPo})`:''}. This email acknowledges and accepts the order as follows:`,'',...L,`Order total: ${$m(oRev(o))}`,'',`Estimated ship date: ${longDate(ship)}`,...shipBits,'',`${o.so?`Our sales order number is ${o.so}. `:''}We will send the carrier and tracking number as soon as it ships${c.apEmail?`, and the invoice will go to ${c.apEmail}`:''}.`,'',`Please let us know right away if anything above doesn’t match your records.`,'',`Thank you,`].join('\n')}
-A['oa-send']=d=>{const o=byId(S.orders,d.id);if(!o)return;const c=acct(o.acct)||{};const em=oaEmail(o);const ship=o.expected||oaShipDate(o);
- const to=c.ackEmail||(/wecs/i.test(c.name||'')?'procurement@wecs.com':'')||c.email||'';
- const orig=em?((em.thread||[]).map(x=>x.from).filter(Boolean).map(x=>String(x).replace(/^.*<|>.*$/g,'').trim().toLowerCase()).find(x=>x&&!/massrenewable\.com$/i.test(x))||''):'';
- const cc=[orig].filter(x=>x&&x!==to);
- cpOpen({fresh:true,title:`Acknowledge ${o.cpo||oLabel(o)}`,acct:o.acct||null,conv:em?em.id:null,to:to?[to]:[],cc,
+ return [`Hello,`,'',`Thank you for Purchase Order ${o.cpo||oLabel(o)}${o.endPo?` (your customer PO ${o.endPo})`:''}. This email acknowledges and accepts the order as follows:`,'',...L,`Order total: ${$m(oRev(o))}`,'',`Estimated ship date: ${longDate(ship)}`,...shipBits,'',`${o.so?`Our sales order number is ${o.so}. `:''}We will send the carrier and tracking number as soon as it ships${(o.apEmail||c.apEmail)?`, and the invoice will go to ${o.apEmail||c.apEmail}`:''}.`,'',`Please let us know right away if anything above doesn’t match your records.`,'',`Thank you,`].join('\n')}
+/* everyone on the customer's side of the PO thread (not us) */
+const oaOurs=e=>/@massrenewable\.com$/i.test(e)||(typeof OUR_INBOXES!=='undefined'&&OUR_INBOXES.includes(e));
+const oaAddr=v=>[].concat(v||[]).flatMap(x=>String(x||'').split(/[,;]/)).map(x=>x.replace(/^.*<|>.*$/g,'').trim().toLowerCase()).filter(x=>x&&(typeof isAddr==='function'?isAddr(x):/@/.test(x)));
+function oaPeople(em){if(!em)return [];const all=[...oaAddr(em.replyTo),...oaAddr(em.from),...(em.thread||[]).slice().reverse().flatMap(x=>[...oaAddr(x.from),...oaAddr(x.to),...oaAddr(x.cc)]),...oaAddr(em.to),...oaAddr(em.cc)];return [...new Set(all)].filter(e=>!oaOurs(e))}
+function oaWho(o){const c=acct(o.acct)||{};const em=oaEmail(o);const people=oaPeople(em);
+ const ack=o.ackEmail||c.ackEmail||'';const to=[...new Set([ack,people[0]].filter(Boolean))];if(!to.length&&c.email)to.push(c.email.toLowerCase());
+ const cc=people.filter(e=>!to.includes(e));return {to,cc,em,ack,why:ack?`their PO asks for acknowledgements at ${ack}`:em?'no acknowledgement address on their PO, so it goes to whoever sent it':'no PO email is linked to this order'}}
+A['oa-send']=d=>{const o=byId(S.orders,d.id);if(!o)return;const w=oaWho(o);const ship=o.expected||oaShipDate(o);const em=w.em;
+ cpOpen({fresh:true,title:`Acknowledge ${o.cpo||oLabel(o)} · ${aname(o.acct)}`,acct:o.acct||null,conv:em?em.id:null,to:w.to,cc:w.cc,
   subject:em&&em.subject?(/^re:/i.test(em.subject)?em.subject:'RE: '+em.subject):`Order acknowledgement: ${/^PO/i.test(o.cpo||'')?o.cpo:'PO '+(o.cpo||oLabel(o))}`,body:oaBody(o,ship),
-  onSent:(data,body)=>{o.ack={on:TODAY,to:body.to[0],by:USER.name,ship};if(!o.expected)o.expected=ship;o.notes.push(`${fds(TODAY)}: Order acknowledgement sent to ${body.to[0]} by ${USER.name}, ship date ${fd(ship)}`);log(`Sent order acknowledgement for ${oLabel(o)} (PO ${o.cpo||'–'}) to ${body.to[0]}`);if(data&&data.conversationId&&typeof rowQ!=='undefined')rowQ.add(data.conversationId);save();rerender()}});
- if(!to)toast('Add the customer’s email in the To line.',true)};
+  onSent:(data,body)=>{const all=[...(body.to||[]),...(body.cc||[])];o.ack={on:TODAY,to:body.to[0],all,by:USER.name,ship};if(!o.expected)o.expected=ship;o.notes.push(`${fds(TODAY)}: Order acknowledgement sent to ${all.join(', ')} by ${USER.name}, ship date ${fd(ship)}`);log(`Sent order acknowledgement for ${oLabel(o)} (PO ${o.cpo||'–'}) to ${all.join(', ')}`);if(data&&data.conversationId&&typeof rowQ!=='undefined')rowQ.add(data.conversationId);save();rerender()}});
+ if(!w.to.length)toast('No email address found for this customer. Add who to send it to.',true);else toast(`To ${w.to.join(', ')}${w.cc.length?`, cc ${w.cc.join(', ')}`:''}: ${w.why}.`)};
 /* the button on the order page, and a reminder until it is sent */
 const _salesOa=VIEWS.sales;VIEWS.sales=id=>{let h=_salesOa(id);if(!id)return h;const o=byId(S.orders,decodeURIComponent(id));if(!o)return h;
  const k=h.indexOf('data-action="edit-order"');if(k<0)return h;const s=h.lastIndexOf('<button',k);if(s<0)return h;
- const b=o.ack?`<span class="chip" title="Sent to ${esc(o.ack.to)} by ${esc(o.ack.by)}" style="align-self:center">✓ Acknowledged ${fds(o.ack.on)}</span> ${btn('Send again','oa-send',{id:o.id},'ghost')}`:btn('Send order acknowledgement','oa-send',{id:o.id},'primary');
+ const b=o.ack?`<span class="chip" title="Sent to ${esc(o.ack.to)} by ${esc(o.ack.by)}" style="align-self:center">✓ Acknowledged ${fds(o.ack.on)}</span> ${btn('Send again','oa-send',{id:o.id},'ghost')}`:btn('Send order acknowledgement','oa-send',{id:o.id},'primary')+(()=>{const w=oaWho(o);return w.to.length?`<span class="sm muted" style="align-self:center" title="${esc(w.why)}">to ${esc(w.to.join(', '))}${w.cc.length?` + ${w.cc.length} on the thread`:''}</span>`:`<span class="sm" style="align-self:center;color:var(--alert)">no customer email on file</span>`})();
  return h.slice(0,s)+b+' '+h.slice(s)};
 /* the new-order email to the team reminds whoever entered it */
 if(typeof noSend==='function'){const _noSendOa=noSend;noSend=async function(o){const r=await _noSendOa(o);if(!o.ack)setTimeout(()=>toast(`Order created. Next: Send order acknowledgement to ${(acct(o.acct)||{}).ackEmail||'the customer'} (button at the top of the order).`),400);return r}}
