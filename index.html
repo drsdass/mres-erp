@@ -6820,6 +6820,9 @@ A['order-del']=d=>{const o=byId(S.orders,d.id);if(!o)return;if(!isOwner())return
 const _editOrderDel=M.editOrder;M.editOrder=id=>{_editOrderDel(id);const o=byId(S.orders,id);const f=$('#mform');if(!o||!f||!isOwner())return;const ft=f.querySelector('footer');if(!ft||ft.querySelector('[data-action="order-del"]'))return;
  const ok=!o.invoice&&!o.lines.some(l=>(l.shipped||0)>0)&&!['Packed','Shipped','Invoiced','Paid','Completed'].includes(o.status);
  if(ok)ft.insertAdjacentHTML('afterbegin',`<button type="button" class="btn ghost" data-action="order-del" data-id="${esc(o.id)}" style="margin-right:auto;color:var(--alert)">Delete order</button>`)};
+/* clear stale "No SO number yet" warnings once the order has an SO number (e.g. filled in later by the sheet update) */
+function lfFlags(){let n=0;(S.orders||[]).forEach(o=>{if(o.so&&o.flags&&o.flags.includes('No SO number yet')){o.flags=o.flags.filter(f=>f!=='No SO number yet');n++}});return n}
+const _renderLf=render;render=function(keep){try{if(S&&lfFlags())setTimeout(()=>save(),0)}catch(e){}return _renderLf(keep)};
 
 </script>
 <script>/* custpo.js */
