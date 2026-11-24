@@ -7067,7 +7067,9 @@ const _newQuoteQt=M.newQuote;M.newQuote=(pre={})=>{_newQuoteQt(pre);const f=$('#
   setTimeout(()=>{const rec=(S.quotes||[]).find(q=>!beforeQ.has(q.id))||S.orders.find(o=>!beforeO.has(o.id));if(!rec)return;
    rec.freight=frv;if(frc)rec.freightCost=frc;
    costs.forEach(c=>{if(c.cost==null||!c.sku)return;const it=item(c.sku);if(it&&(it.cost==null||it.cost===''))it.cost=c.cost;const l=rec.lines.find(x=>x.sku===c.sku);if(l)l.cost=c.cost});
-   if(!isNaN(mk))S.quoteMarkup=mk;save();rerender()},0)},true)};
+   if(!isNaN(mk))S.quoteMarkup=mk;save();
+   /* a new quote: go to it, with its Email and PDF buttons */
+   if(S.quotes&&S.quotes.includes(rec)){ui.tabs.sales='Quotes and price requests';location.hash='#/sales';rerender();setTimeout(()=>{if(typeof M.quote==='function')M.quote(rec.id)},150)}else rerender()},0)},true)};
 function qtTotals(f){const rows=$$('tr.qline[data-kind=sell]',f);const sub=rows.reduce((a,r)=>a+(+(r.querySelector('[name=qty]')||{}).value||0)*(+(r.querySelector('[name=price]')||{}).value||0),0);const fr=+((f.qFreight||{}).value)||0;
  const set=(c,v)=>{const el=f.querySelector(c);if(el)el.textContent=$m(v)};set('.qt-sub',sub);set('.qt-fr',fr);set('.qt-tot',sub+fr);const t=f.querySelector('#qtotal');if(t&&fr)t.textContent=$f(sub+fr)}
 A['qt-markup']=()=>{const f=$('#mform');if(!f)return;const mk=+$('#qt-mk').value||0;let n=0,miss=0;
