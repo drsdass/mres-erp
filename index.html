@@ -6940,6 +6940,34 @@ const _boot2No=boot2;boot2=function(){const r=_boot2No.apply(this,arguments);(S.
 const _applyNo=typeof applyRemote==='function'?applyRemote:null;if(_applyNo)applyRemote=function(row){const r=_applyNo(row);if(row&&row.key==='orders'&&S.orders)S.orders.forEach(o=>noBoot.add(o.id));return r};
 
 </script>
+<script>/* orderack.js */
+/* orderack.js: "Send order acknowledgement" on a sales order.
+   Opens a ready-to-send email to the customer's acknowledgement address (procurement@ for WECS), in the same thread as their PO email,
+   with the PO number, lines, total, ship-to, shipping account and an estimated ship date. One click to send. */
+function oaShipDate(o){const ls=o.lines.filter(l=>rem(l)>0);if(!ls.length)return TODAY;
+ const days=Math.max(...ls.map(l=>{const it=item(l.sku)||{};const free=typeof avail==='function'?avail(it):(it.onhand||0)-(it.alloc||0);if(free>=rem(l)||['Ready to pick','Packed'].includes(o.status))return 2;const v=it.vendor?vend(it.vendor):null;return (+it.lead||+(v&&v.lead)||21)+3}));
+ let d=addDays(T0,days);while(d.getDay()===0||d.getDay()===6)d=addDays(d,1);return iso(d)}
+function oaEmail(o){const em=(S.emails||[]).find(m=>(m.links||[]).some(k=>k.t==='order'&&k.id===o.id));return em||null}
+function oaBody(o,ship){const c=acct(o.acct)||{};const L=o.lines.map(l=>{const it=item(l.sku)||{};return `• ${num(l.qty)} × ${l.sku}${it.desc&&!String(l.sku).toLowerCase().includes(String(it.desc).toLowerCase().split(',').pop().trim())?` (${it.desc.replace(l.sku+', ','')})`:''} @ ${$m(l.price||0)} = ${$m((l.qty||0)*(l.price||0))}`});
+ const shipBits=[o.shipMethod?`Ship via: ${o.shipMethod.replace(' (collect)','')}${o.shipAcct?`, collect on your account ${o.shipAcct}`:''}`:'',o.shipTo?`Ship to: ${o.shipTo}`:'',o.shipContact&&(o.shipContact.name||o.shipContact.email)?`Attention: ${[o.shipContact.name,o.shipContact.phone].filter(Boolean).join(', ')}`:''].filter(Boolean);
+ return [`Hello,`,'',`Thank you for Purchase Order ${o.cpo||oLabel(o)}${o.endPo?` (your customer PO ${o.endPo})`:''}. This email acknowledges and accepts the order as follows:`,'',...L,`Order total: ${$m(oRev(o))}`,'',`Estimated ship date: ${longDate(ship)}`,...shipBits,'',`${o.so?`Our sales order number is ${o.so}. `:''}We will send the carrier and tracking number as soon as it ships${c.apEmail?`, and the invoice will go to ${c.apEmail}`:''}.`,'',`Please let us know right away if anything above doesn’t match your records.`,'',`Thank you,`].join('\n')}
+A['oa-send']=d=>{const o=byId(S.orders,d.id);if(!o)return;const c=acct(o.acct)||{};const em=oaEmail(o);const ship=o.expected||oaShipDate(o);
+ const to=c.ackEmail||(/wecs/i.test(c.name||'')?'procurement@wecs.com':'')||c.email||'';
+ const orig=em?((em.thread||[]).map(x=>x.from).filter(Boolean).map(x=>String(x).replace(/^.*<|>.*$/g,'').trim().toLowerCase()).find(x=>x&&!/massrenewable\.com$/i.test(x))||''):'';
+ const cc=[orig].filter(x=>x&&x!==to);
+ cpOpen({fresh:true,title:`Acknowledge ${o.cpo||oLabel(o)}`,acct:o.acct||null,conv:em?em.id:null,to:to?[to]:[],cc,
+  subject:em&&em.subject?(/^re:/i.test(em.subject)?em.subject:'RE: '+em.subject):`Order acknowledgement: ${/^PO/i.test(o.cpo||'')?o.cpo:'PO '+(o.cpo||oLabel(o))}`,body:oaBody(o,ship),
+  onSent:(data,body)=>{o.ack={on:TODAY,to:body.to[0],by:USER.name,ship};if(!o.expected)o.expected=ship;o.notes.push(`${fds(TODAY)}: Order acknowledgement sent to ${body.to[0]} by ${USER.name}, ship date ${fd(ship)}`);log(`Sent order acknowledgement for ${oLabel(o)} (PO ${o.cpo||'–'}) to ${body.to[0]}`);if(data&&data.conversationId&&typeof rowQ!=='undefined')rowQ.add(data.conversationId);save();rerender()}});
+ if(!to)toast('Add the customer’s email in the To line.',true)};
+/* the button on the order page, and a reminder until it is sent */
+const _salesOa=VIEWS.sales;VIEWS.sales=id=>{let h=_salesOa(id);if(!id)return h;const o=byId(S.orders,decodeURIComponent(id));if(!o)return h;
+ const k=h.indexOf('data-action="edit-order"');if(k<0)return h;const s=h.lastIndexOf('<button',k);if(s<0)return h;
+ const b=o.ack?`<span class="chip" title="Sent to ${esc(o.ack.to)} by ${esc(o.ack.by)}" style="align-self:center">✓ Acknowledged ${fds(o.ack.on)}</span> ${btn('Send again','oa-send',{id:o.id},'ghost')}`:btn('Send order acknowledgement','oa-send',{id:o.id},'primary');
+ return h.slice(0,s)+b+' '+h.slice(s)};
+/* the new-order email to the team reminds whoever entered it */
+if(typeof noSend==='function'){const _noSendOa=noSend;noSend=async function(o){const r=await _noSendOa(o);if(!o.ack)setTimeout(()=>toast(`Order created. Next: Send order acknowledgement to ${(acct(o.acct)||{}).ackEmail||'the customer'} (button at the top of the order).`),400);return r}}
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
