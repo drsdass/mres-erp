@@ -7440,5 +7440,42 @@ const _renderSec=render;render=function(keep){if(glStaff())glStaffCopy();else if
  if(typeof plSync==='function')plSync=g(plSync);if(typeof mqSync==='function')mqSync=g(mqSync);if(typeof pySync==='function')pySync=g(pySync)}
 
 </script>
+<script>/* topbar.js */
+/* topbar.js: a steady top bar.
+   The bar jumped because the save status changed width ("All changes saved" / "Saving…" / "Offline, will retry")
+   and the clock button changed width ("Clock in" / "0h 08m · Clock out"), pushing everything after them.
+   Now: a fixed order, search and New on the left, everything else on the right, the save status as a small dot
+   (hover or tap it for the words), and the clock button at a fixed width. */
+document.head.insertAdjacentHTML('beforeend',`<style>
+#top{gap:8px;align-items:center;flex-wrap:nowrap}
+#top .searchbtn{flex:1 1 320px;max-width:520px;min-width:0;white-space:nowrap;overflow:hidden}
+#top .searchbtn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#top .tb-sp{flex:1 1 0;min-width:0}
+#top [data-action="nm-open"],#top [data-action="help"],#top [data-action="glossary"],#top .cp-top,#top .sites-btn,#top .icon-btn,#top .avatar{flex:0 0 auto}
+#syncst{flex:0 0 28px;width:28px;height:28px;margin:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:0!important;color:transparent!important;border-radius:50%;cursor:default;position:relative}
+#syncst::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--ok,#16a34a);transition:background .2s}
+#syncst[data-state="saving"]::before,#syncst[data-state="conflict"]::before{background:var(--warn,#d97706);animation:tbPulse 1s ease-in-out infinite}
+#syncst[data-state="offline"]::before{background:var(--alert,#dc2626)}
+#syncst:hover::after,#syncst:focus::after{content:attr(data-label);position:absolute;top:32px;right:0;white-space:nowrap;font-size:12px;color:var(--ink,#111);background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:6px;padding:4px 8px;z-index:50;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+@keyframes tbPulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){#syncst::before{animation:none!important}}
+#top .tc-btn{flex:0 0 auto;min-width:172px;justify-content:center;font-variant-numeric:tabular-nums;white-space:nowrap}
+#top .tc-btn .tc-l{font-variant-numeric:tabular-nums}
+@media (max-width:1100px){#top .searchbtn kbd{display:none}#top .tc-btn{min-width:0}#top .tc-btn .tc-l{display:none}#top .sites-btn span,#top .sites-btn{font-size:0}#top .sites-btn svg{width:18px;height:18px}}
+</style>`);
+/* the save status: same words for screen readers and on hover, shown as a colored dot */
+const _setSyncTb=setSync;setSync=function(s){_setSyncTb(s);const el=$('#syncst');if(!el)return;const t=el.textContent;el.dataset.state=s;el.dataset.label=t;el.title=t;el.setAttribute('aria-label',t);el.tabIndex=0;el.style.color=''};
+/* one fixed order for the bar */
+const TB_ORDER=['[data-action="open-side"]','[data-action="palette"]','[data-action="nm-open"]','.tb-sp','[data-action="help"]','[data-action="glossary"]','.cp-top','.sites-btn','#syncst','[data-action="bell"]','[data-action="theme"]','.tc-btn','[data-action="usermenu"]'];
+let tbBusy=false;
+function tbArrange(){const top=$('#top');if(!top||tbBusy)return;tbBusy=true;try{if(!top.querySelector('.tb-sp'))top.insertAdjacentHTML('beforeend','<span class="tb-sp" aria-hidden="true"></span>');
+ const want=[];TB_ORDER.forEach(sel=>{const el=top.querySelector(':scope > '+sel);if(el&&!want.includes(el))want.push(el)});
+ [...top.children].forEach(el=>{if(!want.includes(el)){/* anything new goes just before the bell */const i=want.findIndex(x=>x.matches('[data-action="bell"]'));want.splice(i<0?want.length:i,0,el)}});
+ const cur=[...top.children];if(want.some((el,i)=>cur[i]!==el))want.forEach(el=>top.appendChild(el));
+ const st=$('#syncst');if(st&&!st.dataset.state)setSync(typeof syncState!=='undefined'?syncState:'saved')}finally{tbBusy=false}}
+const _renderShellTb=renderShell;renderShell=function(){_renderShellTb.apply(this,arguments);tbArrange()};
+{const top=document.getElementById('top');if(top)new MutationObserver(()=>{if(!tbBusy)tbArrange()}).observe(top,{childList:true})}
+
+</script>
 </body>
 </html>
