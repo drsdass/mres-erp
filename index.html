@@ -7239,6 +7239,16 @@ A['ai-open']=d=>{closeModal();setTimeout(()=>M.invEdit(d.id),30)};
 const _salesAi=VIEWS.sales;VIEWS.sales=id=>{let h=_salesAi(id);if(!id)return h;const o=byId(S.orders,decodeURIComponent(id));if(!o)return h;const f=aiFresh(o);if(!f)return h;
  const k=h.indexOf('data-action="edit-order"');if(k<0)return h;const s=h.lastIndexOf('<button',k);const dr=(S.invDrafts||{})[o.id];
  return h.slice(0,s)+btn(dr?'Review & send invoice (draft ready)':'Create invoice','ai-open',{id:o.id},'primary')+' '+h.slice(s)};
+/* the books: an invoice made here posts exactly what's on it.
+   Dr 1100 A/R total · Cr 4000 Sales (subtotal) · Dr 4900 Sales discounts · Cr 4100 Freight charged · Cr 2200 Sales tax
+   Cost of goods sold uses this invoice's own quantities, so partial shipments don't double-count. */
+const _ledgerAi=ledger;ledger=function(){const R=_ledgerAi.apply(this,arguments);try{if(typeof bkEnsureAcct==='function'&&S.invoices.some(i=>i.lines&&i.discount))bkEnsureAcct('4900','Sales discounts','Income');
+ (R.E||[]).forEach(e=>{const inv=/^INV:/.test(e.id)?byId(S.invoices,e.id.slice(4)):/^COGS:/.test(e.id)?byId(S.invoices,e.id.slice(5)):null;if(!inv||!inv.lines)return;
+  if(/^INV:/.test(e.id)){e.lines=[{acct:'1100',dr:aiR2(inv.amount),cr:0},{acct:'4000',dr:0,cr:aiR2(inv.subtotal)},...(inv.discount?[{acct:'4900',dr:aiR2(inv.discount),cr:0,memo:'Discount'}]:[]),...(inv.freight?[{acct:'4100',dr:0,cr:aiR2(inv.freight),memo:'Freight'}]:[]),...(inv.tax?[{acct:'2200',dr:0,cr:aiR2(inv.tax),memo:'Sales tax'}]:[])]}
+  else{const ls=inv.lines.map(l=>{const o=byId(S.orders,inv.ref);const ol=o&&o.lines.find(x=>x.sku===l.sku);const it=item(l.sku)||{};return {q:l.qty,c:+((ol&&ol.cost)||it.cost||0),sku:l.sku}});const cg=aiR2(ls.reduce((a,l)=>a+l.q*l.c,0));
+   e.memo=`Cost of ${ls.map(l=>num(l.q)+' × '+l.sku).join(', ')}`;e.lines=[{acct:'5000',dr:cg,cr:0},{acct:'1200',dr:0,cr:cg}]}});
+ /* a new-style invoice whose order had no COGS line yet (e.g. costs added later) gets one */
+ S.invoices.filter(i=>i.lines&&!(R.E||[]).some(e=>e.id==='COGS:'+i.id)).forEach(i=>{const o=byId(S.orders,i.ref);const cg=aiR2(i.lines.reduce((a,l)=>{const ol=o&&o.lines.find(x=>x.sku===l.sku);return a+l.qty*(+((ol&&ol.cost)||(item(l.sku)||{}).cost||0))},0));if(cg)R.E.push({id:'COGS:'+i.id,auto:true,date:i.issued,src:'Cost of sale',ref:`Invoice ${i.id}`,memo:`Cost of ${i.lines.map(l=>num(l.qty)+' × '+l.sku).join(', ')}`,link:{t:'order',id:i.ref},lines:[{acct:'5000',dr:cg,cr:0},{acct:'1200',dr:0,cr:cg}]})})}catch(err){console.warn('invoice books',err)}return R};
 
 </script>
 <script>/* secure.js */
