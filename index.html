@@ -7694,6 +7694,31 @@ const _boot2Qb=boot2;boot2=function(){const r=_boot2Qb.apply(this,arguments);if(
 if(VIEWS.accounting){const _vAccQb=VIEWS.accounting;VIEWS.accounting=function(){if(isOwner())qbFix1();return _vAccQb.apply(this,arguments)}}
 
 </script>
+<script>/* fitwide.js */
+/* fitwide.js: reconciliation tables fit the screen, no sideways scrolling.
+   Bank lines: fixed column widths, long descriptions wrap, the suggestion and "Add as…" stack in the last column. */
+document.head.insertAdjacentHTML('beforeend',`<style>
+table[data-tbl="bank"]{table-layout:fixed;width:100%;min-width:0}
+table[data-tbl="bank"] th:nth-child(1),table[data-tbl="bank"] td:nth-child(1){width:96px}
+table[data-tbl="bank"] th:nth-child(2),table[data-tbl="bank"] td:nth-child(2){width:auto}
+table[data-tbl="bank"] th:nth-child(3),table[data-tbl="bank"] td:nth-child(3){width:118px}
+table[data-tbl="bank"] th:nth-child(4),table[data-tbl="bank"] td:nth-child(4){width:15%}
+table[data-tbl="bank"] th:nth-child(5),table[data-tbl="bank"] td:nth-child(5){width:118px}
+table[data-tbl="bank"] th:nth-child(6),table[data-tbl="bank"] td:nth-child(6){width:30%}
+table[data-tbl="bank"] td{overflow-wrap:anywhere;word-break:normal;vertical-align:top}
+table[data-tbl="bank"] td:nth-child(2){font-size:12.5px;line-height:1.35}
+table[data-tbl="bank"] td:last-child{white-space:normal!important;text-align:left}
+table[data-tbl="bank"] td:last-child>*{display:block;width:100%;max-width:100%;box-sizing:border-box;margin:0 0 6px}
+table[data-tbl="bank"] td:last-child .btn,table[data-tbl="bank"] td:last-child button{white-space:normal;text-align:left;height:auto;min-height:32px;line-height:1.3;padding-top:5px;padding-bottom:5px}
+table[data-tbl="bank"] td:last-child select{width:100%}
+@media (max-width:1000px){table[data-tbl="bank"] th:nth-child(4),table[data-tbl="bank"] td:nth-child(4){display:none}table[data-tbl="bank"] th:nth-child(6),table[data-tbl="bank"] td:nth-child(6){width:38%}}
+/* every other books / bank-check / tax table: wrap text instead of running off the side */
+#view .tbl-wrap table{max-width:100%}
+#view .tbl-wrap td{overflow-wrap:anywhere}
+#view .tbl-wrap td select{max-width:100%}
+</style>`);
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
