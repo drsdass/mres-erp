@@ -7754,6 +7754,24 @@ function bwRefundAcct(bl){const words=String(bl.desc).toLowerCase().match(/[a-z]
  if(key)(S.gl.bank||[]).forEach(b=>{if(b.amt<0&&b.entry&&String(b.desc).toLowerCase().includes(key)){const e=(S.gl.manual||[]).find(x=>x.id===b.entry);(e&&e.lines||[]).forEach(l=>{if(String(l.acct)!=='1000')cnt[l.acct]=(cnt[l.acct]||0)+1})}});
  const best=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];if(best)return best[0];const r=(typeof ST_RULES!=='undefined'?ST_RULES:[]).find(([re])=>re.test(bl.desc));return r&&r[1]!=='4200'?r[1]:'2050'}
 const _stSuggestBw=stSuggest;stSuggest=function(bl){if(bl&&bl.amt>0&&/refund|reversal|returned|return of|chargeback|credit memo/i.test(bl.desc)){const a=bwRefundAcct(bl);if(a==='2050')bkEnsureAcct('2050','Pre-ERP purchases clearing','Other liability');return {acct:a,label:'Supplier refund (cancels the purchase)'}}return _stSuggestBw.apply(this,arguments)};
+/* customer money already recorded from the sheet: match the bank line to that payment instead of recording it twice */
+function bwRecorded(bl,cust){const out=[];const matched=new Set((S.gl.bank||[]).map(b=>b.match).filter(Boolean).map(k=>String(k).split('#')[0]));
+ (S.invoices||[]).filter(i=>!i.voided&&(!cust||i.acct===cust)).forEach(i=>(i.pays||[]).forEach((p,k)=>{if(p.method==='Credit'||p.rid)return;const id=`PAY:${i.id}:${k}`;if(matched.has(id))return;
+  if(Math.abs(+p.amt-bl.amt)<0.01&&Math.abs(dd(p.date)-dd(bl.date))<=120)out.push({i,p,k,id})}));return out.sort((a,b)=>Math.abs(dd(a.p.date)-dd(bl.date))-Math.abs(dd(b.p.date)-dd(bl.date)))}
+const _stApplyBw=A['st-apply'];A['st-apply']=d=>{const bl=(S.gl.bank||[]).find(x=>x.id===d.id);if(!bl)return;const R=bwRecorded(bl,d.cust);if(!R.length)return _stApplyBw(d);
+ modal('This payment may already be recorded',`<p style="margin-top:0">${$m(bl.amt)} arrived on <b>${fd(bl.date)}</b>. The books already have ${R.length===1?'a payment':'payments'} of the same amount that no bank line has been matched to yet:</p>
+ <div style="display:flex;flex-direction:column;gap:8px">${R.slice(0,4).map(r=>btn(`It’s invoice ${r.i.id}: ${$m(r.p.amt)} recorded ${fd(r.p.date)}${r.p.method?' ('+r.p.method+')':''}. Match it`,'bw-recmatch',{bl:bl.id,inv:r.i.id,k:r.k},'primary')).join('')}
+ ${btn('No, this is a new payment: record it','bw-recnew',{id:d.id,cust:d.cust||''},'ghost')}</div>
+ <p class="sm muted" style="margin-bottom:0">Matching moves that payment’s date to ${fd(bl.date)}, the day the bank actually received it. Recording it again would count the money twice.</p>`,{label:null})};
+A['bw-recnew']=d=>{closeModal();_stApplyBw({id:d.id,cust:d.cust||undefined})};
+A['bw-recmatch']=d=>{closeModal();const bl=(S.gl.bank||[]).find(x=>x.id===d.bl);const i=byId(S.invoices,d.inv);const p=i&&i.pays&&i.pays[+d.k];if(!bl||!p)return;
+ if(locked(p.date)||locked(bl.date))return fail('That period is locked.');const was=p.date;p.date=bl.date;if(i.paidOn===was)i.paidOn=bl.date;
+ const c=cashLines().find(x=>x.e.id===`PAY:${i.id}:${d.k}`);if(!c){save();rerender();return fail('Couldn’t find that payment in the books.')}
+ log(`Invoice ${i.id} payment ${$m(p.amt)} moved from ${fd(was)} to ${fd(bl.date)} to match the bank`);A['bank-match']({id:bl.id,key:c.key});
+ const bal=bkBal(i);if(bal>0.004&&bal<=100)setTimeout(()=>modal(`Invoice ${i.id} has ${$m(bal)} left`,`<p style="margin-top:0">Customers’ banks often take a small wire fee out of what they send. If ${esc(aname(i.acct))} won’t pay the ${$m(bal)}, write it off as a bank fee so the invoice closes.</p><div style="display:flex;gap:8px;flex-wrap:wrap">${btn(`Write off ${$m(bal)} as bank fees`,'bw-wo',{inv:i.id},'primary')}${btn('Leave it open','close-modal',{},'ghost')}</div>`,{label:null}),150)};
+A['bw-wo']=d=>{closeModal();const i=byId(S.invoices,d.inv);if(!i)return;const bal=r2(bkBal(i));if(!(bal>0))return;bkEnsureAcct('6400','Bank and merchant fees','Expense');
+ const last=(i.pays||[]).map(p=>p.date).sort().pop()||TODAY;(i.pays=i.pays||[]).push({date:last,amt:bal,method:'Credit',acct:'6400',note:'Wire fees deducted by the customer’s bank'});i.paid=r2((+i.paid||0)+bal);
+ log(`Wrote off ${$m(bal)} on invoice ${i.id} as bank fees`);save();rerender();toast(`Invoice ${i.id} closed: ${$m(bal)} written off as bank fees`)};
 
 </script>
 <script>/* payee1099.js */
