@@ -7853,6 +7853,21 @@ function fwNote(){const pl=S.gl&&S.gl.plaid;if(!pl||!Object.keys(pl.items||{}).l
  return `<div class="panel mb" style="padding:10px 14px;${msgs.length?'border-left:4px solid var(--warn,#d97706)':''}">${msgs.map(m=>`<div style="margin-bottom:6px">${m}</div>`).join('')}${info}</div>`}
 const _bankViewFw=bankingView;bankingView=function(E){let h=_bankViewFw.apply(this,arguments);try{const n=fwNote();if(n){h=fwBefore(h,n)}
  const pl=S.gl.plaid;if(isOwner()&&pl&&pl.last&&Date.now()-Date.parse(pl.last)>36e5&&Date.now()-(window.__fwTried||0)>6e5){window.__fwTried=Date.now();setTimeout(()=>plSync(true),800)}}catch(e){}return h};
+/* "Ask the bank now": forces a refresh at the bank, then re-reads the whole history from Plaid and adds anything
+   missing (already-imported lines are recognised and skipped). Needs the plaid function from the latest setup zip. */
+A['pl-full']=async()=>{const pl=S.gl.plaid;if(!pl)return;if(typeof plBusy!=='undefined'&&plBusy)return toast('A bank sync is already running.');toast('Asking the bank for new transactions…');
+ let refreshed=false;try{const r=await plCall({action:'refresh'});refreshed=(r.items||[]).some(x=>x.ok)}catch(e){}
+ if(refreshed)await new Promise(res=>setTimeout(res,8000));
+ try{const d=await plCall({action:'sync',full:true});let n=0,dup=0,skip=0;const errs=[];
+  for(const it of d.items||[]){if(it.error){errs.push(`${it.institution}: ${it.error}`);continue}
+   (it.added||[]).forEach(t=>{const acc=pl.map[t.account_id];if(!acc){skip++;return}if(S.gl.bank.some(b=>b.plaid===t.id)){dup++;return}const amt=r2(-t.amount);
+    const same=S.gl.bank.find(b=>!b.plaid&&(b.bankAcct||'1000')===acc&&Math.abs(b.amt-amt)<0.005&&Math.abs(dd(b.date)-dd(t.date))<=2);if(same){same.plaid=t.id;dup++;return}
+    S.gl.bank.push({id:'PL-'+t.id.slice(-10),plaid:t.id,date:t.date,desc:[t.name,t.merchant&&!String(t.name).includes(t.merchant)?t.merchant:'',t.check?'Check '+t.check:''].filter(Boolean).join(' · '),amt,status:'Unmatched',bankAcct:acc,feed:it.institution});n++});
+   try{await plCall({action:'ack',item_id:it.item_id,cursor:it.next_cursor})}catch(e){}}
+  const newest=(S.gl.bank||[]).filter(b=>b.plaid).map(b=>b.date).sort().pop();pl.last=new Date().toISOString();if(n)log(`Bank feed (full re-read): ${n} missing transaction${n===1?'':'s'} added`);save();rerender();
+  toast(errs.length?`Bank feed: ${errs.join('; ')}`:`${n} new transaction${n===1?'':'s'} added, ${dup} already here${skip?`, ${skip} from accounts not in the books`:''}. Newest from the bank: ${newest?fd(newest):'none'}${refreshed?'':' (the bank refresh isn’t available on this Plaid plan)'}.`,!!errs.length)}
+ catch(e){toast('Bank feed: '+e.message+'. Redeploy the plaid function from the latest setup zip.',true)}};
+const _fwNote0=fwNote;fwNote=function(){const h=_fwNote0();return h?h.replace(/<\/div>$/,` ${btn('Ask the bank now','pl-full',{},'sm ghost')}</div>`):h};
 
 </script>
 <script>/* secure.js */
