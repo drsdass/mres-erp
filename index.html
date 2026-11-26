@@ -7756,6 +7756,30 @@ function bwRefundAcct(bl){const words=String(bl.desc).toLowerCase().match(/[a-z]
 const _stSuggestBw=stSuggest;stSuggest=function(bl){if(bl&&bl.amt>0&&/refund|reversal|returned|return of|chargeback|credit memo/i.test(bl.desc)){const a=bwRefundAcct(bl);if(a==='2050')bkEnsureAcct('2050','Pre-ERP purchases clearing','Other liability');return {acct:a,label:'Supplier refund (cancels the purchase)'}}return _stSuggestBw.apply(this,arguments)};
 
 </script>
+<script>/* payee1099.js */
+/* payee1099.js: contractor payments know who they went to, so the 1099 list counts them.
+   Booking a bank line to Contract labor (or Professional fees) asks who was paid, links that person as a vendor,
+   and ticks them for a 1099. Booked lines can get a payee later with "Who was paid?". */
+function p9Acct(){const a=S.gl.coa.find(x=>/contract labor|contractors?$|subcontract/i.test(x.name));if(a)return a.no;let n=6550;while(S.gl.coa.some(x=>x.no===String(n)))n++;S.gl.coa.push({no:String(n),name:'Contract labor',type:'Expense',active:true});return String(n)}
+const p9Is=acc=>{const a=S.gl.coa.find(x=>x.no===String(acc));return !!a&&/contract|subcontract|1099|professional/i.test(a.name)};
+function p9Ask(bl){const e=(S.gl.manual||[]).find(x=>x.id===bl.entry);if(!e)return;const cur=e.vendor?vend(e.vendor).name:'';
+ modal('Who was this paid to?',`<p style="margin-top:0">${fd(bl.date)} · ${$m(Math.abs(bl.amt))} · ${esc(String(bl.desc).slice(0,70))}</p>
+ <div class="fg">${fld('Paid to',`<input class="input" name="who" list="p9list" value="${esc(cur)}" placeholder="e.g. Jordan Torres" autocomplete="off"><datalist id="p9list">${(S.vendors||[]).map(v=>`<option value="${esc(v.name)}">`).join('')}</datalist>`,true)}
+ ${fld('Check or reference #',inp('ref',e.checkNo||'','placeholder="e.g. 2101"'))}
+ <label class="f" style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="n1099" checked> Contractor who needs a 1099 (a person or unincorporated business paid for work)</label></div>
+ <p class="sm muted" style="margin-bottom:0">For the 1099, keep their W-9 (name, address, SSN or EIN) on file. Don’t type their SSN here.</p>`,
+ {label:'Save',submit:f=>{const nm=String(f.who||'').trim();if(!nm)return fail('Add who was paid.');let v=(S.vendors||[]).find(x=>x.name.toLowerCase()===nm.toLowerCase());
+  if(!v){v={id:'V-'+nextNum(S.vendors,x=>+String(x.id).split('-')[1]||0,10),name:nm,lead:null,contact:'',email:'',phone:'',kind:'Contractor'};S.vendors.push(v)}
+  e.vendor=v.id;e.vendorPaid=Math.abs(bl.amt);if(f.ref)e.checkNo=f.ref;e.memo=`Paid ${nm}${f.ref?` (check ${f.ref})`:''}`;bl.note=`Paid ${nm}`;
+  if(f.n1099){ensureGL();S.gl.v1099[v.id]=true}log(`Bank line ${fd(bl.date)} ${$m(Math.abs(bl.amt))} paid to ${nm}${f.n1099?' (1099)':''}`);save();rerender();toast(`Linked to ${nm}${f.n1099?', counted for the 1099':''}`)}})}
+const _stAddP9=stAddAs;stAddAs=function(bl,acc){const r=_stAddP9.apply(this,arguments);if(r!==false&&p9Is(acc)&&bl.amt<0)setTimeout(()=>p9Ask(bl),60);return r};
+A['p9-who']=d=>{const bl=(S.gl.bank||[]).find(x=>x.id===d.id);if(bl)p9Ask(bl)};
+/* a "Who was paid?" link on booked contractor lines; checks get a Contract labor suggestion */
+const _bankViewP9=bankingView;bankingView=function(E){let h=_bankViewP9.apply(this,arguments);try{(S.gl.bank||[]).forEach(bl=>{if(!bl.entry)return;const e=(S.gl.manual||[]).find(x=>x.id===bl.entry);if(!e||!(e.lines||[]).some(l=>p9Is(l.acct)))return;
+ const tag=`data-action="bank-undo" data-id="${bl.id}"`;const k=h.indexOf(tag);if(k<0)return;const s0=h.lastIndexOf('<button',k);h=h.slice(0,s0)+btn(e.vendor?esc(vend(e.vendor).name):'Who was paid?','p9-who',{id:bl.id},e.vendor?'sm ghost':'sm')+' '+h.slice(s0)})}catch(err){}return h};
+const _stSuggestP9=stSuggest;stSuggest=function(bl){const s=_stSuggestP9.apply(this,arguments);if(!s&&bl&&bl.amt<0&&/^\s*(check|chk)\b|\bcheck #?\s*\d{3,}/i.test(bl.desc))return {acct:p9Acct(),label:'Check: contractor pay?'};return s};
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
