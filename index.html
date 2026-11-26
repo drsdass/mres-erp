@@ -5995,7 +5995,7 @@ const bkNumV=v=>{let s=String(v??'').trim();if(!s)return 0;const neg=/^\(.*\)$/.
 function bkDate(v){const s=String(v||'').trim();let m;if((m=s.match(/^(\d{4})-(\d{2})-(\d{2})/)))return m[0];if((m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))){const y=m[3].length===2?'20'+m[3]:m[3];return `${y}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`}
  if(/^\d{5}$/.test(s)){const d=new Date(Date.UTC(1899,11,30)+(+s)*864e5);return d.toISOString().slice(0,10)}const d=new Date(s);return isNaN(d)?'':iso(d)}
 function bkGuess(name){const n=String(name).toLowerCase(),leaf=n.split(':').pop();const ex=S.gl.coa.find(a=>a.name.toLowerCase()===leaf.trim()||a.name.toLowerCase()===n.trim()||(/^\d{3,5}\b/.test(leaf)&&leaf.startsWith(a.no+' ')));if(ex)return ex.no;
- const R=[[/undeposited/,'1050'],[/checking|operating|\bbank\b|chase|wells|bofa|bank of america|savings/,'1000'],[/receivable|a\/r/,'1100'],[/inventory/,'1200'],[/prepaid/,'1300'],[/equipment|tooling|machinery|furniture|vehicle|fixed asset/,'1500'],[/payable|a\/p/,'2000'],[/credit card|amex|american express|visa|mastercard/,'2100'],[/sales tax/,'2200'],[/payroll liab|payroll tax payable|withholding/,'2400'],[/accrued/,'2300'],
+ const R=[[/bank.*(fee|charge)|credit card fee|merchant fee|service charge|stripe fee|paypal fee/,'6400'],[/\(\d{4}\)|\bx{1,4}\d{4}\b|ending in \d{4}|^cash$|petty cash|cash on hand/,'1000'],[/^services?$|service income|service revenue/,'4000'],[/^purchases$/,'5000'],[/undeposited/,'1050'],[/checking|operating|\bbank\b|chase|wells|bofa|bank of america|savings/,'1000'],[/receivable|a\/r/,'1100'],[/inventory/,'1200'],[/prepaid/,'1300'],[/equipment|tooling|machinery|furniture|vehicle|fixed asset/,'1500'],[/payable|a\/p/,'2000'],[/credit card|amex|american express|visa|mastercard/,'2100'],[/sales tax/,'2200'],[/payroll liab|payroll tax payable|withholding/,'2400'],[/accrued/,'2300'],
   [/opening bal/,'3900'],[/retained/,'3100'],[/equity|capital|contribution|draw|distribution|owner|partner|member/,'3000'],[/freight.*(income|revenue)|shipping (income|revenue)|delivery income/,'4100'],[/discount/,'4900'],[/^sales|income|revenue/,'4000'],[/freight in|inbound freight|freight.*cogs/,'5100'],[/cost of goods|cogs|cost of sales|purchases|job materials|supplies.*materials/,'5000'],[/inventory (adj|shrink)/,'5200'],
   [/payroll.*tax|employer tax/,'6050'],[/payroll|wage|salar|officer comp|guaranteed pay/,'6000'],[/rent|lease|facilit|utilit/,'6100'],[/software|subscript|computer|internet|dues/,'6200'],[/shipping|postage|delivery|freight/,'6300'],[/bank|merchant|service charge|stripe|paypal fee/,'6400'],[/legal|accounting|professional|consult/,'6500'],[/insurance/,'6600'],[/travel|meal|entertain|airfare|hotel|auto|fuel/,'6700'],[/bad debt/,'6800']];
  for(const [re,no] of R)if(re.test(n))return no;return ''}
@@ -7673,6 +7673,25 @@ const _looksPromoSys=looksPromo;looksPromo=function(m){if(m&&SYS_FROM.test(Strin
 function sysSweep(){try{if(!S||!Array.isArray(S.emails))return;let n=0;S.emails.forEach(m=>{if(m.cat!=='Promotions'&&SYS_FROM.test(String(m.from||''))&&!m.acct&&!(m.thread||[]).some(x=>x.dir==='out')){m.cat='Promotions';m.status='Closed';m.read=true;n++}});if(n)save()}catch(e){}}
 const _boot2Sys=boot2;boot2=function(){const r=_boot2Sys.apply(this,arguments);sysSweep();return r};
 const _sortPromosSys=sortPromos;sortPromos=function(){const r=_sortPromosSys.apply(this,arguments);sysSweep();return r};
+
+</script>
+<script>/* qbfix.js */
+/* qbfix.js: one-time correction of QuickBooks account matches that were guessed wrong on the first upload
+   (bank account as an expense, bank fees as cash, purchases as cash, cash and services as new expenses, partner investments). */
+function qbFix1(){try{if(!S||!S.gl||!S.gl.qbMap||S.gl.qbFix1)return;const M=S.gl.qbMap;let n=0;const set=(q,to,bad)=>{if(M[q]!==undefined&&(!bad||bad(M[q]))&&M[q]!==to){M[q]=to;n++}};
+ const ty=no=>(S.gl.coa.find(a=>a.no===no)||{}).type||'';
+ Object.keys(M).forEach(q=>{const l=q.toLowerCase();
+  if(/\(\d{4}\)/.test(q))set(q,'1000',a=>ty(a)!=='Bank');
+  else if(/bank.*(fee|charge)|credit card fee/.test(l))set(q,'6400');
+  else if(/^purchases$/.test(l))set(q,'5000',a=>ty(a)==='Bank');
+  else if(/^cash$/.test(l))set(q,'1000',a=>ty(a)!=='Bank');
+  else if(/^services?$/.test(l))set(q,'4000',a=>ty(a)==='Expense'&&(S.gl.coa.find(x=>x.no===a)||{}).fromQB);
+  else if(/^partner invest/.test(l))set(q,'3010',a=>a==='3000')});
+ /* retire the new accounts nothing points to any more */
+ const usedNos=new Set(Object.values(M));S.gl.coa.forEach(a=>{if(a.fromQB&&!usedNos.has(a.no)&&!(S.gl.manual||[]).some(e=>(e.lines||[]).some(l=>String(l.acct)===a.no)))a.active=false});
+ S.gl.qbFix1=TODAY;if(n){if(typeof bkApplyTB==='function')bkApplyTB();save();log(`Corrected ${n} QuickBooks account match${n===1?'':'es'}`)}}catch(e){console.warn('qbFix1',e)}}
+const _boot2Qb=boot2;boot2=function(){const r=_boot2Qb.apply(this,arguments);if(typeof isOwner==='function'&&isOwner())qbFix1();return r};
+if(VIEWS.accounting){const _vAccQb=VIEWS.accounting;VIEWS.accounting=function(){if(isOwner())qbFix1();return _vAccQb.apply(this,arguments)}}
 
 </script>
 <script>/* secure.js */
