@@ -7748,6 +7748,12 @@ A['bw-erponly']=()=>{closeModal();const ns=bwErpStart();if(S.gl.lock&&S.gl.lock>
  const was=S.gl.start;S.gl.start=ns;if(S.gl.opening&&/QuickBooks/i.test(S.gl.opening.from||'')){S.gl.openingQB=S.gl.opening;delete S.gl.opening}
  S.gl.erpOnly=TODAY;(S.gl.bank||[]).forEach(b=>{if(b.status==='In QuickBooks'){b.status='Unmatched';b.note=''}});
  log(`Switched to ERP-only books: start moved from ${fd(was)} to ${fd(ns)}${S.gl.openingQB?', QuickBooks opening balances set aside':''}`);save();rerender();toast(`The ERP is now the only books, starting ${fd(ns)}. Every bank line can be booked.`)};
+/* money coming back from a supplier (refunds, reversals, returned wires) is not a customer payment:
+   it goes back to the same account the original payment went to, which cancels that purchase out */
+function bwRefundAcct(bl){const words=String(bl.desc).toLowerCase().match(/[a-z]{4,}/g)||[];const key=words.find(w=>!/refund|reversal|return|credit|payment|satish|dass|mass|renewable|energy|internet/.test(w));const cnt={};
+ if(key)(S.gl.bank||[]).forEach(b=>{if(b.amt<0&&b.entry&&String(b.desc).toLowerCase().includes(key)){const e=(S.gl.manual||[]).find(x=>x.id===b.entry);(e&&e.lines||[]).forEach(l=>{if(String(l.acct)!=='1000')cnt[l.acct]=(cnt[l.acct]||0)+1})}});
+ const best=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];if(best)return best[0];const r=(typeof ST_RULES!=='undefined'?ST_RULES:[]).find(([re])=>re.test(bl.desc));return r&&r[1]!=='4200'?r[1]:'2050'}
+const _stSuggestBw=stSuggest;stSuggest=function(bl){if(bl&&bl.amt>0&&/refund|reversal|returned|return of|chargeback|credit memo/i.test(bl.desc)){const a=bwRefundAcct(bl);if(a==='2050')bkEnsureAcct('2050','Pre-ERP purchases clearing','Other liability');return {acct:a,label:'Supplier refund (cancels the purchase)'}}return _stSuggestBw.apply(this,arguments)};
 
 </script>
 <script>/* secure.js */
