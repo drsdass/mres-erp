@@ -7719,6 +7719,29 @@ table[data-tbl="bank"] td:last-child select{width:100%}
 </style>`);
 
 </script>
+<script>/* bankwhy.js */
+/* bankwhy.js: a bank-line button never fails silently.
+   Lines dated before the ERP books start (the day after the QuickBooks trial balance) belong to QuickBooks;
+   lines in a locked period need unlocking. Both now say so and offer the fix. */
+function bwBefore(){return (S.gl.bank||[]).filter(b=>b.status==='Unmatched'&&S.gl.start&&b.date<S.gl.start)}
+function bwMonthStart(d){return String(d).slice(0,8)+'01'}
+function bwExplain(bl){const pre=bwBefore();const first=pre.map(b=>b.date).sort()[0]||bl.date;const ns=bwMonthStart(first);
+ modal('This line is before the books start',`<p style="margin-top:0">It’s dated <b>${fd(bl.date)}</b>. The ERP’s books start <b>${fd(S.gl.start)}</b>${S.gl.qbTB?`, the day after the QuickBooks trial balance you uploaded (${fd(S.gl.qbTB.asOf)})`:''}. Everything before that date is meant to be in QuickBooks, and the ERP carries it in as opening balances. Booking it here too would count it twice.</p>
+ <p><b>Which is true?</b></p>
+ <div style="display:flex;flex-direction:column;gap:8px">${btn(`It’s in QuickBooks: mark ${pre.length>1?`all ${pre.length} lines before ${fds(S.gl.start)}`:'it'} done`,'bw-qb',{all:1},'primary')}${pre.length>1?btn('Mark just this one done','bw-qb',{id:bl.id},'ghost'):''}
+ ${btn(`QuickBooks isn’t up to date: start the ERP books on ${fd(ns)}`,'bw-start',{d:ns},'ghost')}</div>
+ <p class="sm muted" style="margin-bottom:0">If you start the books earlier, upload a new QuickBooks trial balance as of ${fd(iso(addDays(pd(ns),-1)))} (Accounting → QuickBooks, step 4) so the opening balances match the new start.</p>`,{label:null})}
+const _stAddBw=A['st-add'];A['st-add']=d=>{const bl=(S.gl.bank||[]).find(x=>x.id===d.id);if(!bl)return;
+ if(locked(bl.date))return fail(`The books are locked through ${fd(S.gl.lock)}. Unlock that month under Accounting → Close first.`);
+ if(S.gl.start&&bl.date<S.gl.start)return bwExplain(bl);
+ const ok=stAddAs(bl,d.acct);if(ok===false)return fail('That line couldn’t be booked. Check the account and try again.');save();rerender()};
+A['bw-qb']=d=>{closeModal();const L=d.all?bwBefore():(S.gl.bank||[]).filter(b=>b.id===d.id);L.forEach(b=>{b.status='In QuickBooks';b.note='Before the books start: in QuickBooks'});log(`Marked ${L.length} bank line${L.length===1?'':'s'} before ${fd(S.gl.start)} as in QuickBooks`);save();rerender();toast(`${L.length} line${L.length===1?'':'s'} marked as in QuickBooks`)};
+A['bw-start']=d=>{closeModal();const was=S.gl.start;S.gl.start=d.d;log(`Moved the books start from ${fd(was)} to ${fd(d.d)}`);save();rerender();toast(`Books now start ${fd(d.d)}. Upload a trial balance as of ${fd(iso(addDays(pd(d.d),-1)))} next.`)};
+/* a note above the bank lines when some are before the start */
+const _bankViewBw=bankingView;bankingView=function(E){let h=_bankViewBw.apply(this,arguments);try{const pre=bwBefore();if(pre.length){const note=`<div class="panel mb" style="border-left:4px solid var(--warn,#d97706);padding:12px 14px"><b>${pre.length} bank line${pre.length===1?' is':'s are'} dated before the books start (${fd(S.gl.start)}).</b> They belong to QuickBooks, so their buttons won’t book them here. ${btn('What should I do?','bw-why',{id:pre[0].id},'sm')}</div>`;h=h.replace('<section class="panel mb"><div class="ph"><h3>Bank lines</h3>',note+'<section class="panel mb"><div class="ph"><h3>Bank lines</h3>')}}catch(e){}return h};
+A['bw-why']=d=>{const bl=(S.gl.bank||[]).find(x=>x.id===d.id);if(bl)bwExplain(bl)};
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
