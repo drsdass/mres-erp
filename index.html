@@ -7870,6 +7870,48 @@ A['pl-full']=async()=>{const pl=S.gl.plaid;if(!pl)return;if(typeof plBusy!=='und
 const _fwNote0=fwNote;fwNote=function(){const h=_fwNote0();return h?h.replace(/<\/div>$/,` ${btn('Ask the bank now','pl-full',{},'sm ghost')}</div>`):h};
 
 </script>
+<script>/* acctpick.js */
+/* acctpick.js: "Add as…" on bank lines becomes a searchable picker.
+   Type a number ("64") or words ("bank fee", "capital denzil"); accounts are in number order, grouped by type,
+   with the ones you use most at the top. Arrow keys + Enter work. Picking books the line exactly as before. */
+const AP_TYPES=[['Income','Income'],['Cost of goods sold','Cost of goods sold'],['Expense','Expenses'],['Bank','Bank'],['Other asset','Assets'],['Other current asset','Assets'],['Fixed asset','Assets'],['Accounts receivable','Assets'],['Other liability','Liabilities'],['Other current liability','Liabilities'],['Credit card','Liabilities'],['Accounts payable','Liabilities'],['Equity','Equity']];
+function apGroup(t){const g=AP_TYPES.find(x=>x[0]===t);return g?g[1]:'Other'}
+function apUsed(){const c={};(S.gl.bank||[]).forEach(b=>{const e=b.entry&&(S.gl.manual||[]).find(x=>x.id===b.entry);(e&&e.lines||[]).forEach(l=>{if(String(l.acct)!=='1000')c[l.acct]=(c[l.acct]||0)+1})});return Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0])}
+document.head.insertAdjacentHTML('beforeend',`<style>
+.ap-in{width:100%;box-sizing:border-box}
+.ap-pop{position:fixed;z-index:9999;background:var(--card,#fff);color:var(--ink,#111);border:1px solid var(--line,#d1d5db);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);max-height:340px;overflow:auto;font-size:13.5px;padding:4px 0}
+.ap-pop .ap-h{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3,#64748b);padding:8px 12px 3px}
+.ap-pop .ap-o{padding:6px 12px;cursor:pointer;display:flex;gap:8px}.ap-pop .ap-o b{min-width:42px;font-variant-numeric:tabular-nums}
+.ap-pop .ap-o.on,.ap-pop .ap-o:hover{background:var(--hover,rgba(14,165,183,.12))}.ap-pop .ap-none{padding:10px 12px;color:var(--ink-3,#64748b)}
+.ap-pop mark{background:#fde68a;color:inherit;border-radius:2px}
+</style>`);
+/* put the accounts in number order everywhere */
+function apSort(){try{if(S.gl&&S.gl.coa&&!S.gl.coa.some(a=>a.no==='4200'))bkEnsureAcct('4200','Interest income','Income');if(S.gl&&Array.isArray(S.gl.coa))S.gl.coa.sort((a,b)=>String(a.no).localeCompare(String(b.no),undefined,{numeric:true}))}catch(e){}}
+const _bankViewAp=bankingView;bankingView=function(E){apSort();let h=_bankViewAp.apply(this,arguments);
+ return h.replace(/<select data-bankacct="([^"]+)"([^>]*)>([\s\S]*?)<\/select>/g,(m,id,attrs,inner)=>`<div class="ap-wrap"><input class="input ap-in" data-apfor="${id}" placeholder="Add as… type a number or name" autocomplete="off" aria-label="Add as account"><select data-bankacct="${id}"${attrs} hidden tabindex="-1">${inner}</select></div>`)};
+let apEl=null,apIdx=0,apInput=null;
+function apClose(){if(apEl){apEl.remove();apEl=null;apInput=null}}
+function apList(q){const used=apUsed();const acc=(S.gl.coa||[]).filter(a=>a.active!==false&&a.no!=='1000');const toks=String(q||'').toLowerCase().split(/\s+/).filter(Boolean);
+ const hit=a=>{const s=(a.no+' '+a.name+' '+a.type+' '+apGroup(a.type)).toLowerCase();return toks.every(t=>s.includes(t)||(/^\d+$/.test(t)&&String(a.no).startsWith(t)))};
+ const L=acc.filter(hit).sort((a,b)=>{if(toks.length&&/^\d+$/.test(toks[0])){const sa=String(a.no).startsWith(toks[0]),sb=String(b.no).startsWith(toks[0]);if(sa!==sb)return sa?-1:1}return String(a.no).localeCompare(String(b.no),undefined,{numeric:true})});
+ const groups=[];if(!toks.length&&used.length)groups.push(['Most used',used.map(no=>acc.find(a=>a.no===no)).filter(Boolean)]);
+ const order=['Income','Cost of goods sold','Expenses','Bank','Assets','Liabilities','Equity','Other'];order.forEach(g=>{const xs=L.filter(a=>apGroup(a.type)===g);if(xs.length)groups.push([g,xs])});return {groups,toks}}
+function apRender(){if(!apEl||!apInput)return;const {groups,toks}=apList(apInput.value);let i=0;const hl=s=>{let h=esc(s);toks.forEach(t=>{h=h.replace(new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),x=>`<mark>${x}</mark>`)});return h};
+ const flat=[];apEl.innerHTML=groups.length?groups.map(([g,xs])=>`<div class="ap-h">${g}</div>`+xs.map(a=>{flat.push(a.no);const k=i++;return `<div class="ap-o ${k===apIdx?'on':''}" data-apno="${esc(a.no)}" data-k="${k}"><b>${hl(a.no)}</b><span>${hl(a.name)}</span></div>`}).join('')).join(''):`<div class="ap-none">No account matches. Add one under Accounting → Chart of accounts.</div>`;
+ apEl.__flat=flat;const on=apEl.querySelector('.ap-o.on');if(on)on.scrollIntoView({block:'nearest'})}
+function apOpen(inp){apClose();apInput=inp;apIdx=0;apEl=document.createElement('div');apEl.className='ap-pop';apEl.setAttribute('role','listbox');document.body.appendChild(apEl);apPos();apRender()}
+function apPos(){if(!apEl||!apInput)return;const r=apInput.getBoundingClientRect();const below=window.innerHeight-r.bottom;apEl.style.left=Math.max(8,Math.min(r.left,window.innerWidth-Math.max(r.width,300)-8))+'px';apEl.style.width=Math.max(r.width,300)+'px';
+ if(below<260&&r.top>below){apEl.style.top='';apEl.style.bottom=(window.innerHeight-r.top+4)+'px'}else{apEl.style.bottom='';apEl.style.top=(r.bottom+4)+'px'}}
+function apPick(no){if(!apInput||!no)return;const id=apInput.dataset.apfor;const sel=document.querySelector(`select[data-bankacct="${CSS.escape(id)}"]`);apClose();if(!sel)return;sel.value=no;sel.dispatchEvent(new Event('change',{bubbles:true}))}
+document.addEventListener('focusin',e=>{if(e.target.classList&&e.target.classList.contains('ap-in'))apOpen(e.target)});
+document.addEventListener('input',e=>{if(e.target===apInput){apIdx=0;apRender()}});
+document.addEventListener('keydown',e=>{if(!apEl||e.target!==apInput)return;const n=(apEl.__flat||[]).length;
+ if(e.key==='ArrowDown'){e.preventDefault();apIdx=Math.min(n-1,apIdx+1);apRender()}else if(e.key==='ArrowUp'){e.preventDefault();apIdx=Math.max(0,apIdx-1);apRender()}
+ else if(e.key==='Enter'){e.preventDefault();apPick((apEl.__flat||[])[apIdx])}else if(e.key==='Escape'){apInput.blur();apClose()}});
+document.addEventListener('mousedown',e=>{const o=e.target.closest&&e.target.closest('.ap-o');if(o&&apEl&&apEl.contains(o)){e.preventDefault();apPick(o.dataset.apno);return}if(apEl&&!apEl.contains(e.target)&&e.target!==apInput)apClose()});
+window.addEventListener('scroll',()=>apPos(),true);window.addEventListener('resize',()=>apPos());
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
