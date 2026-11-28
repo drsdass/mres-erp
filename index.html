@@ -7912,6 +7912,70 @@ document.addEventListener('mousedown',e=>{const o=e.target.closest&&e.target.clo
 window.addEventListener('scroll',()=>apPos(),true);window.addEventListener('resize',()=>apPos());
 
 </script>
+<script>/* clock2.js */
+/* clock2.js: a time clock people don't have to remember.
+   - Not clocked in during work hours (7 am–9 pm) and using the ERP: a banner offers "Clock in from 8:12" (when you
+     started using the ERP today) or "now". Nothing happens silently.
+   - On the clock: say what you're doing (Office · Shop / builds · Driving). Shop time never times out.
+   - Shift left open past 9 pm or into the next day: next time you open the ERP it asks when you stopped, suggesting
+     your last ERP activity, and the entry is flagged for review.
+   - A cloud job (tc-remind, Supabase) emails anyone still on the clock at 9 pm and sends the owner a weekly summary.
+   - Owners get "Needs review" and hours-by-activity charts on the Time clock page. */
+const TC_MODES={Office:{c:'#0ea5b7',i:'💻'},Shop:{c:'#f59e0b',i:'🛠'},Driving:{c:'#8b5cf6',i:'🚚'}};
+const tcCfg=()=>{const c=S.tcCfg=S.tcCfg||{};if(c.start==null)c.start=7;if(c.end==null)c.end=21;if(!Array.isArray(c.skip))c.skip=[];return c};
+const tcHr=d=>{const x=new Date(d);return x.getHours()+x.getMinutes()/60};
+/* when this person first and last used the ERP today, on this device */
+function tcActKey(){return 'tcact-'+(USER&&USER.name||'')}
+function tcAct(){try{return JSON.parse(localStorage.getItem(tcActKey())||'{}')}catch(e){return {}}}
+function tcTouch(){if(!USER||!USER.name)return;const a=tcAct(),now=new Date().toISOString(),day=tcDay(now);if(!a.days)a.days={};const d=a.days[day]=a.days[day]||{first:now,last:now};
+ if(Date.parse(now)-Date.parse(d.last)<6e4)return;d.last=now;Object.keys(a.days).sort().slice(0,-10).forEach(k=>delete a.days[k]);try{localStorage.setItem(tcActKey(),JSON.stringify(a))}catch(e){}}
+['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev,()=>tcTouch(),{passive:true,capture:true}));
+function tcDayAct(day){return ((tcAct().days||{})[day])||null}
+/* ---------- the clock-in banner ---------- */
+function tcSkipKey(){return 'tcskip-'+(USER&&USER.name)+'-'+TODAY}
+function tcBanner(){const c=tcCfg();if(!USER||!USER.name||tcOpen()||c.skip.includes(USER.name))return'';const h=tcHr(Date.now());if(h<c.start||h>=c.end)return'';
+ try{if(localStorage.getItem(tcSkipKey()))return''}catch(e){}const a=tcDayAct(TODAY);const from=a&&Date.now()-Date.parse(a.first)>5*6e4&&tcHr(a.first)>=c.start-0.5?a.first:null;
+ return `<div id="tc-ban" role="status"><span>${ic('clock',16)} <b>You’re not clocked in.</b>${from?` You’ve been using the ERP since ${esc(tcTime(from))}.`:''}</span><span class="grow"></span>${from?btn(`Clock in from ${tcTime(from)}`,'tc2-in',{at:from},'sm primary'):''}${btn('Clock in now','tc2-in',{},from?'sm':'sm primary')}${btn('Not working today','tc2-skip',{},'sm ghost')}</div>`}
+A['tc2-in']=d=>{if(tcOpen())return;const at=d.at&&Date.parse(d.at)<Date.now()?d.at:new Date().toISOString();const e={id:tcId(),who:USER.name,in:at,out:null,note:'',mode:'Office',modes:[{at,m:'Office'}]};if(d.at)e.edited=`Clocked in from first ERP use (${tcTime(at)})`;TC().push(e);log(`${USER.name} clocked in${d.at?' from '+tcTime(at):''}`);save();toast(`Clocked in at ${tcTime(at)}`);rerender()};
+A['tc2-skip']=()=>{try{localStorage.setItem(tcSkipKey(),'1')}catch(e){}rerender()};
+/* every clock-in starts as Office; record mode changes */
+const _tcInC2=A['tc-in'];A['tc-in']=d=>{_tcInC2(d);const o=tcOpen();if(o&&!o.mode){o.mode='Office';o.modes=[{at:o.in,m:'Office'}];save()}};
+A['tc2-mode']=d=>{const o=tcOpen();if(!o)return;if(d.m){if(o.mode!==d.m){o.mode=d.m;(o.modes=o.modes||[{at:o.in,m:'Office'}]).push({at:new Date().toISOString(),m:d.m});save();toast(`${TC_MODES[d.m].i} ${d.m==='Shop'?'Shop / builds':d.m}`)}closeModal();rerender();return}
+ modal('What are you working on?',`<p class="muted" style="margin-top:0">On the clock since ${esc(tcTime(o.in))} · ${tcHM(tcMs(o))}. Switching doesn’t stop your time.</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">${Object.entries(TC_MODES).map(([m,x])=>`<button class="btn ${o.mode===m?'primary':''}" style="min-height:64px;font-size:16px" data-action="tc2-mode" data-m="${m}">${x.i} ${m==='Shop'?'Shop / builds':m}</button>`).join('')}</div><div style="margin-top:14px">${btn('Clock out','tc-out',{},'danger')}</div>`,{label:null})};
+/* the top-bar clock shows the mode; click it to switch or clock out */
+const _tcBtnC2=tcBtn;tcBtn=function(){const o=tcOpen();if(!o)return _tcBtnC2();const m=o.mode||'Office';return `<button class="tc-btn on" data-action="tc2-mode" title="On the clock since ${esc(tcTime(o.in))}. Click to switch what you're doing or clock out.">${ic('clock',16)}<span class="tc-l">${TC_MODES[m].i} ${tcHM(tcMs(o))} · ${m}</span></button>`};
+/* ---------- a shift left open ---------- */
+function tcStale(o){if(!o)return false;const c=tcCfg();if(tcDay(o.in)!==TODAY)return true;return tcHr(Date.now())>=c.end+0.25&&tcMs(o)>2*36e5}
+function tcSuggestOut(o){const c=tcCfg();const day=tcDay(o.in);const a=tcDayAct(day);let t=a&&Date.parse(a.last)>Date.parse(o.in)?Date.parse(a.last):Date.parse(o.in)+8*36e5;const cap=new Date(day+'T00:00:00').getTime()+c.end*36e5;if(t>cap)t=cap;if(t>Date.now())t=Date.now();return new Date(t).toISOString()}
+let tcAsked=false;
+function tcAskStale(){const o=tcOpen();if(tcAsked||!tcStale(o)||$('#mform'))return;tcAsked=true;const sug=tcSuggestOut(o);const a=tcDayAct(tcDay(o.in));
+ modal('Your shift is still open',`<p style="margin-top:0">You clocked in <b>${esc(fd(tcDay(o.in)))} at ${esc(tcTime(o.in))}</b> and never clocked out.${a?` Your last ERP activity that day was <b>${esc(tcTime(a.last))}</b>.`:''}</p><p>When did you actually stop? If you were in the shop or driving after that, set the real time.</p><div class="fg">${fld('Finished at',inp('out',tcLocal(sug),'type="datetime-local"'))}${fld('Note (optional)',inp('note',o.note||'','placeholder="e.g. built pumps until 6"'),true)}</div>${tcDay(o.in)===TODAY?`<p class="sm muted">${btn('I’m still working','tc2-still',{},'sm ghost')}</p>`:''}`,
+ {label:'Clock out',submit:v=>{const out=v.out?new Date(v.out).toISOString():sug;if(Date.parse(out)<=Date.parse(o.in))return fail('That’s before you clocked in.');if(Date.parse(out)>Date.now()+6e4)return fail('That’s in the future.');
+  o.out=out;o.note=(v.note||'').trim();o.review=`Left open; ${USER.name} set the clock-out to ${tcTime(out)}${tcDay(out)!==TODAY?' on '+fd(tcDay(out)):''}`;log(`${USER.name} closed an open shift (${tcHM(tcMs(o))})`);save();toast(`Clocked out · ${tcHM(tcMs(o))}`);rerender()}})}
+A['tc2-still']=()=>{const o=tcOpen();if(o)o.lateOk=TODAY;closeModal();save()};
+const _staleOk=tcStale;tcStale=function(o){return _staleOk(o)&&o.lateOk!==TODAY};
+/* ---------- shell: banner + open-shift check ---------- */
+document.head.insertAdjacentHTML('beforeend',`<style>
+#tc-ban{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;border-radius:10px;background:#ecfeff;border:1px solid #a5f3fc;color:#164e63}
+[data-theme="dark"] #tc-ban{background:#083344;border-color:#155e75;color:#cffafe}@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) #tc-ban{background:#083344;border-color:#155e75;color:#cffafe}}
+.tc2-stack{display:flex;height:14px;border-radius:7px;overflow:hidden;background:rgba(148,163,184,.18);min-width:120px}.tc2-leg{display:flex;gap:12px;flex-wrap:wrap;font-size:12px}.tc2-leg span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--c);margin-right:5px;vertical-align:-1px}
+</style>`);
+const _renderC2=render;render=function(){const r=_renderC2.apply(this,arguments);try{const v=$('#view');if(v&&!v.querySelector('#tc-ban')){const b=tcBanner();if(b)v.insertAdjacentHTML('afterbegin',b)}setTimeout(tcAskStale,600)}catch(e){}return r};
+/* ---------- time by activity + review (Time clock page) ---------- */
+function tcModeMs(e){const segs=(e.modes&&e.modes.length?e.modes:[{at:e.in,m:'Office'}]).slice().sort((a,b)=>a.at<b.at?-1:1);const end=Date.parse(e.out||new Date().toISOString());const out={};
+ segs.forEach((s,i)=>{const a=Math.max(Date.parse(s.at),Date.parse(e.in));const b=Math.min(i+1<segs.length?Date.parse(segs[i+1].at):end,end);if(b>a)out[s.m]=(out[s.m]||0)+(b-a)});return out}
+const _vTcC2=VIEWS.timeclock;VIEWS.timeclock=function(){let h=_vTcC2.apply(this,arguments);try{const own=tcOwner();const mon=ui.tcWeek||tcMon(TODAY),sun=tcAdd(mon,6);
+ const ents=TC().filter(e=>(own||e.who===USER.name)&&tcDay(e.in)>=mon&&tcDay(e.in)<=sun);const per={};ents.forEach(e=>{const m=tcModeMs(e);const p=per[e.who]=per[e.who]||{};Object.entries(m).forEach(([k,v])=>p[k]=(p[k]||0)+v)});
+ const mx=Math.max(1,...Object.values(per).map(p=>Object.values(p).reduce((a,b)=>a+b,0)));
+ const modes=`<section class="panel mb"><div class="ph"><h3>This week by activity</h3><span class="grow"></span><span class="tc2-leg">${Object.entries(TC_MODES).map(([m,x])=>`<span style="--c:${x.c}">${m==='Shop'?'Shop / builds':m}</span>`).join('')}</span></div><div class="pb">${Object.keys(per).length?Object.entries(per).sort().map(([p,m])=>{const t=Object.values(m).reduce((a,b)=>a+b,0);return `<div style="display:grid;grid-template-columns:minmax(90px,160px) 1fr auto;gap:10px;align-items:center;margin:6px 0"><b class="sm">${esc(p)}</b><div class="tc2-stack" style="width:${(t/mx*100).toFixed(1)}%">${Object.entries(TC_MODES).map(([k,x])=>m[k]?`<div style="width:${(m[k]/t*100).toFixed(1)}%;background:${x.c}" title="${k}: ${tcHM(m[k])}"></div>`:'').join('')}</div><span class="sm">${Object.entries(TC_MODES).filter(([k])=>m[k]).map(([k,x])=>`${x.i} ${tcH(m[k]).toFixed(1)}h`).join(' · ')}</span></div>`}).join(''):'<span class="muted sm">No time this week yet.</span>'}</div></section>`;
+ let review='';if(own){const R=TC().filter(e=>!e.ok&&(e.review||(e.edited&&!/^Clocked in from first ERP use/.test(e.edited))||tcMs(e)>12*36e5||(!e.out&&tcStale(e)))).sort((a,b)=>a.in<b.in?1:-1).slice(0,30);
+  review=`<section class="panel mb" ${R.length?'style="border-left:4px solid var(--warn,#d97706)"':''}><div class="ph"><h3>Needs review</h3><span class="grow"></span><span class="sm muted">${R.length?`${R.length} entr${R.length===1?'y':'ies'}`:'All clear'}</span></div><div class="pb">${R.length?`<table class="tx-tab"><tr><th>Person</th><th>Day</th><th>In → out</th><th>Hours</th><th style="text-align:left">Why</th><th></th></tr>${R.map(e=>`<tr><td>${esc(e.who)}</td><td>${esc(fd(tcDay(e.in)))}</td><td>${esc(tcTime(e.in))} → ${e.out?esc(tcTime(e.out)):'<b>still open</b>'}</td><td>${tcHM(tcMs(e))}</td><td style="text-align:left" class="sm">${esc(e.review||e.edited||(tcMs(e)>12*36e5?'Over 12 hours':'Left open past '+tcCfg().end+':00'))}</td><td style="white-space:nowrap">${btn('Looks right','tc2-ok',{id:e.id},'sm')} ${btn('Edit','tc-edit',{id:e.id},'sm ghost')}</td></tr>`).join('')}</table>`:'<span class="muted sm">No missed or changed punches.</span>'}</div></section>`;
+  review+=`<section class="panel mb"><div class="ph"><h3>Clock settings</h3></div><div class="pb fg"><label class="f">Work hours start<input class="input" type="number" min="0" max="23" data-tc2cfg="start" value="${tcCfg().start}"></label><label class="f">Work hours end (open shifts are flagged after this)<input class="input" type="number" min="1" max="24" data-tc2cfg="end" value="${tcCfg().end}"></label><label class="f full">Don’t ask these people to clock in (owners who don’t track time), comma separated<input class="input" data-tc2cfg="skip" value="${esc(tcCfg().skip.join(', '))}"></label><div class="sm muted full">Reminder emails at the end of the day and your weekly summary come from the tc-remind job in Supabase.</div></div></section>`}
+ const k=h.indexOf('<section class="panel">');h=k>=0?h.slice(0,k)+review+modes+h.slice(k):h+review+modes}catch(e){console.warn('tc2',e)}return h};
+A['tc2-ok']=d=>{const e=TC().find(x=>x.id===d.id);if(!e)return;e.ok=`${USER.name} ${TODAY}`;log(`${USER.name} approved ${e.who}’s time on ${fd(tcDay(e.in))}`);save();rerender()};
+document.addEventListener('change',e=>{const k=e.target.dataset&&e.target.dataset.tc2cfg;if(!k)return;const c=tcCfg();c[k]=k==='skip'?e.target.value.split(',').map(x=>x.trim()).filter(Boolean):+e.target.value;save();toast('Saved')});
+
+</script>
 <script>/* secure.js */
 /* secure.js: the books (S.gl) are owners only, in the database as well as on screen.
    Supabase only sends the 'gl' row to owners (row-level security on erp_kv).
